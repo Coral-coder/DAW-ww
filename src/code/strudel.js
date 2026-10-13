@@ -1,8 +1,15 @@
-// Entry point of the Strudel-compatible live-coding engine.
+// Entry point of the live-coding engine.
 //
 //   evaluate(source) -> { patterns, entries, cps, error }
 //   queryEvents(evaluated, beginCycle, endCycle) -> [{ begin, end, value, pattern }]
 //
+// This is a facade: once the vendored REAL Strudel engine (vendor/strudel, see strudel-real.js) is
+// loaded, evaluate() runs user code through Strudel itself and queryEvents() turns its haps into our
+// event format. In a browser the first evaluate() starts loading it (lazily); until it is ready — or if
+// it can't load — the built-in reimplementation below (evaluateBuiltin, pattern.js, mini.js) is used.
+// In Node nothing is loaded unless loadStrudel() is called (tests choose the engine explicitly).
+//
+// Built-in engine:
 // User code is plain JavaScript evaluated with every DSL function in scope (passed as
 // parameters of a `new Function`, no `with`). A light source transform adds Strudel's REPL
 // conveniences: `$:` / `name:` labelled patterns (`_$:` = muted), double-quoted and backtick
@@ -16,6 +23,13 @@ import {
 } from './pattern.js';
 import { mini } from './mini.js';
 import { noteToMidi, isNoteName } from './theory.js';
+import {
+  loadStrudel, strudelStatus, evaluateStrudel, isStrudelPattern, strudelScopeNames, onStrudelStatus,
+} from './strudel-real.js';
+
+export {
+  loadStrudel, strudelStatus, onStrudelStatus, isStrudelPattern, setSliderValue, sliderValue, loadStrudelAudio,
+} from './strudel-real.js';
 
 export * from './pattern.js';
 export { mini, parseMini } from './mini.js';
@@ -49,8 +63,19 @@ function buildStaticScope() {
 
 /** Names of all functions/values available in user code (static part). */
 export function dslNames() {
+  if (strudelStatus() === 'ready') return strudelScopeNames();
   return Object.keys(buildStaticScope()).concat(PER_EVAL_NAMES);
 }
+
+let builtinOnly = false;
+/** Force the built-in engine (true) or allow the real Strudel engine again (false). */
+export function useBuiltinEngine(on = true) { builtinOnly = !!on; engineVersion++; }
+let engineVersion = 0;
+onStrudelStatus(() => { engineVersion++; });
+/** Changes whenever the engine evaluate() uses changes — include it in caches of evaluate() results. */
+export const codeEngineVersion = () => engineVersion;
+/** 'strudel' when evaluate() runs the real Strudel engine, else 'builtin'. */
+export const codeEngine = () => (!builtinOnly && strudelStatus() === 'ready' ? 'strudel' : 'builtin');
 const PER_EVAL_NAMES = ['setcps', 'setCps', 'setcpm', 'setCpm', 'setbpm', 'setBpm', 'hush', 'samples', 'soundAlias',
   'aliasBank', 'loadSoundfont', 'addVoicings', 'setVoicingRange', 'initHydra', 'all', 'each'];
 
@@ -369,11 +394,29 @@ export function loadSamples(mapOrUrl, base) {
 const errMsg = (e) => (e && e.message ? e.message : String(e));
 
 /**
- * Evaluates Strudel code.
- * @returns {{patterns: Pattern[], entries: {name, pattern, muted}[], cps: number|null, error: string|null}}
+ * Evaluates Strudel code (real Strudel when loaded, see the header).
+ * @returns {{patterns: Pattern[], entries: {name, pattern, muted, block}[], labels, cps: number|null,
+ *   error: string|null, warnings: string[], widgets?: object[], engine: 'strudel'|'builtin', pending?: boolean}}
  */
 export function evaluate(source) {
-  const result = { patterns: [], entries: [], labels: [], cps: null, error: null };
+  if (!builtinOnly) {
+    const st = strudelStatus();
+    if (st === 'ready') return evaluateStrudel(source);
+    if (st === 'idle' && typeof window !== 'undefined') loadStrudel();
+    if (st === 'idle' || st === 'loading') {
+      if (typeof window === 'undefined') return evaluateBuiltin(source);
+      // while Strudel loads (a moment), the built-in engine stands in; code it can't handle isn't an error yet
+      const res = evaluateBuiltin(source);
+      if (!res.error) return { ...res, pending: true };
+      return { patterns: [], entries: [], labels: res.labels || [], cps: null, error: null, warnings: [], engine: 'builtin', pending: true };
+    }
+  }
+  return evaluateBuiltin(source);
+}
+
+/** The built-in (reimplemented) engine. */
+export function evaluateBuiltin(source) {
+  const result = { patterns: [], entries: [], labels: [], cps: null, error: null, engine: 'builtin' };
   const entries = [];
   let hushed = false;
   const allFns = [];
@@ -491,7 +534,7 @@ const JS_METHODS = new Set(['map', 'filter', 'reduce', 'forEach', 'join', 'split
   'floor', 'ceil', 'round', 'random', 'min', 'max', 'abs', 'pow', 'sqrt', 'sin', 'cos', 'exp']);
 
 /** Calls in the source to functions / Pattern methods the engine doesn't know. */
-export function findUnknownNames(source, scope) {
+export function findUnknownNames(source, scope, proto = Pattern.prototype) {
   const { masked } = maskSource(String(source ?? ''));
   const declared = new Set();
   for (const m of masked.matchAll(/\b(?:const|let|var|function)\s+([A-Za-z_$][\w$]*)/g)) declared.add(m[1]);
@@ -502,7 +545,7 @@ export function findUnknownNames(source, scope) {
   for (const m of masked.matchAll(/(\.\s*)?\b([A-Za-z_$][\w$]*)\s*\(/g)) {
     const name = m[2];
     if (m[1]) {
-      if (!(name in Pattern.prototype) && !JS_METHODS.has(name)) methods.add(name);
+      if (!(name in proto) && !JS_METHODS.has(name)) methods.add(name);
     } else if (!(name in scope) && !declared.has(name) && !JS_GLOBALS.has(name) && !RESERVED.has(name)) {
       functions.add(name);
     }
@@ -560,7 +603,8 @@ function hapLocations(h) {
  */
 export function queryEvents(evaluated, beginCycle, endCycle, opts = {}) {
   let list;
-  if (evaluated instanceof Pattern) list = [{ pattern: evaluated }];
+  const isPat = (x) => x instanceof Pattern || isStrudelPattern(x);
+  if (isPat(evaluated)) list = [{ pattern: evaluated }];
   else if (Array.isArray(evaluated)) list = evaluated.map((pattern) => ({ pattern }));
   else {
     const entries = (evaluated?.entries || []).filter((e) => !e.muted);
@@ -575,20 +619,20 @@ export function queryEvents(evaluated, beginCycle, endCycle, opts = {}) {
     try {
       haps = entry.pattern.queryArc(beginCycle, endCycle);
     } catch (e) {
-      if (evaluated && !(evaluated instanceof Pattern) && !Array.isArray(evaluated)) evaluated.queryError = errMsg(e);
+      if (evaluated && !isPat(evaluated) && !Array.isArray(evaluated)) evaluated.queryError = errMsg(e);
       return;
     }
     for (const h of haps) {
       if (!h.whole) continue;
-      const b = h.whole.begin;
+      const b = Number(h.whole.begin); // real Strudel times are Fractions
       if (overlap) {
         // events overlapping the window: report each once (at its onset fragment, or the first fragment)
-        if (!h.hasOnset() && h.part.begin > beginCycle + EPS) continue;
+        if (!h.hasOnset() && Number(h.part.begin) > beginCycle + EPS) continue;
       } else {
         if (!h.hasOnset()) continue;
         if (b < beginCycle - EPS || b >= endCycle - EPS) continue;
       }
-      const ev = { begin: b, end: h.whole.end, value: normalizeValue(h.value), pattern: i, locations: hapLocations(h) };
+      const ev = { begin: b, end: Number(h.whole.end), value: normalizeValue(h.value), pattern: i, locations: hapLocations(h) };
       if (entry.name !== undefined) ev.name = entry.name;
       if (entry.block !== undefined && entry.block !== null) ev.block = entry.block;
       events.push(ev);
