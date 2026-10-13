@@ -76,7 +76,9 @@ export function getRecommendations(project, ctx = {}) {
   const selPatTrack = selPat ? tracks.find((t) => t.id === selPat.trackId) : null;
   if (selPat && selPatTrack && !isDrumTrack(selPatTrack) && key.scale !== 'chromatic') {
     const notes = selPat.notes || [];
-    const outside = notes.filter((n) => !inScale(n.pitch, key.root, key.scale));
+    // short chromatic approach notes that resolve by half step are idiomatic, not mistakes
+    const isApproach = (n) => n.dur <= 0.3 && notes.some((m) => m.start > n.start && m.start - n.start <= 0.35 && Math.abs(m.pitch - n.pitch) === 1 && inScale(m.pitch, key.root, key.scale));
+    const outside = notes.filter((n) => !inScale(n.pitch, key.root, key.scale) && !isApproach(n));
     if (outside.length) {
       const ratio = outside.length / notes.length;
       add({
@@ -161,10 +163,11 @@ export function getRecommendations(project, ctx = {}) {
     const flush = () => {
       if (!run) return;
       const pat = project.patterns?.[run.patternId];
-      if (pat && run.len > 8 * bpb + 1e-6 && pat.length < run.len && repeats < 3) {
+      if (pat && run.len > Math.max(8 * bpb, pat.length * 2) + 1e-6 && repeats < 3) {
         repeats++;
+        const hypnotic = genre && ['techno', 'trance', 'house'].includes(genre.family);
         add({
-          id: `repeat:${t.id}:${run.patternId}`, level: 'warn', title: `“${pat.name}” repeats for ${Math.round(run.len / bpb)} bars`,
+          id: `repeat:${t.id}:${run.patternId}`, level: hypnotic ? 'tip' : 'warn', title: `“${pat.name}” repeats for ${Math.round(run.len / bpb)} bars`,
           text: `The same ${Math.round(pat.length / bpb)}-bar pattern loops unchanged on “${t.name}”. Add a variation (fill, extra notes, a drop-out) so the listener's ear stays engaged.`,
           action: { label: 'Create variation', kind: 'add-variation', payload: { patternId: run.patternId } },
         });

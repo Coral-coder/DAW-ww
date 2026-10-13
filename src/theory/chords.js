@@ -186,8 +186,9 @@ export function detectChord(midiNotes) {
       const missingFifthOnly = missing === 1 && !pcs.includes(fifth) && tpl.includes(fifth) && tpl.length >= 4;
       // need the 3rd-ish defining tone present
       if (matched < Math.min(2, tpl.length)) continue;
-      let score = matched * 2 - (missingFifthOnly ? 0.4 : missing * 2.2) - extra * 2.5 - t.complexity * 0.15;
-      if (root === bass) score += 0.9;
+      let score = matched * 2 - (missingFifthOnly ? 0.9 : missing * 2.2) - extra * 2.5 - t.complexity * 0.15;
+      if (missing === 0 && extra === 0) score += 0.8; // an exact match beats a "close enough" bigger chord
+      if (root === bass) score += 0.5;
       if (!best || score > best.score) best = { root, type: id, score, exact: missing === 0 && extra === 0 };
     }
   }

@@ -42,6 +42,17 @@ export function progressionBars(p) {
   return p.romans.reduce((s, _, i) => s + (p.durs?.[i] ?? 1), 0);
 }
 
+/** Chord pitch classes trimmed to `max` voices: omit the 5th first, then the 11th (as pianists do). */
+export function voicingPitchClasses(chord, max = 5) {
+  let pcs = chordPitchClasses(chord.root, chord.type);
+  if (pcs.length <= max) return pcs;
+  const fifth = mod12(chord.root + 7);
+  if (pcs.includes(fifth)) pcs = pcs.filter((p) => p !== fifth);
+  const eleventh = mod12(chord.root + 5);
+  if (pcs.length > max && pcs.includes(eleventh)) pcs = pcs.filter((p) => p !== eleventh);
+  return pcs.slice(0, max);
+}
+
 const EXT_RE = /(7|9|11|13|6|sus|add|5|ø|°|\+|maj)/;
 
 /**
@@ -114,7 +125,7 @@ export function generateProgression(opts = {}) {
       let r = 40 + mod12(chord.root - 4);
       notes = [r, r + 7, r + 12];
     } else {
-      notes = voiceLead(prev, chordPitchClasses(chord.root, chord.type).slice(0, opts.maxVoices || 5), range);
+      notes = voiceLead(prev, voicingPitchClasses(chord, opts.maxVoices || 5), range);
     }
     out.push({ roman: it.roman, chord, startBeat: beat, durBeats, notes });
     prev = notes;

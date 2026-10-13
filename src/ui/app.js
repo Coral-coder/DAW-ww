@@ -3,7 +3,7 @@ import { Store } from '../core/store.js';
 import { UIState } from './state.js';
 import { h, icon } from './dom.js';
 import { toast } from './components.js';
-import { AudioEngine } from '../audio/index.js';
+import { AudioEngine, PRESETS } from '../audio/index.js';
 import { createActions } from './actions.js';
 import { createHeader } from './header.js';
 import { installKeyboard } from './keyboard.js';
@@ -39,6 +39,17 @@ export async function createApp(rootEl) {
     if (kind === 'project') { pending.project = true; if (detail) pending.labels.push(detail); }
     else Object.assign(pending.ui, detail);
   };
+  // Keep instrument.type consistent with its preset (generators/old files may store a generic 'synth').
+  const presetTypeMismatch = (p) => p.tracks.some((t) => t.instrument?.preset && PRESETS[t.instrument.preset] && PRESETS[t.instrument.preset].instrument.type !== t.instrument.type);
+  store.on('change', (p) => {
+    if (!presetTypeMismatch(p)) return;
+    store.transact('Normalize presets', (pp) => {
+      for (const t of pp.tracks) {
+        const pr = t.instrument?.preset && PRESETS[t.instrument.preset];
+        if (pr && pr.instrument.type !== t.instrument.type) t.instrument.type = pr.instrument.type;
+      }
+    }, { undo: false });
+  });
   store.on('change', (_p, label) => schedule('project', label));
   ui.on('change', (changed) => schedule('ui', changed));
   app.subscribe = (fn) => { subs.add(fn); return () => subs.delete(fn); };

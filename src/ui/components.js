@@ -319,6 +319,7 @@ export function toast(message, { level = 'info', timeout = 3200 } = {}) {
   if (!host) { host = h('div.toast-host'); document.body.appendChild(host); }
   const t = h(`div.toast.${level}`, message);
   host.appendChild(t);
+  while (host.children.length > 4) host.firstChild.remove();
   requestAnimationFrame(() => t.classList.add('show'));
   setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, timeout);
 }

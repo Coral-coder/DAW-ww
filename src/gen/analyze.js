@@ -20,7 +20,16 @@ export function detectPatternChords(pattern, bpb = 4) {
     if (!c) { c = { t: q, notes: [] }; clusters.push(c); }
     c.notes.push(n);
   }
-  const chordClusters = clusters.filter((c) => new Set(c.notes.map((n) => mod12(n.pitch))).size >= 3).sort((a, b) => a.t - b.t);
+  let chordClusters = clusters.filter((c) => new Set(c.notes.map((n) => mod12(n.pitch))).size >= 3).sort((a, b) => a.t - b.t);
+  // drop short passing/approach chords (e.g. gospel half-step approaches) when longer chords exist
+  const maxDur = (c) => Math.max(...c.notes.map((n) => n.dur));
+  if (chordClusters.some((c) => maxDur(c) >= 0.4)) {
+    chordClusters = chordClusters.filter((c, i) => {
+      if (maxDur(c) >= 0.3) return true;
+      const next = chordClusters[i + 1];
+      return !(next && next.t - c.t <= 0.5);
+    });
+  }
   const out = [];
   if (chordClusters.length && chordClusters.length * 3 >= clusters.length * 0.5) {
     for (let i = 0; i < chordClusters.length; i++) {
@@ -28,7 +37,8 @@ export function detectPatternChords(pattern, bpb = 4) {
       const chord = detectChord(c.notes.map((n) => n.pitch));
       if (!chord) continue;
       const prev = out[out.length - 1];
-      const end = i + 1 < chordClusters.length ? chordClusters[i + 1].t : length;
+      const ringOut = Math.max(...c.notes.map((n) => n.start + n.dur));
+      const end = i + 1 < chordClusters.length ? Math.min(chordClusters[i + 1].t, Math.max(ringOut, c.t + 0.25)) : Math.min(length, ringOut);
       if (prev && prev.chord.root === chord.root && prev.chord.type === chord.type) { prev.end = end; continue; }
       out.push({ start: c.t, end, chord, notes: c.notes.map((n) => n.pitch).sort((a, b) => a - b) });
     }

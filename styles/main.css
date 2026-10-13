@@ -234,3 +234,16 @@ canvas.meter { width: 10px; background: #000; border-radius: 2px; image-renderin
   .app-browser { left: 0; }
   .app-assistant { right: 0; }
 }
+
+/* header density */
+.app-header select { max-width: 150px; }
+.app-header .hfield select { max-width: 140px; }
+.app-header .hgroup { padding: 0 6px; }
+@media (max-width: 1750px) {
+  .logo > div:last-child { display: none; }
+  .app-header .hfield select { max-width: 112px; }
+}
+@media (max-width: 1350px) {
+  .app-header .tap-btn, .app-header .lcd { min-width: 0; }
+  .app-header .btn.primary span { display: none; }
+}

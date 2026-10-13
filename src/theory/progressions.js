@@ -446,7 +446,7 @@ export function suggestNextChords(romans = [], keyRoot = 0, scaleId = 'major', g
         const b = romanToChord(rs[(i + 1) % rs.length], keyRoot, scaleId);
         if (!a || !b || a.root !== last.root) continue;
         if (CHORD_TYPES[a.type].minorish !== CHORD_TYPES[last.type].minorish) continue;
-        if (b.root === last.root && b.type === last.type) continue;
+        if (b.root === last.root) continue;
         add(rs[(i + 1) % rs.length], 0.8, `Common in ${genre}: ${rs[i]} → ${rs[(i + 1) % rs.length]} (from "${p.name}").`);
       }
     }
@@ -454,7 +454,7 @@ export function suggestNextChords(romans = [], keyRoot = 0, scaleId = 'major', g
 
   // 7. Tonic always valid — but don't suggest repeating the same chord first
   for (const v of out.values()) {
-    if (v.chord.root === last.root && v.chord.type === last.type) v.score *= 0.3;
+    if (v.chord.root === last.root) v.score *= v.chord.type === last.type ? 0.3 : 0.6;
     // functional-cycle bonus: phrase lengths of 4 want to resolve home on the 4th chord
     if (romans.length % 4 === 3 && (lastIv === 7 || lastIv === 11 || lastIv === 10) && v.chord.root === mod12(keyRoot)) v.score = Math.min(1, v.score + 0.05);
   }

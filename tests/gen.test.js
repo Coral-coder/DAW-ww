@@ -286,7 +286,9 @@ test('generateSong: options, section variation and determinism', () => {
   const intro = s.patterns[s.clips.find((c) => c.trackId === drums.id && c.start === 0).patternId];
   const drop = s.patterns[drums.activePatternId];
   assert.ok(intro.notes.length < drop.notes.length, 'intro sparser than drop');
-  assert.ok(s.markers.some((m) => m.name === 'Drop') && s.markers.some((m) => m.name === 'Drop 2'));
+  assert.ok(s.markers.some((m) => m.name === 'Drop'));
+  const edm = G.generateSong({ genre: 'dubstep', seed: 5 });
+  assert.ok(edm.markers.some((m) => m.name === 'Drop') && edm.markers.some((m) => m.name === 'Drop 2'), 'repeated sections are numbered');
   const a = G.generateSong({ genre: 'trap', seed: 1234 });
   const b = G.generateSong({ genre: 'trap', seed: 1234 });
   const sig = (x) => JSON.stringify({

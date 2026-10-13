@@ -374,8 +374,8 @@ export function createActions(app) {
     toast(`${label}: ${get().name}`, { level: 'success' });
   }
 
-  async function openProject() {
-    const [file] = await fileInput('.json,.heroic,.heroic.json,application/json');
+  async function openProject(file) {
+    if (!(file instanceof Blob)) [file] = await fileInput('.json,.heroic,.heroic.json,application/json');
     if (!file) return;
     try {
       const text = await file.text();
@@ -456,8 +456,8 @@ export function createActions(app) {
     });
   }
 
-  async function importMidiFile() {
-    const [file] = await fileInput('.mid,.midi,audio/midi');
+  async function importMidiFile(file) {
+    if (!(file instanceof Blob)) [file] = await fileInput('.mid,.midi,audio/midi');
     if (!file) return;
     try {
       const data = importMidi(await file.arrayBuffer());

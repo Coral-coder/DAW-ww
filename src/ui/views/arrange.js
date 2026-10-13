@@ -1706,8 +1706,8 @@ export function createArrangeView(app) {
       if (added?.length > 1) toast(`${added.length - 1} more sample(s) are in the Browser — drag them where you need them.`);
     }
     for (const f of code) await actions.importStrudel(f);
-    if (midi.length) toast('To import MIDI, use Menu ▸ Import ▸ MIDI file… (tracks, patterns and clips are created for you).', { timeout: 5000 });
-    if (json.length) toast('To open a project file, use Menu ▸ Open project… (Ctrl+O).', { timeout: 5000 });
+    for (const f of midi) await actions.importMidiFile(f);
+    if (json.length) await actions.openProject(json[0]);
     if (!audio.length && !code.length && !midi.length && !json.length) toast('Unsupported file type. Drop audio, .strudel/.js code, MIDI or project files.', { level: 'warn' });
   }
 

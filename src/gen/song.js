@@ -57,11 +57,12 @@ export function generateRoleNotes(role, opts) {
   switch (role) {
     case 'drums': {
       const soft = kind === 'intro' || kind === 'outro' || kind === 'break';
-      const fill = kind === 'build' || (e >= 0.5 && (bars >= 8 || BAND_FAMILIES.has(g.family)));
+      const band = BAND_FAMILIES.has(g.family);
+      const fill = kind === 'build' || (e >= 0.5 && (bars >= 8 || band));
       return generateDrumPattern({
         style: g.drumStyle, bars, rng, beatsPerBar: bpb, humanize: g.humanize || 0,
         density: soft ? Math.min(e + 0.1, kind === 'break' ? 0.3 : 0.45) : clamp(e, 0.3, 1),
-        variation: 0.25 + e * 0.3, fill, fillType: kind === 'build' && !BAND_FAMILIES.has(g.family) ? 'build' : undefined,
+        variation: 0.25 + e * 0.3, fill, fillType: band ? undefined : kind === 'build' ? 'build' : 'snare-roll',
         crash: kind === 'main' && e >= 0.9,
       });
     }
@@ -161,7 +162,8 @@ export function generateSong(opts = {}) {
   else if (loopBars > 4 && loopBars < 8) loopBars = 8;
   const progression = generateProgression({ key: root, scale, genre: g.id, bars: loopBars, beatsPerBar: bpb, rng, progression: prog ? prog.id || prog.romans : undefined });
   const loopBeats = loopBars * bpb;
-  const drumBars = loopBars > 8 ? 4 : loopBars;
+  // drums use 8-bar phrases (fill at the phrase end) unless the harmonic loop is longer (12-bar blues -> 4-bar)
+  const drumBars = loopBars > 8 ? 4 : 8;
 
   // tracks for every role used by the structure (and supported by the genre's palette)
   const used = new Set(g.structure.flatMap((s) => s.roles));
