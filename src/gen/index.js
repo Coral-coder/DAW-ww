@@ -17,3 +17,4 @@ export * from './mix.js';
 export * from './sound.js';
 export * from './rides.js';
 export * from './extend.js';
+export * from './monotony.js';

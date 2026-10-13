@@ -15,8 +15,12 @@ import { detectPatternChords } from './analyze.js';
 
 const EPS = 1e-6;
 
-/** Genres whose bass is a pedal by idiom (still: octave / rhythm variation, ≥ 2 pitches per 16 bars). */
-export const DRONE_BASS_GENRES = new Set(['ambient', 'cinematic', 'minimal', 'dub', 'techno', 'psytrance', 'industrial', 'metal', 'drum-and-bass', 'trap', 'drill', 'phonk', 'dubstep', 'brostep', 'future-bass', 'liquid-dnb', 'hardstyle', 'punk', 'rock']);
+/**
+ * Genres whose bass is a pedal by idiom (still: octave / rhythm variation, ≥ 2 pitches per 16 bars): ambient / cinematic
+ * drones sustain one root under slow chords; metal chugs the riff's root under power chords. Psytrance / techno are
+ * NOT exempt — their rolling basses answer with octaves, 5ths and 7ths.
+ */
+export const DRONE_BASS_GENRES = new Set(['ambient', 'cinematic', 'metal']);
 
 /** Onset groups (block chords become one token): [{start, end, pitches, key}]. Strums / humanized hits stay together. */
 export function partTokens(notes, tol = 0.04) {
