@@ -18,6 +18,7 @@ import { createPattern, createClip, createNote, createScene, beatsPerBar } from 
 import { valueAt } from '../core/automation.js';
 import { mod12, chordPitchClasses, scalePitchClasses, snapToScale, resolveScaleId } from '../theory/index.js';
 import { getGenre } from './genres.js';
+import { ARP_HOME } from './arrange.js';
 import { sectionKind } from './form.js';
 import { isDrumTrack, detectPatternChords, chordsToProgression } from './analyze.js';
 import { fitNotesToHarmony } from './fit.js';
@@ -376,7 +377,7 @@ function varyLead(notes, { len, bpb, rng, key, prog, lift, kind }) {
 }
 
 /** An arp written over a harmony (for a layer that enters): chord tones voiced around E4–E5, 16ths, half-gated. */
-function arpOver(h, len, rng) {
+function arpOver(h, len, rng, rate = 0.25) {
   if (!h?.prog?.length) return [];
   const voiced = [];
   const hl = h.length || len;
@@ -389,7 +390,7 @@ function arpOver(h, len, rng) {
       voiced.push({ startBeat: s0, durBeats: Math.min(c.durBeats, len - s0), notes });
     }
   }
-  return arpeggiate(voiced, { mode: rng.pick(['up', 'updown', 'down']), rate: 0.25, octaves: 1, gate: 0.6, rng, vel: 0.6 });
+  return arpeggiate(voiced, { mode: rng.pick(['up', 'updown', 'down']), rate, octaves: 1, gate: 0.6, rng, vel: 0.6 });
 }
 
 /**
@@ -489,7 +490,7 @@ export function extendSong(project, opts = {}) {
       }
     }
     // evolving: in a main section an arp (or held-back arp track) enters halfway
-    if (it.enter && it.beats >= 16 * bpb) {
+    if (it.enter && it.beats >= 16 * bpb && ARP_HOME.has(project.genre)) {
       const arpT = project.tracks.find((t) => roles.get(t.id) === 'arp' && !playing.includes(t));
       const chordClip = chordTrack && clipsIn(project, chordTrack.id, tpl.start, tpl.end)[0];
       const cp = chordClip && project.patterns[chordClip.clip.patternId];

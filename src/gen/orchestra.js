@@ -145,7 +145,7 @@ export function planExtras(g, sections) {
       // and outside the arp genres they only season the last chorus
       if (role === 'color' || role === 'bells') {
         const taken = R.includes('arp') || (s.enter || []).includes('arp') || s.extra.includes('color') || s.extra.includes('bells');
-        if (taken || (!ARP_HOME.has(g.id) && s.kind === 'main' && s !== finalMain && g.family !== 'ambient')) continue;
+        if (taken || (!ARP_HOME.has(g.id) && g.family !== 'ambient' && !(s === finalMain || s.kind === 'break'))) continue;
       }
       if (MELODIC_EXTRA.has(role)) { if (layers >= maxLayers(s)) continue; layers++; }
       s.extra.push(role);

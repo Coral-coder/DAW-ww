@@ -22,7 +22,7 @@ export function sectionType(name = '') {
 const MELODIC = ['bass', 'chords', 'pad', 'lead', 'arp'];
 
 /** Genres where a running arpeggio is the idiom (it may carry whole sections); elsewhere an arp is a seasoning. */
-export const ARP_HOME = new Set(['trance', 'psytrance', 'progressive-house', 'synthwave', 'outrun', 'eurobeat', 'chiptune', 'idm', 'future-bass', 'hardstyle', 'techno', 'minimal']);
+export const ARP_HOME = new Set(['trance', 'progressive-house', 'synthwave', 'outrun', 'eurobeat', 'chiptune']);
 
 /**
  * Expand the genre structure into section instances with orchestration applied.
@@ -56,8 +56,10 @@ export function planSections(genre, { bpb = 4, available, structure, evolve = tr
     if (has('arp')) {
       const home = ARP_HOME.has(genre.id);
       const finalMain = s.kind === 'main' && s.occurrence === lastOfType[s.type];
-      const keep = home ? !['intro', 'outro'].includes(s.kind) && !(s.kind === 'verse' && s.occurrence === 1)
-        : s.kind === 'build' || (finalMain && !has('lead')) || (s.kind === 'break' && !has('lead') && !has('chords'));
+      // at home: builds, breakdowns without a lead, every other groove, and only the last drop when a lead sings
+      const keep = home ? s.kind === 'build' || (s.kind === 'break' && !has('lead')) || (s.kind === 'verse' && s.occurrence % 2 === 0)
+          || (s.kind === 'main' && (finalMain || !has('lead')))
+        : s.kind === 'build' || (finalMain && !has('lead'));
       if (!keep) drop('arp');
     }
     if (s.kind === 'verse') {
