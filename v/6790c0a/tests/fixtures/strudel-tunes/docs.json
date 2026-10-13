@@ -1,0 +1,1974 @@
+{
+ "license": "AGPL-3.0-or-later",
+ "origin": "Strudel — https://strudel.cc, https://codeberg.org/uzu/strudel (c) Strudel contributors",
+ "tunes": [
+  {
+   "name": "intro#1",
+   "source": "website/src/pages/functions/intro.mdx",
+   "code": "note(\"c3 eb3 g3\")"
+  },
+  {
+   "name": "intro#2",
+   "source": "website/src/pages/functions/intro.mdx",
+   "code": "note(seq(\"c3\", \"eb3\", \"g3\"))"
+  },
+  {
+   "name": "intro#3",
+   "source": "website/src/pages/functions/intro.mdx",
+   "code": "stack(\n  note(\"c2 eb2(3,8)\").s('sawtooth').cutoff(800),\n  s(\"bd(5,8), hh*8\")\n)"
+  },
+  {
+   "name": "intro#4",
+   "source": "website/src/pages/functions/intro.mdx",
+   "code": "cat(\n  stack(\"g3\",\"b3\",\"e4\"),\n  stack(\"a3\",\"c3\",\"e4\"),\n  stack(\"b3\",\"d3\",\"fs4\"),\n  stack(\"b3\",\"e4\",\"g4\")\n).note()"
+  },
+  {
+   "name": "intro#5",
+   "source": "website/src/pages/functions/intro.mdx",
+   "code": "cat(\n  \"g3,b3,e4\",\n  \"a3,c3,e4\",\n  \"b3,d3,f#4\",\n  \"b3,e4,g4\"\n).note()"
+  },
+  {
+   "name": "intro#6",
+   "source": "website/src/pages/functions/intro.mdx",
+   "code": "note(\"<[g3,b3,e4] [a3,c3,e4] [b3,d3,f#4] [b3,e4,g4]>\")"
+  },
+  {
+   "name": "value-modifiers#1",
+   "source": "website/src/pages/functions/value-modifiers.mdx",
+   "code": "note(\"c a f e\")\n.cutoff(\"<500 1000 2000 [4000 8000]>\")\n.gain(.8)\n.s('sawtooth')\n.log()"
+  },
+  {
+   "name": "value-modifiers#2",
+   "source": "website/src/pages/functions/value-modifiers.mdx",
+   "code": "\"<c e g>\".log()"
+  },
+  {
+   "name": "value-modifiers#3",
+   "source": "website/src/pages/functions/value-modifiers.mdx",
+   "code": "note(\"<c e g>\").log()"
+  },
+  {
+   "name": "value-modifiers#4",
+   "source": "website/src/pages/functions/value-modifiers.mdx",
+   "code": "cat({note:'c'},{note:'e'},{note:'g'}).log()"
+  },
+  {
+   "name": "value-modifiers#5",
+   "source": "website/src/pages/functions/value-modifiers.mdx",
+   "code": "cat('c', 'e', 'g').note().log()"
+  },
+  {
+   "name": "value-modifiers#6",
+   "source": "website/src/pages/functions/value-modifiers.mdx",
+   "code": "\"50 60 70\".add(\"<0 1 2>\").log()"
+  },
+  {
+   "name": "value-modifiers#7",
+   "source": "website/src/pages/functions/value-modifiers.mdx",
+   "code": "note(\"50 60 70\".add(\"<0 1 2>\")).room(.1).log()"
+  },
+  {
+   "name": "value-modifiers#8",
+   "source": "website/src/pages/functions/value-modifiers.mdx",
+   "code": "\"50 60 70\".add(\"<0 1 2>\").note().room(.1).log()"
+  },
+  {
+   "name": "value-modifiers#9",
+   "source": "website/src/pages/functions/value-modifiers.mdx",
+   "code": "note(\"50 60 70\").room(.1).add(note(\"<0 1 2>\")).log()"
+  },
+  {
+   "name": "value-modifiers#10",
+   "source": "website/src/pages/functions/value-modifiers.mdx",
+   "code": "let x = createParam('x')\nx(sine.range(0, 200))\n"
+  },
+  {
+   "name": "value-modifiers#11",
+   "source": "website/src/pages/functions/value-modifiers.mdx",
+   "code": "let { x, y } = createParams('x', 'y');\nx(sine.range(0, 200)).y(cosine.range(0, 200));\n"
+  },
+  {
+   "name": "code#1",
+   "source": "website/src/pages/learn/code.mdx",
+   "code": "note(\"c a f e\").s(\"piano\")"
+  },
+  {
+   "name": "code#2",
+   "source": "website/src/pages/learn/code.mdx",
+   "code": "note(c a f e).s(piano)",
+   "expectError": true
+  },
+  {
+   "name": "code#3",
+   "source": "website/src/pages/learn/code.mdx",
+   "code": "note(\"c a f e\")s(\"piano\")",
+   "expectError": true
+  },
+  {
+   "name": "code#4",
+   "source": "website/src/pages/learn/code.mdx",
+   "code": "note[\"c a f e\"].s{\"piano\"}",
+   "expectError": true
+  },
+  {
+   "name": "code#5",
+   "source": "website/src/pages/learn/code.mdx",
+   "code": "s(\"piano\").note(\"c a f e\")"
+  },
+  {
+   "name": "code#6",
+   "source": "website/src/pages/learn/code.mdx",
+   "code": "note(\"a3 c#4 e4 a4\")\n.s(\"sawtooth\")\n.cutoff(500)\n//.delay(0.5)\n.room(0.5)"
+  },
+  {
+   "name": "csound#1",
+   "source": "website/src/pages/learn/csound.mdx",
+   "code": "// livecode.orc by Steven Yi\nawait loadOrc('github:kunstmusik/csound-live-code/master/livecode.orc')\nnote(\"c a f e\").csound('FM1')\n"
+  },
+  {
+   "name": "csound#2",
+   "source": "website/src/pages/learn/csound.mdx",
+   "code": "// livecode.orc by Steven Yi\nawait loadOrc('github:kunstmusik/csound-live-code/master/livecode.orc')\nnote(\"c a f e\").csound(cat(\n\"Sub1\", // \tSubstractive Synth, 3osc\n\"Sub2\", // \tSubtractive Synth, two saws, fifth freq apart\n\"Sub3\", // \tSubtractive Synth, three detuned saws, swells in\n\"Sub4\", // \tSubtractive Synth, detuned square/saw, stabby. Nice as a lead in octave 2, nicely grungy in octave -2, -1\n\"Sub5\", // \tSubtractive Synth, detuned square/triangle\n\"Sub6\", // \tSubtractive Synth, saw, K35 filters\n\"Sub7\", // \tSubtractive Synth, saw + tri, K35 filters\n\"Sub8\", // \tSubtractive Synth, square + saw + tri, diode ladder filter\n\"SynBrass\", // \tSynthBrass subtractive synth\n\"SynHarp\", // \tSynth Harp subtracitve Synth\n\"SSaw\", // \tSuperSaw sound using 9 bandlimited saws (3 sets of detuned saws at octaves)\n\"Mode1\", // \tModal Synthesis Instrument: Percussive/organ-y sound\n\"Plk\", // \tPluck sound using impulses, noise, and waveguides\n\"Organ1\", // \tWavetable Organ sound using additive synthesis\n\"Organ2\", // \tOrgan sound based on M1 Organ 2 patch\n\"Organ3\", // \tWavetable Organ using Flute 8' and Flute 4', wavetable based on Claribel Flute http://www.pykett.org.uk/the_tonal_structure_of_organ_flutes.htm\n\"Bass\", // \tSubtractive Bass sound\n\"ms20_bass\", // \tMS20-style Bass Sound\n\"VoxHumana\", // \tVoxHumana Patch\n\"FM1\", // \tFM 3:1 C:M ratio, 2->0.025 index, nice for bass\n\"Noi\", // \tFiltered noise, exponential envelope\n\"Wobble\", // \tWobble patched based on Jacob Joaquin's \"Tempo-Synced Wobble Bass\"\n\"Sine\", // \tSimple Sine-wave instrument with exponential envelope\n\"Square\", // \tSimple Square-wave instrument with exponential envelope\n\"Saw\", // \tSimple Sawtooth-wave instrument with exponential envelope\n\"Squine1\", // \tSquinewave Synth, 2 osc\n\"Form1\", // \tFormant Synth, buzz source, soprano ah formants\n\"Mono\", // \tMonophone synth using sawtooth wave and 4pole lpf. Use \"start(\"Mono\") to run the monosynth, then use MonoNote instrument to play the instrument.\n\"MonoNote\", // \tNote playing instrument for Mono synth. Be careful to use this and not try to create multiple Mono instruments!\n\"Click\", // \tBandpass-filtered impulse glitchy click sound. p4 = center frequency (e.g., 3000, 6000)\n\"NoiSaw\", // \tHighpass-filtered noise+saw sound. Use NoiSaw.cut channel to adjust cutoff.\n\"Clap\", // \tModified clap instrument by Istvan Varga (clap1.orc)\n\"BD\", // \tBass Drum - From Iain McCurdy's TR-808.csd\n\"SD\", // \tSnare Drum - From Iain McCurdy's TR-808.csd\n\"OHH\", // \tOpen High Hat - From Iain McCurdy's TR-808.csd\n\"CHH\", // \tClosed High Hat - From Iain McCurdy's TR-808.csd\n\"HiTom\", // \tHigh Tom - From Iain McCurdy's TR-808.csd\n\"MidTom\", // \tMid Tom - From Iain McCurdy's TR-808.csd\n\"LowTom\", // \tLow Tom - From Iain McCurdy's TR-808.csd\n\"Cymbal\", // \tCymbal - From Iain McCurdy's TR-808.csd\n\"Rimshot\", // \tRimshot - From Iain McCurdy's TR-808.csd\n\"Claves\", // \tClaves - From Iain McCurdy's TR-808.csd\n\"Cowbell\", // \tCowbell - From Iain McCurdy's TR-808.csd\n\"Maraca\", // \tMaraca - from Iain McCurdy's TR-808.csd\n\"HiConga\", // \tHigh Conga - From Iain McCurdy's TR-808.csd\n\"MidConga\", // \tMid Conga - From Iain McCurdy's TR-808.csd\n\"LowConga\", // \tLow Conga - From Iain McCurdy's TR-808.csd\n))"
+  },
+  {
+   "name": "csound#3",
+   "source": "website/src/pages/learn/csound.mdx",
+   "code": "await loadCsound`\ninstr CoolSynth\n    iduration = p3\n    ifreq = p4\n    igain = p5\n    ioct = octcps(ifreq)\n\n    kpwm = oscili(.05, 8)\n    asig = vco2(igain, ifreq, 4, .5 + kpwm)\n    asig += vco2(igain, ifreq * 2)\n\n    idepth = 2\n    acut = transegr:a(0, .005, 0, idepth, .06, -4.2, 0.001, .01, -4.2, 0) ; filter envelope\n    asig = zdf_2pole(asig, cpsoct(ioct + acut + 2), 0.5)\n\n    iattack = .01\n    isustain = .5\n    idecay = .1\n    irelease = .1\n    asig *= linsegr:a(0, iattack, 1, idecay, isustain, iduration, isustain, irelease, 0)\n\n    out(asig, asig)\n\nendin`\n\n\"<0 2 [4 6](3,4,2) 3*2>\"\n.off(1/4, add(2))\n.off(1/2, add(6))\n.scale('D minor')\n.note()\n.csound('CoolSynth')"
+  },
+  {
+   "name": "effects#1",
+   "source": "website/src/pages/learn/effects.mdx",
+   "code": "note(\"[c eb g <f bb>](3,8,<0 1>)\".sub(12))\n  .s(\"<sawtooth>/64\")\n  .lpf(sine.range(300,2000).slow(16))\n  .lpa(0.005)\n  .lpd(perlin.range(.02,.2))\n  .lps(perlin.range(0,.5).slow(3))\n  .lpq(sine.range(2,10).slow(32))\n  .release(.5)\n  .lpenv(perlin.range(1,8).slow(2))\n  .ftype('24db')\n  .room(1)\n  .juxBy(.5,rev)\n  .sometimes(add(note(12)))\n  .stack(s(\"bd*2\").bank('RolandTR909'))\n  .gain(.5).fast(2)"
+  },
+  {
+   "name": "effects#2",
+   "source": "website/src/pages/learn/effects.mdx",
+   "code": "n(\"<-4,0 5 2 1>*<2!3 4>\")\n  .scale(\"<C F>/8:pentatonic\")\n  .s(\"gm_electric_guitar_jazz\")\n  .penv(\"<.5 0 7 -2>*2\").vib(\"4:.1\")\n  .phaser(2).delay(.25).room(.3)\n  .size(4).fast(1.5)"
+  },
+  {
+   "name": "effects#3",
+   "source": "website/src/pages/learn/effects.mdx",
+   "code": "n(run(\"<4 8>/16\")).jux(rev)\n.chord(\"<C^7 <Db^7 Fm7>>\")\n.dict('ireal')\n.voicing().add(note(\"<0 1>/8\"))\n.dec(.1).room(.2)\n.segment(\"<4 [2 8]>\")\n.penv(\"<0 <2 -2>>\").patt(.02).fast(2)"
+  },
+  {
+   "name": "getting-started#1",
+   "source": "website/src/pages/learn/getting-started.mdx",
+   "code": "s(\"bd sd\")"
+  },
+  {
+   "name": "getting-started#2",
+   "source": "website/src/pages/learn/getting-started.mdx",
+   "code": "samples({\n  bd: ['bd/BT0AADA.wav','bd/BT0AAD0.wav','bd/BT0A0DA.wav','bd/BT0A0D3.wav','bd/BT0A0D0.wav','bd/BT0A0A7.wav'],\n  sd: ['sd/rytm-01-classic.wav','sd/rytm-00-hard.wav'],\n  hh: ['hh27/000_hh27closedhh.wav','hh/000_hh3closedhh.wav'],\n}, 'github:tidalcycles/dirt-samples');\nstack(\ns(\"bd,[~ <sd!3 sd(3,4,2)>],hh*8\") // drums\n.speed(perlin.range(.7,.9)) // random sample speed variation\n,\"<a1 b1*2 a1(3,8) e2>\" // bassline\n.off(1/8,x=>x.add(12).degradeBy(.5)) // random octave jumps\n.add(perlin.range(0,.5)) // random pitch variation\n.superimpose(add(.05)) // add second, slightly detuned voice\n.note() // wrap in \"note\"\n.decay(.15).sustain(0) // make each note of equal length\n.s('sawtooth') // waveform\n.gain(.4) // turn down\n.cutoff(sine.slow(7).range(300,5000)) // automate cutoff\n,\"<Am7!3 <Em7 E7b13 Em7 Ebm7b5>>\".voicings('lefthand') // chords\n.superimpose(x=>x.add(.04)) // add second, slightly detuned voice\n.add(perlin.range(0,.5)) // random pitch variation\n.note() // wrap in \"note\"\n.s('sawtooth') // waveform\n.gain(.16) // turn down\n.cutoff(500) // fixed cutoff\n.attack(1) // slowly fade in\n)\n.slow(3/2)"
+  },
+  {
+   "name": "hydra#1",
+   "source": "website/src/pages/learn/hydra.mdx",
+   "code": "await initHydra()\n// licensed with CC BY-NC-SA 4.0 https://creativecommons.org/licenses/by-nc-sa/4.0/\n// by Zach Krall\n// http://zachkrall.online/\n\nosc(10, 0.9, 300)\n.color(0.9, 0.7, 0.8)\n.diff(\nosc(45, 0.3, 100)\n.color(0.9, 0.9, 0.9)\n.rotate(0.18)\n.pixelate(12)\n.kaleid()\n)\n.scrollX(10)\n.colorama()\n.luma()\n.repeatX(4)\n.repeatY(4)\n.modulate(\nosc(1, -0.9, 300)\n)\n.scale(2)\n.out()\n\nnote(\"[a,c,e,<a4 ab4 g4 gb4>,b4]/2\")\n.s(\"sawtooth\").vib(2)\n.lpf(600).lpa(2).lpenv(6)\n"
+  },
+  {
+   "name": "hydra#2",
+   "source": "website/src/pages/learn/hydra.mdx",
+   "code": "await initHydra()\nlet pattern = \"3 4 5 [6 7]*2\"\nshape(H(pattern)).out(o0)\nn(pattern).scale(\"A:minor\").piano().room(1)\n"
+  },
+  {
+   "name": "hydra#3",
+   "source": "website/src/pages/learn/hydra.mdx",
+   "code": "await initHydra({detectAudio:true})\nlet pattern = \"<3 4 5 [6 7]*2>\"\nshape(H(pattern)).repeat()\n  .scrollY(\n    ()=> a.fft[0]*.25\n  )\n  .add(src(o0).color(.71 ).scrollX(.005),.95)\n.out(o0)\nn(pattern).scale(\"A:minor\").piano().room(1)\n"
+  },
+  {
+   "name": "hydra#4",
+   "source": "website/src/pages/learn/hydra.mdx",
+   "code": "await initHydra({feedStrudel:1})\n//\nsrc(s0).kaleid(H(\"<4 5 6>\"))\n  .diff(osc(1,0.5,5))\n  .modulateScale(osc(2,-0.25,1))\n  .out()\n//\n\n$: s(\"bd*4,[hh:0:<.5 1>]*8,~ rim\").bank(\"RolandTR909\").speed(.9)\n\n$: note(\"[<g1!3 <bb1 <f1 d1>>>]*3\").s(\"sawtooth\")\n\n.room(.75).sometimes(add(note(12))).clip(.3)\n.lpa(.05).lpenv(-4).lpf(2000).lpq(8).ftype('24db')\n\nall(x=>x.fft(4).scope({pos:0,smear:.95}))"
+  },
+  {
+   "name": "input-output#1",
+   "source": "website/src/pages/learn/input-output.mdx",
+   "code": "\n$: chord(\"<C^7 A7 Dm7 G7>\").voicing().midi('IAC Driver')\n"
+  },
+  {
+   "name": "input-output#2",
+   "source": "website/src/pages/learn/input-output.mdx",
+   "code": "$: note(\"d e c a f\").midi('IAC Driver', { isController: true, midimap: 'default'})\n"
+  },
+  {
+   "name": "input-output#3",
+   "source": "website/src/pages/learn/input-output.mdx",
+   "code": "$:stack(\n  midicmd(\"clock*48,<start stop>/2\").midi('IAC Driver')\n)"
+  },
+  {
+   "name": "input-output#4",
+   "source": "website/src/pages/learn/input-output.mdx",
+   "code": "note(\"c a f e\").control([74, sine.slow(4)]).midi()"
+  },
+  {
+   "name": "input-output#5",
+   "source": "website/src/pages/learn/input-output.mdx",
+   "code": "note(\"c a f e\").ccn(74).ccv(sine.slow(4)).midi()"
+  },
+  {
+   "name": "input-output#6",
+   "source": "website/src/pages/learn/input-output.mdx",
+   "code": "$: note(\"c a f e\").midi()\n$: ccv(sine.segment(16).slow(4)).ccn(74).midi()"
+  },
+  {
+   "name": "input-output#7",
+   "source": "website/src/pages/learn/input-output.mdx",
+   "code": "// Switch between programs 0 and 1 every cycle\nprogNum(\"<0 1>\").midi()\n\n// Play notes while changing programs\nnote(\"c3 e3 g3\").progNum(\"<0 1 2>\").midi()"
+  },
+  {
+   "name": "input-output#8",
+   "source": "website/src/pages/learn/input-output.mdx",
+   "code": "// Send a simple SysEx message\nlet id = 0x43; //Yamaha\n//let id = \"0x00:0x20:0x32\"; //Behringer ID can be an array of numbers\nlet data = \"0x79:0x09:0x11:0x0A:0x00:0x00\"; // Set NSX-39 voice to say \"Aa\"\n$: note(\"c a f e\").sysex(id, data).midi();\n$: note(\"c a f e\").sysexid(id).sysexdata(data).midi();"
+  },
+  {
+   "name": "input-output#9",
+   "source": "website/src/pages/learn/input-output.mdx",
+   "code": "note(\"c a f e\").midibend(sine.slow(4).range(-0.4,0.4)).midi()"
+  },
+  {
+   "name": "input-output#10",
+   "source": "website/src/pages/learn/input-output.mdx",
+   "code": "note(\"c a f e\").miditouch(sine.slow(4).range(0,1)).midi()"
+  },
+  {
+   "name": "input-output#11",
+   "source": "website/src/pages/learn/input-output.mdx",
+   "code": "s(\"bd sd\").osc()"
+  },
+  {
+   "name": "input-output#12",
+   "source": "website/src/pages/learn/input-output.mdx",
+   "code": "\"hello world\"\n    .mqtt(undefined, // username (undefined for open/public servers)\n          undefined, // password\n          '/strudel-pattern', // mqtt 'topic'\n          'wss://mqtt.eclipseprojects.io:443/mqtt', // MQTT server address\n          'mystrudel', // MQTT client id - randomly generated if not supplied\n          0 // latency / delay before sending messages (0 = no delay)\n         )"
+  },
+  {
+   "name": "input-output#13",
+   "source": "website/src/pages/learn/input-output.mdx",
+   "code": "sound(\"sax(3,8)\").speed(\"2 3\")\n  .mqtt(undefined, // username (undefined for open/public servers)\n        undefined, // password\n        '/strudel-pattern', // mqtt 'topic'\n        'wss://mqtt.eclipseprojects.io:443/mqtt', // MQTT server address\n        'mystrudel', // MQTT client id - randomly generated if not supplied\n        0 // latency / delay before sending messages (0 = no delay)\n       )"
+  },
+  {
+   "name": "mini-notation#1",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(`<\n[e5 [b4 c5] d5 [c5 b4]]\n[a4 [a4 c5] e5 [d5 c5]]\n[b4 [~ c5] d5 e5]\n[c5 a4 a4 ~]\n[[~ d5] [~ f5] a5 [g5 f5]]\n[e5 [~ c5] e5 [d5 c5]]\n[b4 [b4 c5] d5 e5]\n[c5 a4 a4 ~]\n,\n[[e2 e3]*4]\n[[a2 a3]*4]\n[[g#2 g#3]*2 [e2 e3]*2]\n[a2 a3 a2 a3 a2 a3 b1 c2]\n[[d2 d3]*4]\n[[c2 c3]*4]\n[[b1 b2]*2 [e2 e3]*2]\n[[a1 a2]*4]\n>`)"
+  },
+  {
+   "name": "mini-notation#2",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"c e g b\")"
+  },
+  {
+   "name": "mini-notation#3",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"c d e f g a b\")"
+  },
+  {
+   "name": "mini-notation#4",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"[e5 b4 d5 c5]*2\")"
+  },
+  {
+   "name": "mini-notation#5",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"[e5 b4 d5 c5]*2.75\")"
+  },
+  {
+   "name": "mini-notation#6",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"[e5 b4 d5 c5]/2\")"
+  },
+  {
+   "name": "mini-notation#7",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"[e5 b4 d5 c5]/2.75\")"
+  },
+  {
+   "name": "mini-notation#8",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"<e5 b4 d5 c5>\")"
+  },
+  {
+   "name": "mini-notation#9",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"[e5 b4 d5 c5]/4\")"
+  },
+  {
+   "name": "mini-notation#10",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"<e5 b4 d5 c5 e5>\")"
+  },
+  {
+   "name": "mini-notation#11",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"<e5 b4 d5 c5 e5 b4>\")"
+  },
+  {
+   "name": "mini-notation#12",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"<e5 b4 d5 c5 a4 c5>*8\")"
+  },
+  {
+   "name": "mini-notation#13",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"e5 b4 c5 d5 c5 b4\")"
+  },
+  {
+   "name": "mini-notation#14",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"e5 [b4 c5] d5 c5 b4\")"
+  },
+  {
+   "name": "mini-notation#15",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"e5 [b4 c5] d5 [c5 b4]\")"
+  },
+  {
+   "name": "mini-notation#16",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"e5 [b4 c5] d5 [c5 b4 d5 e5]\")"
+  },
+  {
+   "name": "mini-notation#17",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"e5 [b4 c5] d5 [c5 b4 [d5 e5]]\")"
+  },
+  {
+   "name": "mini-notation#18",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"[b4 [~ c5] d5 e5]\")"
+  },
+  {
+   "name": "mini-notation#19",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"[g3,b3,e4]\")"
+  },
+  {
+   "name": "mini-notation#20",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"g3,b3,e4\")"
+  },
+  {
+   "name": "mini-notation#21",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"<[g3,b3,e4] [a3,c3,e4] [b3,d3,f#4] [b3,e4,g4]>*2\")"
+  },
+  {
+   "name": "mini-notation#22",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"<[g3,b3,e4]@2 [a3,c3,e4] [b3,d3,f#4]>*2\")"
+  },
+  {
+   "name": "mini-notation#23",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"<[g3,b3,e4]!2 [a3,c3,e4] [b3,d3,f#4]>*2\")"
+  },
+  {
+   "name": "mini-notation#24",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"<g3 b3 e4 [a3,c3,e4] [b3,d3,f#4]>*2\")"
+  },
+  {
+   "name": "mini-notation#25",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"<[g3,b3,e4] [a3,c3,e4] [b3,d3,f#4]>*2\")"
+  },
+  {
+   "name": "mini-notation#26",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"<[g3,b3,e4]/2 [a3,c3,e4] [b3,d3,f#4]>*2\")"
+  },
+  {
+   "name": "mini-notation#27",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"<[g3,b3,e4]*2 [a3,c3,e4] [b3,d3,f#4]>*2\")"
+  },
+  {
+   "name": "mini-notation#28",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"<[g3,b3,e4] _ [a3,c3,e4] [b3,d3,f#4]>*2\")"
+  },
+  {
+   "name": "mini-notation#29",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"<[g3,b3,e4]@2 [a3,c3,e4] [b3,d3,f#4]>*2\")"
+  },
+  {
+   "name": "mini-notation#30",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"<[g3,b3,e4]!2 [a3,c3,e4] [b3,d3,f#4]>*2\")"
+  },
+  {
+   "name": "mini-notation#31",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "s(\"bd(3,8,0)\")"
+  },
+  {
+   "name": "mini-notation#32",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "s(\"bd ~ ~ bd ~ ~ bd ~\")"
+  },
+  {
+   "name": "mini-notation#33",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "note(\"e5(2,8) b4(3,8) d5(2,8) c5(3,8)\").slow(2)"
+  },
+  {
+   "name": "mini-notation#34",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "s(\"bd(3,8)\")"
+  },
+  {
+   "name": "mini-notation#35",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "s(\"bd(2,8)\")"
+  },
+  {
+   "name": "mini-notation#36",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "s(\"bd(5,8)\")"
+  },
+  {
+   "name": "mini-notation#37",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "s(\"bd(7,8)\")"
+  },
+  {
+   "name": "mini-notation#38",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "s(\"bd(3,4)\")"
+  },
+  {
+   "name": "mini-notation#39",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "s(\"bd(3,8)\")"
+  },
+  {
+   "name": "mini-notation#40",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "s(\"bd(3,13)\")"
+  },
+  {
+   "name": "mini-notation#41",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "s(\"bd(3,8,0), hh cp\")"
+  },
+  {
+   "name": "mini-notation#42",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "s(\"bd(3,8,3), hh cp\")"
+  },
+  {
+   "name": "mini-notation#43",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "s(\"bd(3,8,5), hh cp\")"
+  },
+  {
+   "name": "mini-notation#44",
+   "source": "website/src/pages/learn/mini-notation.mdx",
+   "code": "n(\"60\")"
+  },
+  {
+   "name": "notes#1",
+   "source": "website/src/pages/learn/notes.mdx",
+   "code": "note(\"a3 c#4 e4 a4\")"
+  },
+  {
+   "name": "notes#2",
+   "source": "website/src/pages/learn/notes.mdx",
+   "code": "note(\"57 61 64 69\")"
+  },
+  {
+   "name": "notes#3",
+   "source": "website/src/pages/learn/notes.mdx",
+   "code": "freq(\"220 275 330 440\")"
+  },
+  {
+   "name": "notes#4",
+   "source": "website/src/pages/learn/notes.mdx",
+   "code": "note(\"a3 c#4 e4 a4\")"
+  },
+  {
+   "name": "notes#5",
+   "source": "website/src/pages/learn/notes.mdx",
+   "code": "note(\"57 61 64 69\")"
+  },
+  {
+   "name": "notes#6",
+   "source": "website/src/pages/learn/notes.mdx",
+   "code": "note(\"74.5 75 75.5 76\")"
+  },
+  {
+   "name": "notes#7",
+   "source": "website/src/pages/learn/notes.mdx",
+   "code": "freq(\"220 275 330 440\")"
+  },
+  {
+   "name": "notes#8",
+   "source": "website/src/pages/learn/notes.mdx",
+   "code": "freq(\"220 221 223 224\")"
+  },
+  {
+   "name": "notes#9",
+   "source": "website/src/pages/learn/notes.mdx",
+   "code": "freq(\"2020 2021 2023 2024\")"
+  },
+  {
+   "name": "notes#10",
+   "source": "website/src/pages/learn/notes.mdx",
+   "code": "freq(\"5020 5021 5023 5024\")"
+  },
+  {
+   "name": "notes#11",
+   "source": "website/src/pages/learn/notes.mdx",
+   "code": "freq(\"10020 10021 10023 10024\")"
+  },
+  {
+   "name": "notes#12",
+   "source": "website/src/pages/learn/notes.mdx",
+   "code": "note(\"a3 c#4 e4 a4\")"
+  },
+  {
+   "name": "samples#1",
+   "source": "website/src/pages/learn/samples.mdx",
+   "code": "s(\"bd sd [~ bd] sd,hh*16, misc\")"
+  },
+  {
+   "name": "samples#2",
+   "source": "website/src/pages/learn/samples.mdx",
+   "code": "s(\"RolandTR808_bd RolandTR808_sd,RolandTR808_hh*16\")"
+  },
+  {
+   "name": "samples#3",
+   "source": "website/src/pages/learn/samples.mdx",
+   "code": "s(\"bd sd,hh*16\").bank(\"RolandTR808\")"
+  },
+  {
+   "name": "samples#4",
+   "source": "website/src/pages/learn/samples.mdx",
+   "code": "s(\"bd sd,hh*16\").bank(\"<RolandTR808 RolandTR909>\")"
+  },
+  {
+   "name": "samples#5",
+   "source": "website/src/pages/learn/samples.mdx",
+   "code": "s(\"hh*8\").bank(\"RolandTR909\").n(\"0 1 2 3\")"
+  },
+  {
+   "name": "samples#6",
+   "source": "website/src/pages/learn/samples.mdx",
+   "code": "s(\"hh*8\").bank(\"RolandTR909\").n(\"0 1 2 3 4 5 6 7\")"
+  },
+  {
+   "name": "samples#7",
+   "source": "website/src/pages/learn/samples.mdx",
+   "code": "s(\"bd*4,hh:0 hh:1 hh:2 hh:3 hh:4 hh:5 hh:6 hh:7\")\n.bank(\"RolandTR909\")"
+  },
+  {
+   "name": "samples#8",
+   "source": "website/src/pages/learn/samples.mdx",
+   "code": "samples({\n  bassdrum: 'bd/BT0AADA.wav',\n  hihat: 'hh27/000_hh27closedhh.wav',\n  snaredrum: ['sd/rytm-01-classic.wav', 'sd/rytm-00-hard.wav'],\n}, 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/');\n \ns(\"bassdrum snaredrum:0 bassdrum snaredrum:1, hihat*16\")"
+  },
+  {
+   "name": "samples#9",
+   "source": "website/src/pages/learn/samples.mdx",
+   "code": "samples('https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/strudel.json')\ns(\"bd sd bd sd,hh*16\")"
+  },
+  {
+   "name": "samples#10",
+   "source": "website/src/pages/learn/samples.mdx",
+   "code": "samples('github:tidalcycles/dirt-samples')\ns(\"bd sd bd sd,hh*16\")"
+  },
+  {
+   "name": "samples#11",
+   "source": "website/src/pages/learn/samples.mdx",
+   "code": "samples('http://localhost:5432/');\n \nn(\"<0 1 2>\").s(\"swoop smash\")"
+  },
+  {
+   "name": "samples#12",
+   "source": "website/src/pages/learn/samples.mdx",
+   "code": "samples({\n  'gtr': 'gtr/0001_cleanC.wav',\n  'moog': { 'g3': 'moog/005_Mighty%20Moog%20G3.wav' },\n}, 'github:tidalcycles/dirt-samples');\nnote(\"g3 [bb3 c4] <g4 f4 eb4 f3>@2\").s(\"gtr,moog\").clip(1)\n  .gain(.5)"
+  },
+  {
+   "name": "samples#13",
+   "source": "website/src/pages/learn/samples.mdx",
+   "code": "samples({\n  'moog': {\n    'g2': 'moog/004_Mighty%20Moog%20G2.wav',\n    'g3': 'moog/005_Mighty%20Moog%20G3.wav',\n    'g4': 'moog/006_Mighty%20Moog%20G4.wav',\n  }}, 'github:tidalcycles/dirt-samples');\nnote(\"g2!2 <bb2 c3>!2, <c4@3 [<eb4 bb3> g4 f4]>\")\n  .s('moog').clip(1)\n  .gain(.5).cpm(60)"
+  },
+  {
+   "name": "samples#14",
+   "source": "website/src/pages/learn/samples.mdx",
+   "code": "samples('shabda:bass:4,hihat:4,rimshot:2')\n\n$: n(\"0 1 2 3 0 1 2 3\").s('bass')\n$: n(\"0 1*2 2 3*2\").s('hihat').clip(1)\n$: n(\"~ 0 ~ 1 ~ 0 0 1\").s('rimshot')"
+  },
+  {
+   "name": "samples#15",
+   "source": "website/src/pages/learn/samples.mdx",
+   "code": "samples('shabda/speech:the_drum,forever')\nsamples('shabda/speech/fr-FR/m:magnifique')\n\n$: s(\"the_drum*2\").chop(16).speed(rand.range(0.85,1.1))\n$: s(\"forever magnifique\").slow(4).late(0.125)"
+  },
+  {
+   "name": "sounds#1",
+   "source": "website/src/pages/learn/sounds.mdx",
+   "code": "s(\"bd hh sd hh\")"
+  },
+  {
+   "name": "sounds#2",
+   "source": "website/src/pages/learn/sounds.mdx",
+   "code": "s(\"sawtooth square triangle sine\")"
+  },
+  {
+   "name": "sounds#3",
+   "source": "website/src/pages/learn/sounds.mdx",
+   "code": "note(\"a3 c#4 e4 a4\").s(\"sawtooth\")"
+  },
+  {
+   "name": "sounds#4",
+   "source": "website/src/pages/learn/sounds.mdx",
+   "code": "note(\"57 61 64 69\").s(\"sine\")"
+  },
+  {
+   "name": "sounds#5",
+   "source": "website/src/pages/learn/sounds.mdx",
+   "code": "freq(\"220 275 330 440\").s(\"triangle\")"
+  },
+  {
+   "name": "sounds#6",
+   "source": "website/src/pages/learn/sounds.mdx",
+   "code": "freq(\"220 275 330 440 550\").s(\"triangle sawtooth sine\")"
+  },
+  {
+   "name": "stepwise#1",
+   "source": "website/src/pages/learn/stepwise.mdx",
+   "code": "fastcat(\"bd hh hh\", \"bd hh hh cp hh\").sound()"
+  },
+  {
+   "name": "stepwise#2",
+   "source": "website/src/pages/learn/stepwise.mdx",
+   "code": "stepcat(\"bd hh hh\", \"bd hh hh cp hh\").sound()"
+  },
+  {
+   "name": "stepwise#3",
+   "source": "website/src/pages/learn/stepwise.mdx",
+   "code": "\"c a f e\".expand(2).note().sound(\"folkharp\")"
+  },
+  {
+   "name": "stepwise#4",
+   "source": "website/src/pages/learn/stepwise.mdx",
+   "code": "\"c a f e\".expand(4).note().sound(\"folkharp\")"
+  },
+  {
+   "name": "stepwise#5",
+   "source": "website/src/pages/learn/stepwise.mdx",
+   "code": "stepcat(\"c a f e\".expand(2), \"g d\").note()\n  .sound(\"folkharp\")"
+  },
+  {
+   "name": "stepwise#6",
+   "source": "website/src/pages/learn/stepwise.mdx",
+   "code": "stepcat(\"c a f e\".expand(4), \"g d\").note()\n  .sound(\"folkharp\")"
+  },
+  {
+   "name": "stepwise#7",
+   "source": "website/src/pages/learn/stepwise.mdx",
+   "code": "stepcat(\"c a f e\".expand(2), \"g d\").note()\n  .sound(\"folkharp\")\n  .pace(8)"
+  },
+  {
+   "name": "stepwise#8",
+   "source": "website/src/pages/learn/stepwise.mdx",
+   "code": "stepcat(\"c a f e\".expand(4), \"g d\").note()\n  .sound(\"folkharp\")\n  .pace(8)"
+  },
+  {
+   "name": "stepwise#9",
+   "source": "website/src/pages/learn/stepwise.mdx",
+   "code": "note(\"c a f e\").sound(\"folkharp\").expand(\"3 2 1 1 2 3\")"
+  },
+  {
+   "name": "stepwise#10",
+   "source": "website/src/pages/learn/stepwise.mdx",
+   "code": "note(\"c a f e\").sound(\"folkharp\").expand(\"3 2 1 1 2 3\").pace(8)"
+  },
+  {
+   "name": "strudel-vs-tidal#1",
+   "source": "website/src/pages/learn/strudel-vs-tidal.mdx",
+   "code": "$: n(\"[0 .. 8]*8/9\").scale(\"C:minor:pentatonic\")\n\n_$: s(\"bd*4\").bank('RolandTR909')"
+  },
+  {
+   "name": "synths#1",
+   "source": "website/src/pages/learn/synths.mdx",
+   "code": "note(\"c2 <eb2 <g2 g1>>\".fast(2))\n.sound(\"<sawtooth square triangle sine>\")\n._scope()"
+  },
+  {
+   "name": "synths#2",
+   "source": "website/src/pages/learn/synths.mdx",
+   "code": "sound(\"<white pink brown>\")._scope()"
+  },
+  {
+   "name": "synths#3",
+   "source": "website/src/pages/learn/synths.mdx",
+   "code": "sound(\"bd*2,<white pink brown>*8\")\n.decay(.04).sustain(0)._scope()"
+  },
+  {
+   "name": "synths#4",
+   "source": "website/src/pages/learn/synths.mdx",
+   "code": "note(\"c3\").noise(\"<0.1 0.25 0.5>\")._scope()"
+  },
+  {
+   "name": "synths#5",
+   "source": "website/src/pages/learn/synths.mdx",
+   "code": "s(\"crackle*4\").density(\"<0.01 0.04 0.2 0.5>\".slow(2))._scope()"
+  },
+  {
+   "name": "synths#6",
+   "source": "website/src/pages/learn/synths.mdx",
+   "code": "note(\"c2 <eb2 <g2 g1>>\".fast(2))\n.sound(\"sawtooth\")\n.n(\"<32 16 8 4>\")\n._scope()"
+  },
+  {
+   "name": "synths#7",
+   "source": "website/src/pages/learn/synths.mdx",
+   "code": "note(\"c2 <eb2 <g2 g1>>\".fast(2))\n.sound(\"sawtooth:<32 16 8 4>\")\n._scope()"
+  },
+  {
+   "name": "synths#8",
+   "source": "website/src/pages/learn/synths.mdx",
+   "code": "samples('bubo:waveforms');\nnote(\"<[g3,b3,e4]!2 [a3,c3,e4] [b3,d3,f#4]>\")\n.n(\"<1 2 3 4 5 6 7 8 9 10>/2\").room(0.5).size(0.9)\n.s('wt_flute').velocity(0.25).often(n => n.ply(2))\n.release(0.125).decay(\"<0.1 0.25 0.3 0.4>\").sustain(0)\n.cutoff(2000).cutoff(\"<1000 2000 4000>\").fast(4)\n._scope()\n"
+  },
+  {
+   "name": "synths#9",
+   "source": "website/src/pages/learn/synths.mdx",
+   "code": "note(\"c2 eb2 f2 g2\") // also supports freq\n  .s(\"{z_sawtooth z_tan z_noise z_sine z_square}%4\")\n  .zrand(0) // randomization\n  // zzfx envelope\n  .attack(0.001)\n  .decay(0.1)\n  .sustain(.8)\n  .release(.1)\n  // special zzfx params\n  .curve(1) // waveshape 1-3\n  .slide(0) // +/- pitch slide\n  .deltaSlide(0) // +/- pitch slide (?)\n  .noise(0) // make it dirty\n  .zmod(0) // fm speed\n  .zcrush(0) // bit crush 0 - 1\n  .zdelay(0) // simple delay\n  .pitchJump(0) // +/- pitch change after pitchJumpTime\n  .pitchJumpTime(0) // >0 time after pitchJump is applied\n  .lfo(0) // >0 resets slide + pitchJump + sets tremolo speed\n  .tremolo(0) // 0-1 lfo volume modulation amount\n  //.duration(.2) // overwrite strudel event duration\n  //.gain(1) // change volume\n  ._scope() // vizualise waveform (not zzfx related)\n"
+  },
+  {
+   "name": "tonal#1",
+   "source": "website/src/pages/learn/tonal.mdx",
+   "code": "chord(\"<C^7 A7b13 Dm7 G7>*2\")\n  .dict('ireal').layer(\n  x=>x.struct(\"[~ x]*2\").voicing()\n  ,\n  x=>n(\"0*4\").set(x).mode(\"root:g2\").voicing()\n  .s('sawtooth').cutoff(\"800:4:2\")\n)"
+  },
+  {
+   "name": "tonal#2",
+   "source": "website/src/pages/learn/tonal.mdx",
+   "code": "\"[c2 c3]*4\".transpose(\"<0 -2 5 3>\").note()"
+  },
+  {
+   "name": "tonal#3",
+   "source": "website/src/pages/learn/tonal.mdx",
+   "code": "\"[c2 c3]*4\".transpose(\"<1P -2M 4P 3m>\").note()"
+  },
+  {
+   "name": "tonal#4",
+   "source": "website/src/pages/learn/tonal.mdx",
+   "code": "\"[-8 [2,4,6]]*2\"\n.scale('C4 bebop major')\n.scaleTranspose(\"<0 -1 -2 -3 -4 -5 -6 -4>*2\")\n.note()"
+  },
+  {
+   "name": "tonal#5",
+   "source": "website/src/pages/learn/tonal.mdx",
+   "code": "\"<C^7 A7b13 Dm7 G7>*2\".rootNotes(3).note()"
+  },
+  {
+   "name": "tonal#6",
+   "source": "website/src/pages/learn/tonal.mdx",
+   "code": "\"<C^7 A7b13 Dm7 G7>*2\".layer(\n  x => x.voicings('lefthand').struct(\"[~ x]*2\").note(),\n  x => x.rootNotes(2).note().s('sawtooth').cutoff(800)\n)"
+  },
+  {
+   "name": "visual-feedback#1",
+   "source": "website/src/pages/learn/visual-feedback.mdx",
+   "code": "n(\"<0 2 1 3 2>*8\")\n.scale(\"<A1 D2>/4:minor:pentatonic\")\n.s(\"supersaw\").lpf(300).lpenv(\"<4 3 2>*4\")"
+  },
+  {
+   "name": "visual-feedback#2",
+   "source": "website/src/pages/learn/visual-feedback.mdx",
+   "code": "n(\"<0 2 1 3 2>*8\")\n.scale(\"<A1 D2>/4:minor:pentatonic\")\n.s(\"supersaw\").lpf(300).lpenv(\"<4 3 2>*4\")\n.color(\"cyan magenta\")"
+  },
+  {
+   "name": "visual-feedback#3",
+   "source": "website/src/pages/learn/visual-feedback.mdx",
+   "code": "note(\"c a f e\").color(\"white\").punchcard()"
+  },
+  {
+   "name": "visual-feedback#4",
+   "source": "website/src/pages/learn/visual-feedback.mdx",
+   "code": "note(\"c a f e\").color(\"white\")._punchcard()"
+  },
+  {
+   "name": "visual-feedback#5",
+   "source": "website/src/pages/learn/visual-feedback.mdx",
+   "code": "note(\"c a f e\").color(\"white\")\n._punchcard()\n.color(\"cyan\")"
+  },
+  {
+   "name": "visual-feedback#6",
+   "source": "website/src/pages/learn/visual-feedback.mdx",
+   "code": "note(\"c a f e\").color(\"white\")\n._pianoroll()\n.color(\"cyan\")"
+  },
+  {
+   "name": "arpeggios#1",
+   "source": "website/src/pages/recipes/arpeggios.mdx",
+   "code": "note(\"c a f e\").piano().slow(2)"
+  },
+  {
+   "name": "arpeggios#2",
+   "source": "website/src/pages/recipes/arpeggios.mdx",
+   "code": "note(\"<c a f e>\").piano().slow(2)"
+  },
+  {
+   "name": "arpeggios#3",
+   "source": "website/src/pages/recipes/arpeggios.mdx",
+   "code": "\"<c a f e>\".off(1/8, add(7))\n  .note().piano().slow(2)"
+  },
+  {
+   "name": "arpeggios#4",
+   "source": "website/src/pages/recipes/arpeggios.mdx",
+   "code": "\"<c*2 a(3,8) f(3,8,2) e*2>\"\n  .off(1/8, add(7))\n  .note().piano().slow(2)"
+  },
+  {
+   "name": "arpeggios#5",
+   "source": "website/src/pages/recipes/arpeggios.mdx",
+   "code": "\"<c*2 a(3,8) f(3,8,2) e*2>\"\n  .off(1/8, add(7))\n  .note().piano()\n  .jux(rev).slow(2)"
+  },
+  {
+   "name": "arpeggios#6",
+   "source": "website/src/pages/recipes/arpeggios.mdx",
+   "code": "\"<c*2 a(3,8) f(3,8,2) e*2>\"\n  .off(1/8, add(7))\n  .off(1/8, add(12))\n  .note().piano()\n  .jux(rev).slow(2)"
+  },
+  {
+   "name": "microrhythms#1",
+   "source": "website/src/pages/recipes/microrhythms.mdx",
+   "code": "s(\"hh\").struct(\n  stack(\n    \"x\", // 0\n    \"~ x ~@3\", // 1/5\n    \"~ x\", // 1/2\n    \"~@2 x\" // 2/3\n))"
+  },
+  {
+   "name": "microrhythms#2",
+   "source": "website/src/pages/recipes/microrhythms.mdx",
+   "code": "s(\"hh\").struct(\"x@6 x@9 x@5 x@10\")"
+  },
+  {
+   "name": "microrhythms#3",
+   "source": "website/src/pages/recipes/microrhythms.mdx",
+   "code": "Pattern.prototype.micro = function (...timestamps) {\n  const durations = timestamps.map((x, i, a) => {\n    const next = i < a.length-1 ? a[i+1] : 1;\n    return next - a[i]\n  })\n  return this.struct(timeCat(...durations.map(d => [d, 1]))).late(timestamps[0])\n}\ns('hh').micro(0, 1/5, 1/2, 2/3)"
+  },
+  {
+   "name": "microrhythms#4",
+   "source": "website/src/pages/recipes/microrhythms.mdx",
+   "code": "Pattern.prototype.micro = function (...timestamps) {\n  const durations = timestamps.map((x, i, a) => {\n    const next = i < a.length-1 ? a[i+1] : 1;\n    return next - a[i]\n  })\n  return this.struct(timeCat(...durations.map(d => [d, 1]))).late(timestamps[0])\n}\ns('hh').micro(0, 1/6, 2/5, 2/3, 3/4)"
+  },
+  {
+   "name": "recipes#1",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "note(\"c eb g c4\")\n.clip(2).s(\"gm_electric_guitar_clean\")"
+  },
+  {
+   "name": "recipes#2",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "n(\"0 2 4 7\").scale(\"C:minor\")\n.clip(2).s(\"gm_electric_guitar_clean\")"
+  },
+  {
+   "name": "recipes#3",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "n(\"0 1 2 3\").chord(\"Cm\").mode(\"above:c3\").voicing()\n.clip(2).s(\"gm_electric_guitar_clean\")"
+  },
+  {
+   "name": "recipes#4",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "\"0\"\n  .off(1/3, add(2))\n  .off(1/2, add(4))\n  .n()\n  .scale(\"C:minor\")\n  .s(\"gm_electric_guitar_clean\")"
+  },
+  {
+   "name": "recipes#5",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "samples('github:yaxu/clean-breaks')\ns(\"amen/4\").fit().chop(32)"
+  },
+  {
+   "name": "recipes#6",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "samples('github:yaxu/clean-breaks')\ns(\"amen/4\").fit().chop(16).cut(1)\n.sometimesBy(.5, ply(\"2\"))\n.sometimesBy(.25, mul(speed(\"-1\")))"
+  },
+  {
+   "name": "recipes#7",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "samples('github:yaxu/clean-breaks')\ns(\"amen/4\").fit()\n  .slice(8, \"<0 1 2 3 4*2 5 6 [6 7]>*2\")\n  .cut(1).rarely(ply(\"2\"))"
+  },
+  {
+   "name": "recipes#8",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "samples('github:yaxu/clean-breaks')\ns(\"amen\")\n  .splice(8, \"<0 1 2 3 4*2 5 6 [6 7]>*2\")\n  .cut(1).rarely(ply(\"2\"))"
+  },
+  {
+   "name": "recipes#9",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "note(\"g1 bb1 <c2 eb2> d2\")\n  .s(\"sawtooth\")\n  .lpf(400).lpenv(4)\n  .scope()"
+  },
+  {
+   "name": "recipes#10",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "note(\"g1 bb1 <c2 eb2> d2\")\n  .s(\"sawtooth\").lpq(8)\n  .lpf(400).lpa(.2).lpenv(4)\n  .scope()"
+  },
+  {
+   "name": "recipes#11",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "note(\"g1 bb1 <c2 eb2> d2\")\n  .s(\"sawtooth\").lpq(8)\n  .lpf(400).lpa(.1).lpd(.1).lpenv(4)\n  .scope()"
+  },
+  {
+   "name": "recipes#12",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "note(\"<g1 bb1 d2 f1>\")\n.s(\"sawtooth, square\") // <------\n.scope()"
+  },
+  {
+   "name": "recipes#13",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "note(\"<g1 bb1 d2 f1>\")\n.s(\"sawtooth, square:0:.5\") // <--- \"name:number:gain\"\n.scope()"
+  },
+  {
+   "name": "recipes#14",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "note(\"<g1 bb1 d2 f1>\").layer(\n  x=>x.s(\"sawtooth\").vib(4),\n  x=>x.s(\"square\").add(note(12))\n).scope()"
+  },
+  {
+   "name": "recipes#15",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "note(\"<g1 bb1 d2 f1>\")\n.add(note(\"0,.1\")) // <------ chorus\n.s(\"sawtooth\").scope()"
+  },
+  {
+   "name": "recipes#16",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "s(\"bd*2,hh*3\")"
+  },
+  {
+   "name": "recipes#17",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "s(\"<bd rim, hh hh oh>*4\")"
+  },
+  {
+   "name": "recipes#18",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "note(\"<C D G A Bb D C A G D Bb A>*[6,6.1]\").piano()"
+  },
+  {
+   "name": "recipes#19",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "samples('bubo:fox')\nn(run(8)).s(\"ftabla\")"
+  },
+  {
+   "name": "recipes#20",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "samples('bubo:fox')\nn(run(8)).s(\"ftabla\").early(2/8)"
+  },
+  {
+   "name": "recipes#21",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "samples('bubo:fox')\nn(run(8)).s(\"ftabla\").early(2/8)\n.sometimes(mul(speed(\"1.5\")))"
+  },
+  {
+   "name": "recipes#22",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "note(\"<c4 bb f eb>*8\")\n.add(note(perlin.range(0,.5))) // <------ warble\n.clip(2).s(\"gm_electric_guitar_clean\")"
+  },
+  {
+   "name": "recipes#23",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "note(\"f ab bb c\")\n.clip(\"<2 1 .5 .25>\")"
+  },
+  {
+   "name": "recipes#24",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "note(\"f ab bb c\")\n.release(\"<2 1 .5 .25>\")"
+  },
+  {
+   "name": "recipes#25",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "note(\"f ab bb c\")\n.decay(\"<2 1 .5 .25>\")"
+  },
+  {
+   "name": "recipes#26",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "s(\"oh*4\").end(\"<1 .5 .25 .1>\")"
+  },
+  {
+   "name": "recipes#27",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "s(\"oh*4\").clip(\"<1 .5 .25 .1>\")"
+  },
+  {
+   "name": "recipes#28",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "s(\"oh*4\").decay(\"<1 .5 .25 .1>\")"
+  },
+  {
+   "name": "recipes#29",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "note(\"<c eb g f>\").s(\"bd\").loop(1).loopEnd(.05).gain(.2)"
+  },
+  {
+   "name": "recipes#30",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "samples('github:bubobubobubobubo/dough-waveforms')\nnote(\"c eb g bb\").s(\"wt_dbass\").clip(2)"
+  },
+  {
+   "name": "recipes#31",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "samples('github:bubobubobubobubo/dough-waveforms')\nnote(\"c2*8\").s(\"wt_dbass\").n(run(8)).fast(2)"
+  },
+  {
+   "name": "recipes#32",
+   "source": "website/src/pages/recipes/recipes.mdx",
+   "code": "samples('github:bubobubobubobubo/dough-waveforms')\nnote(\"c2*8\").s(\"wt_dbass\").n(run(8))\n.lpf(perlin.range(100,1000).slow(8))\n.lpenv(-3).lpa(.1).room(.5).fast(2)"
+  },
+  {
+   "name": "rhythms#1",
+   "source": "website/src/pages/recipes/rhythms.mdx",
+   "code": "s(\"bd sd\").slow(2)"
+  },
+  {
+   "name": "rhythms#2",
+   "source": "website/src/pages/recipes/rhythms.mdx",
+   "code": "s(\"bd sd:3\").slow(2)"
+  },
+  {
+   "name": "rhythms#3",
+   "source": "website/src/pages/recipes/rhythms.mdx",
+   "code": "s(\"bd*2 [~ sd:3]\").slow(2)"
+  },
+  {
+   "name": "rhythms#4",
+   "source": "website/src/pages/recipes/rhythms.mdx",
+   "code": "s(\"bd*2 [[~ lt] sd:3] lt:1 [ht mt*2]\").slow(2)"
+  },
+  {
+   "name": "rhythms#5",
+   "source": "website/src/pages/recipes/rhythms.mdx",
+   "code": "s(\"bd*2 [[~ lt] sd:3] lt:1 [ht mt*2]\")\n.every(2, early(.25)).slow(2)"
+  },
+  {
+   "name": "rhythms#6",
+   "source": "website/src/pages/recipes/rhythms.mdx",
+   "code": "s(\"bd*2 [[~ lt] sd:3] lt:1 [ht mt*2]\")\n.every(2, early(\"<.25 .125 .5>\")).slow(2)"
+  },
+  {
+   "name": "rhythms#7",
+   "source": "website/src/pages/recipes/rhythms.mdx",
+   "code": "s(\"bd*2 [[~ lt] sd:3] lt:1 [ht mt*2]\")\n.every(2, early(\"<.25 .125 .5>\"))\n.shape(\"<0 .5 .3>\")\n.room(saw.range(0,.2).slow(4))\n.slow(2)"
+  },
+  {
+   "name": "rhythms#8",
+   "source": "website/src/pages/recipes/rhythms.mdx",
+   "code": "s(\"bd*2 [[~ lt] sd:3] lt:1 [ht mt*2]\")\n.every(2, early(\"<.25 .125 .5>\"))\n.shape(\"<0 .5 .3>\")\n.room(saw.range(0,.2).slow(4))\n.jux(id, rev, x=>x.speed(2))\n.slow(2)"
+  },
+  {
+   "name": "rhythms#9",
+   "source": "website/src/pages/recipes/rhythms.mdx",
+   "code": "n(\"0 0 [2 0] [2 3]\").s(\"feel\").speed(1.5).slow(2)"
+  },
+  {
+   "name": "rhythms#10",
+   "source": "website/src/pages/recipes/rhythms.mdx",
+   "code": "n(\"0 <0 4> [2 0] [2 3]\").s(\"feel\").speed(1.5).slow(2)"
+  },
+  {
+   "name": "docs#1",
+   "source": "website/src/pages/technical-manual/docs.mdx",
+   "code": "note(\"a3 c#4 e4 a4\")"
+  },
+  {
+   "name": "patterns#1",
+   "source": "website/src/pages/technical-manual/patterns.mdx",
+   "code": "const pattern = sequence(\"c3\", [\"e3\", \"g3\"])\nconst events = pattern.queryArc(0, 1)\nconsole.log(events.map((e) => e.show()))\nsilence"
+  },
+  {
+   "name": "cycles#1",
+   "source": "website/src/pages/understand/cycles.mdx",
+   "code": "s(\"bd\")"
+  },
+  {
+   "name": "cycles#2",
+   "source": "website/src/pages/understand/cycles.mdx",
+   "code": "s(\"bd bd bd bd\")"
+  },
+  {
+   "name": "cycles#3",
+   "source": "website/src/pages/understand/cycles.mdx",
+   "code": "s(\"bd hh bd hh\")"
+  },
+  {
+   "name": "cycles#4",
+   "source": "website/src/pages/understand/cycles.mdx",
+   "code": "s(\"bd hh\").cpm(110)"
+  },
+  {
+   "name": "cycles#5",
+   "source": "website/src/pages/understand/cycles.mdx",
+   "code": "s(\"bd sd bd rim, hh*8\").cpm(110/4)"
+  },
+  {
+   "name": "cycles#6",
+   "source": "website/src/pages/understand/cycles.mdx",
+   "code": "s(\"bd sd, hh*4\").cpm(110/2)"
+  },
+  {
+   "name": "cycles#7",
+   "source": "website/src/pages/understand/cycles.mdx",
+   "code": "s(\"bd sd bd rim, hh*8\").cpm(110/4)"
+  },
+  {
+   "name": "cycles#8",
+   "source": "website/src/pages/understand/cycles.mdx",
+   "code": "s(`<\n[bd sd bd rim, hh*8] \n[bd sd bd rim*2, hh*8]\n>`).cpm(110/4)"
+  },
+  {
+   "name": "cycles#9",
+   "source": "website/src/pages/understand/cycles.mdx",
+   "code": "s(\"bd <sd rim*<1 2>>,hh*4\").cpm(110/2)"
+  },
+  {
+   "name": "cycles#10",
+   "source": "website/src/pages/understand/cycles.mdx",
+   "code": "s(\"bd ~ rim bd bd rim ~\")"
+  },
+  {
+   "name": "cycles#11",
+   "source": "website/src/pages/understand/cycles.mdx",
+   "code": "s(\"bd hh hh bd hh hh bd rim bd hh\")"
+  },
+  {
+   "name": "cycles#12",
+   "source": "website/src/pages/understand/cycles.mdx",
+   "code": "s(`<\n[bd hh rim]@3\n[bd hh rim sd]@4\n>`).cpm(110*2)"
+  },
+  {
+   "name": "cycles#13",
+   "source": "website/src/pages/understand/cycles.mdx",
+   "code": "s(`<\n[bd hh rim]\n[bd hh rim sd]\n>`).cpm(110/2)"
+  },
+  {
+   "name": "pitch#1",
+   "source": "website/src/pages/understand/pitch.mdx",
+   "code": "freq(\"<200 [300,500] 400 [500,<600 670 712 670>]>*8\")"
+  },
+  {
+   "name": "pitch#2",
+   "source": "website/src/pages/understand/pitch.mdx",
+   "code": "freq(\n  \"0 4 7 12\"\n  .fmap(n => 440 * 2**(n/12))\n)"
+  },
+  {
+   "name": "pitch#3",
+   "source": "website/src/pages/understand/pitch.mdx",
+   "code": "note(\"69 73 76 81\")"
+  },
+  {
+   "name": "pitch#4",
+   "source": "website/src/pages/understand/pitch.mdx",
+   "code": "note(\"A4 C#5 E5 A5\").piano()"
+  },
+  {
+   "name": "voicings#1",
+   "source": "website/src/pages/understand/voicings.mdx",
+   "code": "note(\"<[c3,eb3,g3] [f3,a3,c4]>\").room(.5)"
+  },
+  {
+   "name": "voicings#2",
+   "source": "website/src/pages/understand/voicings.mdx",
+   "code": "note(\"<[48,51,55] [53,57,60]>\").room(.5)"
+  },
+  {
+   "name": "voicings#3",
+   "source": "website/src/pages/understand/voicings.mdx",
+   "code": "note(\"<[0,3,7] [0,4,7]>\".add(\"<48 53>\")).room(.5)"
+  },
+  {
+   "name": "voicings#4",
+   "source": "website/src/pages/understand/voicings.mdx",
+   "code": "note(\"<[0,4,7] [0,3,7] [0,3,6] [0,4,8]>\".add(\"60\"))\n.room(.5)._pitchwheel()"
+  },
+  {
+   "name": "voicings#5",
+   "source": "website/src/pages/understand/voicings.mdx",
+   "code": "\nnote(`<\n[0,3,7] [0,4,7] [0,4,7] [0,4,7]\n[0,3,7] [0,4,7] [0,3,7] [0,4,7]\n>`.add(`<\na c d f\na e a e\n>`)).room(.5)"
+  },
+  {
+   "name": "voicings#6",
+   "source": "website/src/pages/understand/voicings.mdx",
+   "code": "note(\"<[0,3,7] [12,3,7] [12,15,7] [12,15,19]>\".add(\"48\"))\n.room(.5)"
+  },
+  {
+   "name": "voicings#7",
+   "source": "website/src/pages/understand/voicings.mdx",
+   "code": "note(\"<[c3,eb3,g3] [c4,eb3,g3] [c4,eb4,g3] [c4,eb4,g4]>\")\n.room(.5)"
+  },
+  {
+   "name": "voicings#8",
+   "source": "website/src/pages/understand/voicings.mdx",
+   "code": "note(\"<[0,3,7,12] [0,15,24] [0,3,12]>\".add(\"48\"))\n.room(.5)"
+  },
+  {
+   "name": "voicings#9",
+   "source": "website/src/pages/understand/voicings.mdx",
+   "code": "note(`<\n[0,3,7] [7,12,16] [0,7,16] [4,7,12]\n[0,3,7] [4,7,12] [0,3,7] [4,7,12]\n>`.add(`<\na c d f\na e a e\n>`)).room(.5)"
+  },
+  {
+   "name": "voicings#10",
+   "source": "website/src/pages/understand/voicings.mdx",
+   "code": "\"<Am C D F Am E Am E>\"\n  .pick({\n    Am: \"57,60,64\",\n    C: \"55,60,64\",\n    D: \"50,57,66\",\n    F: \"57,60,65\",\n    E: \"56,59,64\",\n  })\n  .note().room(.5)"
+  },
+  {
+   "name": "voicings#11",
+   "source": "website/src/pages/understand/voicings.mdx",
+   "code": "chord(\"<Am C D F Am E Am E>\").voicing().room(.5)"
+  },
+  {
+   "name": "voicings#12",
+   "source": "website/src/pages/understand/voicings.mdx",
+   "code": "addVoicings('house', {\n  '': ['7 12 16', '0 7 16', '4 7 12'],\n  'm': ['0 3 7']\n})\nchord(\"<Am C D F Am E Am E>\")\n  .dict('house').anchor(66)\n  .voicing().room(.5)"
+  },
+  {
+   "name": "voicings#13",
+   "source": "website/src/pages/understand/voicings.mdx",
+   "code": "chord(`<\nC2 C5 C6 C7 C9 C11 C13 C69\nCadd9 Co Ch Csus C^ C- C^7 \nC-7 C7sus Ch7 Co7 C^9 C^13 \nC^7#11 C^9#11 C^7#5 C-6 C-69 \nC-^7 C-^9 C-9 C-add9 C-11 \nC-7b5 Ch9 C-b6 C-#5 C7b9 \nC7#9 C7#11 C7b5 C7#5 C9#11 \nC9b5 C9#5 C7b13 C7#9#5 C7#9b5 \nC7#9#11 C7b9#11 C7b9b5 C7b9#5 \nC7b9#9 C7b9b13 C7alt C13#11 \nC13b9 C13#9 C7b9sus C7susadd3 \nC9sus C13sus C7b13sus C Caug \nCM Cm CM7 Cm7 CM9 CM13 CM7#11 \nCM9#11 CM7#5 Cm6 Cm69 Cm^7 \nC-M7 Cm^9 C-M9 Cm9 Cmadd9 \nCm11 Cm7b5 Cmb6 Cm#5\n>`).voicing().room(.5)"
+  },
+  {
+   "name": "voicings#14",
+   "source": "website/src/pages/understand/voicings.mdx",
+   "code": "anchor(\"<c4 g4 c5 g5>\").chord(\"C\").voicing().room(.5)"
+  },
+  {
+   "name": "voicings#15",
+   "source": "website/src/pages/understand/voicings.mdx",
+   "code": "mode(\"<below above duck root>\").chord(\"C\").anchor(\"c5\").voicing().room(.5)"
+  },
+  {
+   "name": "voicings#16",
+   "source": "website/src/pages/understand/voicings.mdx",
+   "code": "mode(\"<below above duck root>:c5\").chord(\"C\").voicing().room(.5)"
+  },
+  {
+   "name": "voicings#17",
+   "source": "website/src/pages/understand/voicings.mdx",
+   "code": "n(\"0 3 1 2\").chord(\"<C <Fm Db>>\").voicing()\n.clip(\"4 3 2 1\").room(.5)"
+  },
+  {
+   "name": "voicings#18",
+   "source": "website/src/pages/understand/voicings.mdx",
+   "code": "let chords = chord(`<\nF7 Bb7 F7 [Cm7 F7]\nBb7 Bo F7 [Am7 D7]\nGm7 C7 [F7 D7] [Gm7 C7]\n>`)\n$: n(\"7 8 [10 9] 8\").set(chords).voicing().dec(.2)\n$: chords.struct(\"- x - x\").voicing().room(.5)\n$: n(\"0 - 1 -\").set(chords).mode(\"root:g2\").voicing()\n"
+  },
+  {
+   "name": "first-effects#1",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "note(\"<[c2 c3]*4 [bb1 bb2]*4 [f2 f3]*4 [eb2 eb3]*4>\")\n.sound(\"sawtooth\").lpf(800)"
+  },
+  {
+   "name": "first-effects#2",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "note(\"<[c2 c3]*4 [bb1 bb2]*4 [f2 f3]*4 [eb2 eb3]*4>\")\n.sound(\"sawtooth\").lpf(\"200 1000 200 1000\")"
+  },
+  {
+   "name": "first-effects#3",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "note(\"<[c3,g3,e4] [bb2,f3,d4] [a2,f3,c4] [bb2,g3,eb4]>\")\n.sound(\"sawtooth\").vowel(\"<a e i o>\")"
+  },
+  {
+   "name": "first-effects#4",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "$: sound(\"hh*16\").gain(\"[.25 1]*4\")\n\n$: sound(\"bd*4,[~ sd:1]*2\")"
+  },
+  {
+   "name": "first-effects#5",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "$: sound(\"hh*8\").gain(\"[.25 1]*4\")\n\n$: sound(\"bd*4,[~ sd:1]*2\")\n\n$: note(\"<[c2 c3]*4 [bb1 bb2]*4 [f2 f3]*4 [eb2 eb3]*4>\")\n.sound(\"sawtooth\").lpf(\"200 1000 200 1000\")\n\n$: note(\"<[c3,g3,e4] [bb2,f3,d4] [a2,f3,c4] [bb2,g3,eb4]>\")\n.sound(\"sawtooth\").vowel(\"<a e i o>\")"
+  },
+  {
+   "name": "first-effects#6",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "note(\"c3 bb2 f3 eb3\")\n.sound(\"sawtooth\").lpf(600)\n.attack(.1)\n.decay(.1)\n.sustain(.25)\n.release(.2)"
+  },
+  {
+   "name": "first-effects#7",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "note(\"c3 bb2 f3 eb3\")\n.sound(\"sawtooth\").lpf(600)\n.adsr(\".1:.1:.5:.2\")\n"
+  },
+  {
+   "name": "first-effects#8",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "$: note(\"[~ [<[d3,a3,f4]!2 [d3,bb3,g4]!2> ~]]*2\")\n  .sound(\"gm_electric_guitar_muted\").delay(.5)\n\n$: sound(\"bd rim\").bank(\"RolandTR707\").delay(\".5\")"
+  },
+  {
+   "name": "first-effects#9",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "n(\"<4 [3@3 4] [<2 0> ~@16] ~>\")\n.scale(\"D4:minor\").sound(\"gm_accordion:2\")\n.room(2)"
+  },
+  {
+   "name": "first-effects#10",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "$: note(\"[~ [<[d3,a3,f4]!2 [d3,bb3,g4]!2> ~]]*2\")\n.sound(\"gm_electric_guitar_muted\").delay(.5)\n\n$: sound(\"bd rim\").bank(\"RolandTR707\").delay(.5)\n\n$: n(\"<4 [3@3 4] [<2 0> ~@16] ~>\")\n.scale(\"D4:minor\").sound(\"gm_accordion:2\")\n.room(2).gain(.5)"
+  },
+  {
+   "name": "first-effects#11",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "$: note(\"[~ [<[d3,a3,f4]!2 [d3,bb3,g4]!2> ~]]*2\")\n.sound(\"gm_electric_guitar_muted\").delay(.5)\n\n$: sound(\"bd rim\").bank(\"RolandTR707\").delay(.5)\n\n$: n(\"<4 [3@3 4] [<2 0> ~@16] ~>\")\n.scale(\"D4:minor\").sound(\"gm_accordion:2\")\n.room(2).gain(.4)\n\n$: n(\"[0 [~ 0] 4 [3 2] [0 ~] [0 ~] <0 2> ~]/2\")\n.scale(\"D2:minor\")\n.sound(\"sawtooth,triangle\").lpf(800)"
+  },
+  {
+   "name": "first-effects#12",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "sound(\"numbers:1 numbers:2 numbers:3 numbers:4\")\n  .pan(\"0 0.3 .6 1\")"
+  },
+  {
+   "name": "first-effects#13",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "sound(\"bd rim [~ bd] rim\").speed(\"<1 2 -1 -2>\").room(.2)"
+  },
+  {
+   "name": "first-effects#14",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "sound(\"bd*4,~ rim ~ cp\").slow(2)"
+  },
+  {
+   "name": "first-effects#15",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "sound(\"[bd*4,~ rim ~ cp]*<1 [2 4]>\")"
+  },
+  {
+   "name": "first-effects#16",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "sound(\"hh*16\").gain(sine)"
+  },
+  {
+   "name": "first-effects#17",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "sound(\"hh*16\").lpf(saw.range(500, 2000))"
+  },
+  {
+   "name": "first-effects#18",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "note(\"<[c2 c3]*4 [bb1 bb2]*4 [f2 f3]*4 [eb2 eb3]*4>\")\n  .sound(\"sawtooth\")\n  .lpf(sine.range(100, 2000).slow(4))"
+  },
+  {
+   "name": "first-effects#19",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "note(\"c2 c3 c2 c3\").s(\"sawtooth\").lpf(\"<400 2000>\")"
+  },
+  {
+   "name": "first-effects#20",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "note(\"c3 eb3 g3\").s(\"sawtooth\").vowel(\"<a e i o>\")"
+  },
+  {
+   "name": "first-effects#21",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "s(\"hh*16\").gain(\"[.25 1]*2\")"
+  },
+  {
+   "name": "first-effects#22",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "s(\"bd rim bd cp\").delay(.5)"
+  },
+  {
+   "name": "first-effects#23",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "s(\"bd rim bd cp\").room(.5)"
+  },
+  {
+   "name": "first-effects#24",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "s(\"bd rim bd cp\").pan(\"0 1\")"
+  },
+  {
+   "name": "first-effects#25",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "s(\"bd rim bd cp\").speed(\"<1 2 -1 -2>\")"
+  },
+  {
+   "name": "first-effects#26",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "s(\"hh*16\").gain  (saw)"
+  },
+  {
+   "name": "first-effects#27",
+   "source": "website/src/pages/workshop/first-effects.mdx",
+   "code": "s(\"hh*16\").lpf(saw.range(200,4000))"
+  },
+  {
+   "name": "first-notes#1",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"48 52 55 59\").sound(\"piano\")"
+  },
+  {
+   "name": "first-notes#2",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"c e g b\").sound(\"piano\")"
+  },
+  {
+   "name": "first-notes#3",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"db eb gb ab bb\").sound(\"piano\")"
+  },
+  {
+   "name": "first-notes#4",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"c# d# f# g# a#\").sound(\"piano\")"
+  },
+  {
+   "name": "first-notes#5",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"c2 e3 g4 b5\").sound(\"piano\")"
+  },
+  {
+   "name": "first-notes#6",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"36 43, 52 59 62 64\").sound(\"piano\")"
+  },
+  {
+   "name": "first-notes#7",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"48 67 63 [62, 58]\")\n.sound(\"piano gm_electric_guitar_muted\")"
+  },
+  {
+   "name": "first-notes#8",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"48 67 63 [62, 58]\")\n.sound(\"piano, gm_electric_guitar_muted\")"
+  },
+  {
+   "name": "first-notes#9",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"[36 34 41 39]/4\").sound(\"gm_acoustic_bass\")"
+  },
+  {
+   "name": "first-notes#10",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"<36 34 41 39>\").sound(\"gm_acoustic_bass\")"
+  },
+  {
+   "name": "first-notes#11",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"<[36 48]*4 [34 46]*4 [41 53]*4 [39 51]*4>\")\n.sound(\"gm_acoustic_bass\")"
+  },
+  {
+   "name": "first-notes#12",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"60 <63 62 65 63>\")\n.sound(\"gm_xylophone\")"
+  },
+  {
+   "name": "first-notes#13",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "sound(\"bd*4, [~ <sd cp>]*2, [~ hh]*4\")\n.bank(\"RolandTR909\")"
+  },
+  {
+   "name": "first-notes#14",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "n(\"0 2 4 <[6,8] [7,9]>\")\n.scale(\"C:minor\").sound(\"piano\").cpm(60)"
+  },
+  {
+   "name": "first-notes#15",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "n(\"<0 -3>, 2 4 <[6,8] [7,9]>\")\n.scale(\"<C:major D:mixolydian>/4\")\n.sound(\"piano\").cpm(60)"
+  },
+  {
+   "name": "first-notes#16",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"c@3 eb\").sound(\"gm_acoustic_bass\")"
+  },
+  {
+   "name": "first-notes#17",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "n(\"<[4@2 4] [5@2 5] [6@2 6] [5@2 5]>*2\")\n.scale(\"<C2:mixolydian F2:mixolydian>/4\")\n.sound(\"gm_acoustic_bass\").cpm(60)"
+  },
+  {
+   "name": "first-notes#18",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"c!2 [eb,<g a bb a>]\").sound(\"piano\").cpm(60)"
+  },
+  {
+   "name": "first-notes#19",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"[c a f e]/2\")"
+  },
+  {
+   "name": "first-notes#20",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"c a f <e g>\")"
+  },
+  {
+   "name": "first-notes#21",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"c@3 e\")"
+  },
+  {
+   "name": "first-notes#22",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"c!3 e\")"
+  },
+  {
+   "name": "first-notes#23",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"b g e c\").sound(\"piano\")"
+  },
+  {
+   "name": "first-notes#24",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "n(\"6 4 2 0\").scale(\"C:minor\").sound(\"piano\")"
+  },
+  {
+   "name": "first-notes#25",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "note(\"<[c2 c3]*4 [bb1 bb2]*4 [f2 f3]*4 [eb2 eb3]*4>\")\n.sound(\"gm_synth_bass_1\")\n.lpf(800) // <-- we'll learn about this soon"
+  },
+  {
+   "name": "first-notes#26",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "n(`<\n[~ 0] 2 [0 2] [~ 2]\n[~ 0] 1 [0 1] [~ 1]\n[~ 0] 3 [0 3] [~ 3]\n[~ 0] 2 [0 2] [~ 2]\n>*4`).scale(\"C4:minor\")\n.sound(\"gm_synth_strings_1\")"
+  },
+  {
+   "name": "first-notes#27",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "sound(\"bd*4, [~ <sd cp>]*2, [~ hh]*4\")\n.bank(\"RolandTR909\")"
+  },
+  {
+   "name": "first-notes#28",
+   "source": "website/src/pages/workshop/first-notes.mdx",
+   "code": "$: note(\"<[c2 c3]*4 [bb1 bb2]*4 [f2 f3]*4 [eb2 eb3]*4>\")\n  .sound(\"gm_synth_bass_1\").lpf(800)\n  \n$: n(`<\n  [~ 0] 2 [0 2] [~ 2]\n  [~ 0] 1 [0 1] [~ 1]\n  [~ 0] 3 [0 3] [~ 3]\n  [~ 0] 2 [0 2] [~ 2]\n  >*4`).scale(\"C4:minor\")\n  .sound(\"gm_synth_strings_1\")\n  \n$: sound(\"bd*4, [~ <sd cp>]*2, [~ hh]*4\")\n.bank(\"RolandTR909\")"
+  },
+  {
+   "name": "first-sounds#1",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"casio\")"
+  },
+  {
+   "name": "first-sounds#2",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"casio\")"
+  },
+  {
+   "name": "first-sounds#3",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"casio:1\")"
+  },
+  {
+   "name": "first-sounds#4",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd hh sd oh\")"
+  },
+  {
+   "name": "first-sounds#5",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd hh sd oh\").bank(\"RolandTR909\")"
+  },
+  {
+   "name": "first-sounds#6",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd hh sd hh\")"
+  },
+  {
+   "name": "first-sounds#7",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd bd hh bd rim bd hh bd\")"
+  },
+  {
+   "name": "first-sounds#8",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"<bd bd hh bd rim bd hh bd>\")"
+  },
+  {
+   "name": "first-sounds#9",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"<bd bd hh bd rim bd hh bd>*8\")"
+  },
+  {
+   "name": "first-sounds#10",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"<bd hh rim hh>*8\").cpm(90/4)"
+  },
+  {
+   "name": "first-sounds#11",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd hh - rim - bd hh rim\")"
+  },
+  {
+   "name": "first-sounds#12",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd [hh hh] sd [hh bd] bd - [hh sd] cp\")"
+  },
+  {
+   "name": "first-sounds#13",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd hh*2 rim hh*3 bd [- hh*2] rim hh*2\")"
+  },
+  {
+   "name": "first-sounds#14",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd [hh rim]*2 bd [hh rim]*1.5\")"
+  },
+  {
+   "name": "first-sounds#15",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd hh*32 rim hh*16\")"
+  },
+  {
+   "name": "first-sounds#16",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd [[rim rim] hh] bd cp\")"
+  },
+  {
+   "name": "first-sounds#17",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"hh hh hh, bd casio\")"
+  },
+  {
+   "name": "first-sounds#18",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"hh hh hh, bd bd, - casio\")"
+  },
+  {
+   "name": "first-sounds#19",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"hh hh hh, bd [bd,casio]\")"
+  },
+  {
+   "name": "first-sounds#20",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(`bd*2, - cp, \n- - - oh, hh*4,\n[- casio]*2`)"
+  },
+  {
+   "name": "first-sounds#21",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "n(\"0 1 [4 2] 3*2\").sound(\"jazz\")"
+  },
+  {
+   "name": "first-sounds#22",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"jazz:0 jazz:1 [jazz:4 jazz:2] jazz:3*2\")"
+  },
+  {
+   "name": "first-sounds#23",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd bd sd hh\")"
+  },
+  {
+   "name": "first-sounds#24",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"hh:0 hh:1 hh:2 hh:3\")"
+  },
+  {
+   "name": "first-sounds#25",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"metal - jazz jazz:1\")"
+  },
+  {
+   "name": "first-sounds#26",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"<bd hh rim oh bd rim>\")"
+  },
+  {
+   "name": "first-sounds#27",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd wind [metal jazz] hh\")"
+  },
+  {
+   "name": "first-sounds#28",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd [metal [jazz [sd cp]]]\")"
+  },
+  {
+   "name": "first-sounds#29",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd sd*2 cp*3\")"
+  },
+  {
+   "name": "first-sounds#30",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd*2, hh*2 [hh oh]\")"
+  },
+  {
+   "name": "first-sounds#31",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd sd [- bd] sd\")"
+  },
+  {
+   "name": "first-sounds#32",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd sd [- bd] sd\").bank(\"RolandTR909\")"
+  },
+  {
+   "name": "first-sounds#33",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd sd [- bd] sd\").cpm(45)"
+  },
+  {
+   "name": "first-sounds#34",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "n(\"0 1 4 2 0 6 3 2\").sound(\"jazz\")"
+  },
+  {
+   "name": "first-sounds#35",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"[bd sd]*2, hh*8\").bank(\"RolandTR505\")\n.cpm(100/4)"
+  },
+  {
+   "name": "first-sounds#36",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd*4, [- cp]*2, [- hh]*4\").bank(\"RolandTR909\")"
+  },
+  {
+   "name": "first-sounds#37",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd*2 cp\").bank(\"RolandTR707\").cpm(81/2)"
+  },
+  {
+   "name": "first-sounds#38",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(\"bd sd, - - - hh - hh - -, - perc - perc:1*2\")\n  .bank(\"RolandCompurhythm1000\").cpm(120/2)"
+  },
+  {
+   "name": "first-sounds#39",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(`\n[-  -  oh - ] [-  -  -  - ] [-  -  -  - ] [-  -  -  - ],\n[hh hh -  - ] [hh -  hh - ] [hh -  hh - ] [hh -  hh - ],\n[-  -  -  - ] [cp -  -  - ] [-  -  -  - ] [cp -  -  - ],\n[bd -  -  - ] [-  -  -  bd] [-  -  bd - ] [-  -  -  bd]\n`).cpm(90/4)"
+  },
+  {
+   "name": "first-sounds#40",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "sound(`\n[-  -  -  - ] [-  -  -  - ] [-  -  -  - ] [-  -  oh:1 - ],\n[hh hh hh hh] [hh hh hh hh] [hh hh hh hh] [hh hh -  - ],\n[-  -  -  - ] [cp -  -  - ] [-  -  -  - ] [~  cp -  - ],\n[bd bd -  - ] [-  -  bd - ] [bd bd - bd ] [-  -  -  - ]\n`).bank(\"RolandTR808\").cpm(88/4)"
+  },
+  {
+   "name": "first-sounds#41",
+   "source": "website/src/pages/workshop/first-sounds.mdx",
+   "code": "s(`jazz*2, \ninsect [crow metal] - -, \n- space:4 - space:1,\n- wind`)\n.cpm(100/2)"
+  },
+  {
+   "name": "pattern-effects#1",
+   "source": "website/src/pages/workshop/pattern-effects.mdx",
+   "code": "n(\"0 1 [4 3] 2 0 2 [~ 3] 4\").sound(\"jazz\").rev()"
+  },
+  {
+   "name": "pattern-effects#2",
+   "source": "website/src/pages/workshop/pattern-effects.mdx",
+   "code": "n(\"0 1 [4 3] 2 0 2 [~ 3] 4\").sound(\"jazz\").jux(rev)"
+  },
+  {
+   "name": "pattern-effects#3",
+   "source": "website/src/pages/workshop/pattern-effects.mdx",
+   "code": "$: n(\"0 1 [4 3] 2 0 2 [~ 3] 4\").sound(\"jazz\").pan(0)\n$: n(\"0 1 [4 3] 2 0 2 [~ 3] 4\").sound(\"jazz\").pan(1).rev()"
+  },
+  {
+   "name": "pattern-effects#4",
+   "source": "website/src/pages/workshop/pattern-effects.mdx",
+   "code": "$: n(\"0 1 [4 3] 2 0 2 [~ 3] 4\").sound(\"jazz\").pan(0).color(\"cyan\")\n$: n(\"0 1 [4 3] 2 0 2 [~ 3] 4\").sound(\"jazz\").pan(1).color(\"magenta\").rev()"
+  },
+  {
+   "name": "pattern-effects#5",
+   "source": "website/src/pages/workshop/pattern-effects.mdx",
+   "code": "note(\"c2, eb3 g3 [bb3 c4]\").sound(\"piano\").slow(\"0.5,1,1.5\")"
+  },
+  {
+   "name": "pattern-effects#6",
+   "source": "website/src/pages/workshop/pattern-effects.mdx",
+   "code": "$: note(\"c2, eb3 g3 [bb3 c4]\").s(\"piano\").slow(0.5).color('cyan')\n$: note(\"c2, eb3 g3 [bb3 c4]\").s(\"piano\").slow(1).color('magenta')\n$: note(\"c2, eb3 g3 [bb3 c4]\").s(\"piano\").slow(1.5).color('yellow')"
+  },
+  {
+   "name": "pattern-effects#7",
+   "source": "website/src/pages/workshop/pattern-effects.mdx",
+   "code": "note(\"c2 [eb3,g3] \".add(\"<0 <1 -1>>\"))\n.color(\"<cyan <magenta yellow>>\").adsr(\"[.1 0]:.2:[1 0]\")\n.sound(\"gm_acoustic_bass\").room(.5).cpm(60)"
+  },
+  {
+   "name": "pattern-effects#8",
+   "source": "website/src/pages/workshop/pattern-effects.mdx",
+   "code": "note(\"c2 [eb3,g3]\".add(\"<0 <1 -1>>\").add(\"0,7\"))\n.color(\"<cyan <magenta yellow>>\").adsr(\"[.1 0]:.2:[1 0]\")\n.sound(\"gm_acoustic_bass\").room(.5).cpm(60)"
+  },
+  {
+   "name": "pattern-effects#9",
+   "source": "website/src/pages/workshop/pattern-effects.mdx",
+   "code": "n(\"0 [2 4] <3 5> [~ <4 1>]\".add(\"<0 [0,2,4]>\"))\n.scale(\"C5:minor\").release(.5)\n.sound(\"gm_xylophone\").room(.5)"
+  },
+  {
+   "name": "pattern-effects#10",
+   "source": "website/src/pages/workshop/pattern-effects.mdx",
+   "code": "$: n(\"0 [2 4] <3 5> [~ <4 1>]\".add(\"<0 [0,2,4]>\"))\n  .scale(\"C5:minor\")\n  .sound(\"gm_xylophone\")\n  .room(.4).delay(.125)\n$: note(\"c2 [eb3,g3]\".add(\"<0 <1 -1>>\"))\n  .adsr(\"[.1 0]:.2:[1 0]\")\n  .sound(\"gm_acoustic_bass\")\n  .room(.5)\n$: n(\"0 1 [2 3] 2\").sound(\"jazz\").jux(rev)"
+  },
+  {
+   "name": "pattern-effects#11",
+   "source": "website/src/pages/workshop/pattern-effects.mdx",
+   "code": "sound(\"hh hh, bd rim [~ cp] rim\").bank(\"RolandTR707\").ply(2)"
+  },
+  {
+   "name": "pattern-effects#12",
+   "source": "website/src/pages/workshop/pattern-effects.mdx",
+   "code": "sound(\"hh*2 hh*2, bd*2 rim*2 [~ cp*2] rim*2\").bank(\"RolandTR707\")"
+  },
+  {
+   "name": "pattern-effects#13",
+   "source": "website/src/pages/workshop/pattern-effects.mdx",
+   "code": "n(\"0 [4 <3 2>] <2 3> [~ 1]\"\n  .off(1/16, x=>x.add(4))\n  //.off(1/8, x=>x.add(7))\n).scale(\"<C5:minor Db5:mixolydian>/2\")\n.s(\"triangle\").room(.5).dec(.1)"
+  },
+  {
+   "name": "pattern-effects#14",
+   "source": "website/src/pages/workshop/pattern-effects.mdx",
+   "code": "s(\"bd sd [rim bd] sd,[~ hh]*4\").bank(\"CasioRZ1\")\n  .off(2/16, x=>x.speed(1.5).gain(.25)\n  .off(3/16, y=>y.vowel(\"<a e i o>*8\")))"
+  },
+  {
+   "name": "pattern-effects#15",
+   "source": "website/src/pages/workshop/pattern-effects.mdx",
+   "code": "n(\"0 2 4 6 ~ 7 9 5\").scale(\"C:minor\").rev()"
+  },
+  {
+   "name": "pattern-effects#16",
+   "source": "website/src/pages/workshop/pattern-effects.mdx",
+   "code": "n(\"0 2 4 6 ~ 7 9 5\").scale(\"C:minor\").jux(rev)"
+  },
+  {
+   "name": "pattern-effects#17",
+   "source": "website/src/pages/workshop/pattern-effects.mdx",
+   "code": "n(\"0 2 4 6 ~ 7 9 5\".add(\"<0 1 2 1>\")).scale(\"C:minor\")"
+  },
+  {
+   "name": "pattern-effects#18",
+   "source": "website/src/pages/workshop/pattern-effects.mdx",
+   "code": "s(\"bd sd [~ bd] sd\").ply(\"<1 2 3>\")"
+  },
+  {
+   "name": "pattern-effects#19",
+   "source": "website/src/pages/workshop/pattern-effects.mdx",
+   "code": "s(\"bd sd [~ bd] sd, hh*8\").off(1/16, x=>x.speed(2))"
+  },
+  {
+   "name": "recap#1",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "sound(\"bd bd sd hh bd cp sd hh\")"
+  },
+  {
+   "name": "recap#2",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "sound(\"hh:0 hh:1 hh:2 hh:3\")"
+  },
+  {
+   "name": "recap#3",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "sound(\"metal ~ jazz jazz:1\")"
+  },
+  {
+   "name": "recap#4",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "sound(\"bd wind [metal jazz] hh\")"
+  },
+  {
+   "name": "recap#5",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "sound(\"bd [metal [jazz sd]]\")"
+  },
+  {
+   "name": "recap#6",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "sound(\"bd sd*2 cp*3\")"
+  },
+  {
+   "name": "recap#7",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "sound(\"bd*2, hh*2 [hh oh]\")"
+  },
+  {
+   "name": "recap#8",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "note(\"[c a f e]/2\")"
+  },
+  {
+   "name": "recap#9",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "note(\"c <e g>\")"
+  },
+  {
+   "name": "recap#10",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "note(\"c@3 e\")"
+  },
+  {
+   "name": "recap#11",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "note(\"c!3 e\")"
+  },
+  {
+   "name": "recap#12",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "sound(\"bd sd\")"
+  },
+  {
+   "name": "recap#13",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "sound(\"bd sd\").bank(\"RolandTR909\")"
+  },
+  {
+   "name": "recap#14",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "n(\"0 1 4 2\").sound(\"jazz\")"
+  },
+  {
+   "name": "recap#15",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "note(\"b g e c\").sound(\"piano\")"
+  },
+  {
+   "name": "recap#16",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "n(\"6 4 2 0\").scale(\"C:minor\").sound(\"piano\")"
+  },
+  {
+   "name": "recap#17",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "note(\"c2 c3 c2 c3\").s(\"sawtooth\").lpf(\"400 2000\")"
+  },
+  {
+   "name": "recap#18",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "note(\"c3 eb3 g3\").s(\"sawtooth\").vowel(\"<a e i o>\")"
+  },
+  {
+   "name": "recap#19",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "s(\"hh*16\").gain(\"[.25 1]*4\")"
+  },
+  {
+   "name": "recap#20",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "s(\"bd rim bd cp\").delay(.5)"
+  },
+  {
+   "name": "recap#21",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "s(\"bd rim bd cp\").room(.5)"
+  },
+  {
+   "name": "recap#22",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "s(\"bd rim bd cp\").pan(\"0 1\")"
+  },
+  {
+   "name": "recap#23",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "s(\"bd rim bd cp\").speed(\"<1 2 -1 -2>\")"
+  },
+  {
+   "name": "recap#24",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "s(\"hh*32\").lpf(saw.range(200,4000))"
+  },
+  {
+   "name": "recap#25",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "sound(\"bd sd [~ bd] sd\").cpm(45)"
+  },
+  {
+   "name": "recap#26",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "sound(\"bd sd [~ bd] sd\").fast(2)"
+  },
+  {
+   "name": "recap#27",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "sound(\"bd sd [~ bd] sd\").slow(2)"
+  },
+  {
+   "name": "recap#28",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "n(\"0 2 4 6\").scale(\"C:minor\").rev()"
+  },
+  {
+   "name": "recap#29",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "n(\"0 2 4 6\").scale(\"C:minor\").jux(rev)"
+  },
+  {
+   "name": "recap#30",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "n(\"0 2 4 6\".add(\"<0 1 2 1>\")).scale(\"C:minor\")"
+  },
+  {
+   "name": "recap#31",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "s(\"bd sd\").ply(\"<1 2 3>\")"
+  },
+  {
+   "name": "recap#32",
+   "source": "website/src/pages/workshop/recap.mdx",
+   "code": "s(\"bd sd, hh*4\").off(1/8, x=>x.speed(2))"
+  }
+ ]
+}
