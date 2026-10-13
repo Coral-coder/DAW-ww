@@ -148,3 +148,16 @@ export function creditsFor(defs) {
   }
   return [...out].map(([credit, license]) => ({ credit, license }));
 }
+
+/**
+ * Level match (dB) of every source to the FluidR3_GM bank of the same GM instrument (standard phrase, K-weighted
+ * loudness, measured headless — see docs/SAMPLES.md). Keeps the mix's per-instrument level tables valid whichever
+ * source ends up playing. multisample: per set (measured on its primary GM instrument); MusyngKite: per GM name.
+ */
+export const SOURCE_TRIM_DB = { multisample: {}, MusyngKite: {} };
+
+/** Trim (dB) for a source: {multisample, instrument} or {library, instrument}. */
+export function sourceTrimDb({ multisample, library, instrument } = {}) {
+  const v = multisample ? SOURCE_TRIM_DB.multisample[multisample] : SOURCE_TRIM_DB[library]?.[instrument];
+  return Number.isFinite(v) ? Math.max(-12, Math.min(12, v)) : 0;
+}

@@ -11,6 +11,7 @@ import { parseSoundfontText, dataUrlToBytes } from './soundfont-parse.js';
 import { fetchText, forget, releaseMemory } from './fetch-cache.js';
 import { setStatus, soundfontSourceUrl, friendlyError, userError, pluginKey } from './status.js';
 import { soundfontUrl } from './gm.js';
+import { sourceTrimDb } from '../audio/library/instrument-map.js';
 import { loadMultisampleBank, zoneBankFromSoundfont, playSampleVoice, releaseSampleVoice, MS_SETS } from '../audio/library/multisample.js';
 
 const banks = new Map(); // url -> Promise<{ name, midis:number[], buffers:AudioBuffer[] }>
@@ -134,6 +135,7 @@ export class SoundfontEngine {
         if (!current()) return false;
         this.bank = bank;
         this.source = `multisample:${ms}`;
+        bank.trim = 10 ** (sourceTrimDb({ multisample: ms, instrument: p.instrument }) / 20);
         setStatus(key, { state: 'ready', progress: 1, message: `${bank.files} samples`, info: { name: MS_SETS[ms].name, samples: bank.files, source: this.source, license: MS_SETS[ms].license } });
         return true;
       } catch (e) {
@@ -149,7 +151,10 @@ export class SoundfontEngine {
         const bank = await loadSoundfontWithStatus(url, sr);
         if (!current()) return false;
         this.bank = zoneBankFromSoundfont(bank);
-        this.source = `soundfont:${/\/(FluidR3_GM|MusyngKite|FatBoy)\//.exec(url)?.[1] || 'custom'}`;
+        const lib = /\/(FluidR3_GM|MusyngKite|FatBoy)\//.exec(url)?.[1] || 'custom';
+        this.source = `soundfont:${lib}`;
+        // every source is level-matched to the FluidR3 bank of the instrument (the mix tables were measured on it)
+        if (!p.url) this.bank.trim = 10 ** (sourceTrimDb({ library: lib, instrument: p.instrument }) / 20);
         if (key !== 'sf:' + url) setStatus(key, { state: 'ready', progress: 1, message: `${bank.buffers.length} samples`, info: { name: bank.name, samples: bank.buffers.length, source: this.source } });
         return true;
       } catch (e) { lastErr = e; }

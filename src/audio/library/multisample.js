@@ -294,7 +294,7 @@ export function playSampleVoice(engine, bank, pitch, vel, time, extra = {}) {
   }
   const g = ctx.createGain();
   const vs = clamp(Number(p.velSens ?? 0.7), 0, 1);
-  const amp = ((1 - vs) + vs * v * v) * (bank.gain[z.layer] || 1);
+  const amp = ((1 - vs) + vs * v * v) * (bank.gain[z.layer] || 1) * (bank.trim || 1);
   const att = Math.max(0.001, Number(p.attack ?? bank.attack ?? 0.002));
   g.gain.setValueAtTime(0, t);
   g.gain.linearRampToValueAtTime(amp, t + att);
