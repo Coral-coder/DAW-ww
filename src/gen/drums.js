@@ -345,6 +345,31 @@ export function generateDrumPattern(opts = {}) {
   }
   if (opts.crash) add('crash', 0, 0.9, 1);
 
+  // Top-end discipline (per bar): only ONE continuous stream among hats / ride / shaker / tambourine, and a total
+  // budget of top-end hits so the kit never turns into a wash. Trap-family hat rolls get a bigger hat budget.
+  {
+    const TOP = [DRUM_PITCH.hihat, DRUM_PITCH.ride, DRUM_PITCH.shaker, DRUM_PITCH.tambourine, DRUM_PITCH.openhat];
+    const PRIORITY = [DRUM_PITCH.hihat, DRUM_PITCH.ride, DRUM_PITCH.shaker, DRUM_PITCH.tambourine]; // keep earlier ones
+    const rolls = /trap|phonk|drill|footwork/.test(styleId);
+    const budget = rolls ? 30 : 18;
+    const barLen = bpb;
+    const nBars = Math.ceil(length / barLen - 1e-9);
+    for (let b = 0; b < nBars; b++) {
+      const inBar = (n) => n.start >= b * barLen - 1e-6 && n.start < (b + 1) * barLen - 1e-6;
+      const top = [...hits.entries()].filter(([, n]) => TOP.includes(n.pitch) && inBar(n));
+      const count = (pitch) => top.filter(([, n]) => n.pitch === pitch).length;
+      const streams = PRIORITY.filter((pitch) => count(pitch) >= 12);
+      for (const pitch of streams.slice(1)) for (const [k, n] of top) if (n.pitch === pitch) hits.delete(k);
+      let left = [...hits.entries()].filter(([, n]) => TOP.includes(n.pitch) && inBar(n));
+      if (left.length > budget) {
+        // trim the softest hits first, extra percussion before hats, never the open hats
+        const rank = (n) => (n.pitch === DRUM_PITCH.openhat ? 9 : PRIORITY.indexOf(n.pitch) === 0 ? 1 : 0) + n.vel;
+        left.sort((a, b2) => rank(a[1]) - rank(b2[1]));
+        for (const [k] of left.slice(0, left.length - budget)) hits.delete(k);
+      }
+    }
+  }
+
   // An open hat is choked by a closed hat on the same step: drop the closed one so the open hat rings.
   for (const n of [...hits.values()]) {
     if (n.pitch === DRUM_PITCH.openhat) hits.delete(`${DRUM_PITCH.hihat}@${n.start}`);

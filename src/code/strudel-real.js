@@ -346,6 +346,14 @@ export function evaluateStrudel(source) {
 
   // unknown functions / methods -> pass-throughs (Strudel packages we don't ship: midi, hydra, osc, …)
   const unknown = findUnknownNames(src, scope, core.Pattern.prototype);
+  // functions the code defines itself with register('name', …) are not unknown
+  const registered = new Set([...src.matchAll(/\bregister\s*\(\s*['"`]([A-Za-z_$][\w$]*)['"`]/g)].map((m) => m[1]));
+  // strudel.cc inline visuals: harmless no-ops here (the Code view draws its own live piano roll)
+  const VISUALS = /^_?(pianoroll|punchcard|scope|tscope|fscope|spiral|spectrum|wordfall|pitchwheel|markcss|color|colour)$/;
+  unknown.functions = unknown.functions.filter((n) => !registered.has(n));
+  const visualMethods = unknown.methods.filter((n) => VISUALS.test(n));
+  unknown.methods = unknown.methods.filter((n) => !registered.has(n) && !VISUALS.test(n));
+  for (const name of visualMethods) if (!core.Pattern.prototype[name]) core.Pattern.prototype[name] = function visualNoop() { return this; };
   const extraNames = [];
   const extraValues = [];
   if (/\binitHydra\b|\bH\s*\(/.test(src)) {
