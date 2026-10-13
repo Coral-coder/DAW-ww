@@ -19,7 +19,7 @@ import { DRUM_PADS, beatsPerBar, songLengthBeats, createTrack, createPattern, cr
 import { evaluate, queryEvents, splitTopLevel, stripComments, lastExpressionStart } from './strudel.js';
 import { drumPitch } from './convert.js';
 import {
-  renderPart, snapBeat as snapBeatQ, qVel as qVelQ, alternation, barsText, rootName, compactSteps, weightedSeq, mergeRests, chooseRes, barGroups,
+  renderPart, verifyExpr, snapBeat as snapBeatQ, qVel as qVelQ, alternation, barsText, rootName, compactSteps, weightedSeq, mergeRests, chooseRes, barGroups,
 } from './idioms.js';
 import { valueAt, parseTarget } from '../core/automation.js';
 import { grooveFor } from '../gen/groove.js';
@@ -48,6 +48,8 @@ export const ALL_MARK = '// [this track only] ';
 
 const round = (v, d = 4) => Math.round(v * 10 ** d) / 10 ** d;
 const fmt = (x, d = 3) => String(round(x, d));
+/** Control value literal: 0.25 -> ".25". */
+const num = (x, d = 3) => fmt(x, d).replace(/^0\./, '.').replace(/^-0\./, '-.');
 const gcd = (a, b) => (b ? gcd(b, a % b) : Math.abs(a));
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
@@ -208,10 +210,46 @@ function finishVel(voices) {
   });
 }
 
-/** Splits a long expression's long mini-notation literals over several lines (one alternation chunk per line). */
+/** Splits a long expression over lines: stack(…) arguments one per line, long alternations one chunk per line. */
 export function formatExpr(expr, indent = '', width = 100) {
   if (expr.length + indent.length <= width) return expr;
+  if (expr.startsWith('stack(')) {
+    const close = matchParen(expr, 5);
+    if (close > 0) {
+      const args = splitArgs(expr.slice(6, close));
+      if (args.length > 1) {
+        const inner = args.map((a) => `${indent}  ${formatExpr(a.trim(), indent + '  ', width)},`).join('\n');
+        return `stack(\n${inner}\n${indent})${expr.slice(close + 1)}`;
+      }
+    }
+  }
   return expr.replace(/"(<[^"]*>)"/g, (m, mini) => (mini.length > 60 ? strLit(mini, indent) : m));
+}
+
+/** Index of the parenthesis closing the one at `open` (strings skipped), or -1. */
+function matchParen(s, open) {
+  let depth = 0;
+  for (let i = open; i < s.length; i++) {
+    const c = s[i];
+    if (c === '"' || c === '`' || c === "'") { const j = s.indexOf(c, i + 1); if (j < 0) return -1; i = j; continue; }
+    if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+/** Top-level comma-separated arguments (strings and brackets skipped). */
+function splitArgs(s) {
+  const out = [];
+  let depth = 0, cur = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === '"' || c === '`' || c === "'") { const j = s.indexOf(c, i + 1); cur += s.slice(i, j + 1); i = j; continue; }
+    if ('([{'.includes(c)) depth++;
+    else if (')]}'.includes(c)) depth--;
+    if (c === ',' && depth === 0) { out.push(cur); cur = ''; } else cur += c;
+  }
+  if (cur.trim()) out.push(cur);
+  return out;
 }
 
 /** Mini-notation string literal; long alternations become multi-line template strings. */
@@ -262,9 +300,9 @@ export function trackControls(track, project, { ride = null, automated = null } 
   let out = '';
   const vol = typeof track.volume === 'number' ? track.volume : DEFAULT_VOL;
   if (ride?.mini) out += `.gain("${ride.mini}")`;
-  else if (ride && ride.static !== undefined) { if (Math.abs(ride.static - 1) > 1e-3) out += `.gain(${fmt(ride.static)})`; }
-  else if (Math.abs(vol - DEFAULT_VOL) > 1e-3) out += `.gain(${fmt(vol / DEFAULT_VOL)})`;
-  if (track.pan) out += `.pan(${fmt((track.pan + 1) / 2)})`;
+  else if (ride && ride.static !== undefined) { if (Math.abs(ride.static - 1) > 1e-3) out += `.gain(${num(ride.static)})`; }
+  else if (Math.abs(vol - DEFAULT_VOL) > 1e-3) out += `.gain(${num(vol / DEFAULT_VOL)})`;
+  if (track.pan) out += `.pan(${num((track.pan + 1) / 2)})`;
   const bpm = project?.bpm || 120;
   const done = new Set();
   for (const fx of track.fx || []) {
@@ -278,24 +316,24 @@ export function trackControls(track, project, { ride = null, automated = null } 
         if (!fn || mixv < 0.5) break;
         out += `.${fn}(${Math.round(fxParam(fx, 'cutoff', 2000))})`;
         const q = fxParam(fx, 'resonance', 1);
-        if (Math.abs(q - 1) > 0.05 && fn !== 'bpf') out += `.${fn === 'lpf' ? 'lpq' : 'hpq'}(${fmt(q, 2)})`;
+        if (Math.abs(q - 1) > 0.05 && fn !== 'bpf') out += `.${fn === 'lpf' ? 'lpq' : 'hpq'}(${num(q, 2)})`;
         done.add(fx.type);
         break;
       }
       case 'reverb':
-        out += `.room(${fmt(fxParam(fx, 'mix', 0.3), 2)})`;
+        out += `.room(${num(fxParam(fx, 'mix', 0.3), 2)})`;
         done.add(fx.type);
         break;
       case 'delay': {
         const secs = fxParam(fx, 'sync', false) ? divisionBeats(fxParam(fx, 'division', '1/8D')) * 60 / bpm : fxParam(fx, 'time', 0.375);
-        out += `.delay(${fmt(fxParam(fx, 'mix', 0.35), 2)}).delaytime(${fmt(secs, 3)}).delayfeedback(${fmt(fxParam(fx, 'feedback', 0.4), 2)})`;
+        out += `.delay(${num(fxParam(fx, 'mix', 0.35), 2)}).delaytime(${num(secs, 3)}).delayfeedback(${num(fxParam(fx, 'feedback', 0.4), 2)})`;
         done.add(fx.type);
         break;
       }
       case 'distortion':
       case 'saturator':
         if (done.has('shape')) break;
-        out += `.shape(${fmt(clamp(fxParam(fx, 'drive', fx.type === 'distortion' ? 12 : 6) / 48, 0, 0.95), 2)})`;
+        out += `.shape(${num(clamp(fxParam(fx, 'drive', fx.type === 'distortion' ? 12 : 6) / 48, 0, 0.95), 2)})`;
         done.add('shape');
         break;
       case 'bitcrusher':
@@ -310,7 +348,7 @@ export function trackControls(track, project, { ride = null, automated = null } 
     const bus = (project?.buses || []).find((b) => b.id === busId);
     if (!bus || !(amt > 0.005) || bus.mute) continue;
     const has = (type) => (bus.fx || []).some((f) => f.type === type && f.enabled !== false);
-    if (has('reverb') && !done.has('reverb')) { out += `.room(${fmt(amt, 2)})`; done.add('reverb'); } else if (has('delay') && !done.has('delay')) { out += `.delay(${fmt(amt, 2)})`; done.add('delay'); }
+    if (has('reverb') && !done.has('reverb')) { out += `.room(${num(amt, 2)})`; done.add('reverb'); } else if (has('delay') && !done.has('delay')) { out += `.delay(${num(amt, 2)})`; done.add('delay'); }
   }
   return out;
 }
@@ -470,16 +508,48 @@ function laneExpr(points, a, b, bpb, { neutral = () => false, exp = true } = {})
     const v = sig2(samples[0]);
     return neutral(v) ? null : numStr(v);
   }
-  // one ramp across the section: exponential (filters) or linear
-  const v0 = samples[0], v1 = last;
-  if (nb >= 2 && Math.abs(v1 - v0) > 1e-9) {
-    const ok = samples.every((v, i) => {
-      const t = i / nb;
-      const want = exp && v0 > 0 && v1 > 0 ? v0 * (v1 / v0) ** t : v0 + (v1 - v0) * t;
-      return Math.abs(Math.log(Math.max(1e-6, v) / Math.max(1e-6, want))) < 0.4;
+  // ramps: one across the section, or a few pieces (each a saw ramp or a held value) via arrange()
+  const v0 = samples[0];
+  const fits = (i, j, vEnd) => {
+    // samples i..j-1 on one ramp from samples[i] to vEnd (reached at bar j)
+    const v0 = samples[i];
+    for (let k = i; k < j; k++) {
+      const t = (k - i) / (j - i);
+      const want = exp && v0 > 0 && vEnd > 0 ? v0 * (vEnd / v0) ** t : v0 + (vEnd - v0) * t;
+      if (Math.abs(Math.log(Math.max(1e-6, samples[k]) / Math.max(1e-6, want))) > 0.25) return false;
+    }
+    return true;
+  };
+  const endAt = (j) => (j >= nb ? last : samples[j]);
+  // a sweep across the whole section (automation is approximated: within ~±50% of the drawn curve)
+  if (nb >= 2) {
+    const ok = samples.every((v, k) => {
+      const t = k / nb;
+      const want = exp && v0 > 0 && last > 0 ? v0 * (last / v0) ** t : v0 + (last - v0) * t;
+      return Math.abs(Math.log(Math.max(1e-6, v) / Math.max(1e-6, want))) < 0.45;
     });
-    if (ok) return `saw.${exp ? 'rangex' : 'range'}(${numStr(sig2(v0))}, ${numStr(sig2(v1))}).slow(${nb})`;
+    if (ok) return `saw.${exp ? 'rangex' : 'range'}(${numStr(sig2(v0))}, ${numStr(sig2(last))}).slow(${nb})`;
   }
+  const pieces = [];
+  for (let i = 0; i < nb;) {
+    let j = i + 1;
+    while (j < nb && fits(i, j + 1, endAt(j + 1))) j++;
+    pieces.push({ i, j, v0: samples[i], v1: endAt(j) });
+    i = j;
+  }
+  // a one-bar tail piece joins the piece before it
+  while (pieces.length > 1 && pieces[pieces.length - 1].j - pieces[pieces.length - 1].i === 1) {
+    const t = pieces.pop();
+    pieces[pieces.length - 1].j = t.j;
+    pieces[pieces.length - 1].v1 = t.v1;
+  }
+  const pieceExpr = (p) => {
+    const n = p.j - p.i;
+    if (Math.abs(Math.log(Math.max(1e-6, p.v1) / Math.max(1e-6, p.v0))) < 0.05) return { held: true, text: numStr(sig2(p.v0)) };
+    return { held: false, text: `saw.${exp ? 'rangex' : 'range'}(${numStr(sig2(p.v0))}, ${numStr(sig2(p.v1))}).slow(${n})` };
+  };
+  if (pieces.length === 1) return pieceExpr(pieces[0]).text;
+  if (pieces.length <= 4) return `arrange(${pieces.map((p) => { const e = pieceExpr(p); return `[${p.j - p.i}, ${e.held ? `"${e.text}"` : e.text}]`; }).join(', ')})`;
   return `"${barsText(samples.map((v) => ({ text: numStr(sig2(v)), w: 1 })))}"`;
 }
 
@@ -539,6 +609,9 @@ function masterRide(project, totalBeats, bpb) {
   for (const s of segs) { const l = runs[runs.length - 1]; if (l && l.text === s.text) l.w++; else runs.push({ ...s }); }
   return runs.length > 1 ? `all(x => x.postgain("${alternation(runs)}"))  // master volume automation` : '';
 }
+
+/** Onsets + pitches only (velocities / lengths aside). */
+const partShape = (target) => target.map((n) => `${n.pitch}@${n.start}`).join(';');
 
 /** Quantized-note signature used to spot repeated / transposed patterns. */
 function partSig(target, shift = 0) {
@@ -680,6 +753,12 @@ export function songToCode(project, opts = {}) {
         const L = pat.length || bpb;
         const sig = partSig(r.target);
         let found = known.find((k) => k.sig === sig && Math.abs(k.len - L) < EPS && k.suffix === suffix);
+        // an earlier section's pattern that plays this part too (same notes, velocities within tolerance)
+        if (!found) {
+          const shape = partShape(r.target);
+          found = known.find((k) => k.shape === shape && Math.abs(k.len - L) < EPS && k.suffix === suffix
+            && verifyExpr(k.core, r.target, { cycles: L / bpb, bpb, kind }));
+        }
         let transpose = 0;
         if (!found && kind === 'melodic' && r.target.length) {
           for (const k of known) {
@@ -697,7 +776,7 @@ export function songToCode(project, opts = {}) {
           const name = labelFor(`${sec.label}_${label}${startsSection ? '' : '_in'}`, constNames);
           used.add(name);
           const core = r.expr;
-          known.push({ name, sig, len: L, suffix, target: r.target });
+          known.push({ name, sig, shape: partShape(r.target), core, len: L, suffix, target: r.target });
           info.consts[name] = { patterns: [{ id: s.patternId, transpose: 0 }], suffix, core, form: r.form };
           sectionConsts.get(sec).push({ name, core, suffix, trackId: track.id });
           ref = { name, transpose: 0 };

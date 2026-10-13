@@ -23,7 +23,7 @@ import { saveLocal, listLocal, loadLocal, deleteLocal, createAutosaver } from '.
 import { codeToPatterns, patternsToCode } from '../code/convert.js';
 
 /** Where daW³'s complete source code lives (offered in the app — AGPL-3.0 §13). */
-export const SOURCE_URL = 'https://github.com/Coral-coder/DAW-ww';
+export const SOURCE_URL = 'https://github.com/Coral-coder/daw3';
 
 const ROLE_COLORS = { drums: '#ff5f6d', bass: '#ffa94d', chords: '#4dabf7', pad: '#9775fa', lead: '#38d9a9', arp: '#3bc9db', fx: '#ced4da', perc: '#f783ac', code: '#ffd43b', audio: '#a9e34b' };
 

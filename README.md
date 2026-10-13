@@ -23,7 +23,7 @@ npm start
 ```
 
 Port **5173**. No offerings required. Nothing to install. Nothing to remove.
-Or follow the signal → **[coral-coder.github.io/DAW-ww](https://coral-coder.github.io/DAW-ww/)**
+Or follow the signal → **[coral-coder.github.io/daw3](https://coral-coder.github.io/daw3/)**
 
 ### ⟁ what sleeps inside
 
