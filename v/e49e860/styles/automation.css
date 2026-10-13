@@ -1,0 +1,41 @@
+/* Automation recording: header arm button + mode, status badge, automated-control markers,
+   bus / master owner rows and recording lanes in the arrangement. */
+.auto-arm-group { display: inline-flex; align-items: center; gap: 2px; }
+.transport-btn.auto-arm { position: relative; width: 38px; gap: 2px; font-weight: 800; font-size: 13px; }
+.auto-arm-a { line-height: 1; }
+.auto-arm-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--rec, #ff4d4d); opacity: .45; }
+.transport-btn.auto-arm.on { color: var(--rec, #ff4d4d); border-color: var(--rec, #ff4d4d); background: color-mix(in srgb, var(--rec, #ff4d4d) 14%, var(--bg-3)); }
+.transport-btn.auto-arm.on .auto-arm-dot { opacity: 1; }
+.transport-btn.auto-arm.writing { color: #fff; background: var(--rec, #ff4d4d); animation: auto-pulse 0.9s ease-in-out infinite; }
+.transport-btn.auto-arm.writing .auto-arm-dot { background: #fff; }
+@keyframes auto-pulse { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--rec, #ff4d4d) 35%, transparent); opacity: .8; } }
+select.auto-mode { height: 30px; font-size: 11px; padding: 0 4px; max-width: 70px; }
+
+.auto-rec-badge { display: inline-flex; align-items: center; gap: 5px; margin: 0 8px; padding: 1px 7px; border-radius: 9px; font-size: 10px; font-weight: 800; letter-spacing: .06em; color: #fff; background: var(--rec, #ff4d4d); }
+.auto-rec-badge.hidden { display: none; }
+.auto-rec-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: auto-pulse 0.9s infinite; }
+.arr-ah .auto-rec-dot { color: var(--rec, #ff4d4d); }
+
+/* controls with an active automation lane: small colored dot; red while being written */
+.knob.auto-on, .mx-fader.auto-on, .toggle.auto-on, select.auto-on, .dv-power.auto-on, .mx-slot-dot.auto-on { position: relative; }
+.knob.auto-on::after, .mx-fader.auto-on::after, .toggle.auto-on::after, .dv-power.auto-on::after {
+  content: ''; position: absolute; top: 0; right: 0; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent-2); box-shadow: 0 0 0 1px var(--bg); pointer-events: none;
+}
+select.auto-on { outline: 1px solid var(--accent-2); outline-offset: -1px; }
+.knob.auto-rec::after, .mx-fader.auto-rec::after, .toggle.auto-rec::after, .dv-power.auto-rec::after { background: var(--rec, #ff4d4d); }
+.knob.auto-rec svg, .mx-fader.auto-rec { filter: drop-shadow(0 0 3px color-mix(in srgb, var(--rec, #ff4d4d) 70%, transparent)); }
+
+/* arrangement: bus / master owner rows */
+.arr-oh {
+  position: absolute; left: 0; right: 0; display: flex; align-items: center; gap: 6px; padding: 0 6px 0 4px;
+  background: var(--bg-2); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); font-size: 11.5px; overflow: hidden;
+}
+.arr-oh-strip { width: 5px; align-self: stretch; margin: 3px 0; border-radius: 2px; background: var(--tc, var(--accent-2)); }
+.arr-oh-kind { font-size: 9px; font-weight: 800; letter-spacing: .08em; color: var(--text-3); }
+.arr-oh-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.arr-oh .toggle.auto { height: 18px; min-width: 22px; padding: 0 5px; font-size: 10px; font-weight: 700; }
+.arr-oh .toggle.auto.on { background: color-mix(in srgb, var(--tc, var(--accent)) 70%, var(--bg-4)); color: #fff; border-color: transparent; }
+.arr-oh .toggle.auto.has:not(.on) { box-shadow: inset 0 -2px 0 var(--tc, var(--accent)); }
+.arr-ah.rec, .arr-ah.recording { box-shadow: inset 6px 0 0 var(--rec, #ff4d4d); }
+.arr-ah-reclbl { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
