@@ -102,17 +102,18 @@ test('drum machine catalog: ≥15 machines, every core pad mapped, URLs well-for
   assert.ok(vk.hihat.variants[0].layers[0].urls.length === 2);
 });
 
-test('padVariant / padLoadList respect variation and round robin', () => {
+test('padVariant / padLoadList: a pad always plays its chosen sound (round robin never swaps sounds)', () => {
   const plan = dm.resolvePadSamples('RolandTR909').snare;
   assert.equal(dm.padVariant(plan, {}), plan.variants[0]);
   assert.equal(dm.padVariant(plan, { variant: 2 }), plan.variants[2]);
-  assert.equal(dm.padVariant(plan, { variant: 1 }, 3, true), plan.variants[4]);
+  // round robin must not jump between different samples (that made kicks sound inconsistent)
+  assert.equal(dm.padVariant(plan, { variant: 1 }, 3, true), plan.variants[1]);
   const base = dm.padLoadList('RolandTR909', {});
   assert.equal(base.length, new Set(base).size);
   assert.ok(base.length >= 12 && base.length <= 16, String(base.length));
   const muted = dm.padLoadList('RolandTR909', { pads: { kick: { mute: true } } });
   assert.equal(muted.length, base.length - 1);
-  assert.ok(dm.padLoadList('RolandTR909', { roundRobin: true }).length > base.length);
+  assert.equal(dm.padLoadList('RolandTR909', { roundRobin: true }).length, base.length);
 });
 
 test('bank names: Strudel aliases, case-insensitive', () => {

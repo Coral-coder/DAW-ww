@@ -6,7 +6,7 @@ import { clamp, dbToGain } from '../core/util.js';
 import { getGenre } from './genres.js';
 
 /** Mix balance by role in dB, for loudness-normalised instruments (see LEVEL_FIX); drums / bass peak around -4..-6 dBFS. */
-export const ROLE_TRIM_DB = { drums: -2.5, bass: -4.5, chords: -7, pad: -10, lead: -8, arp: -12, fx: -12 };
+export const ROLE_TRIM_DB = { drums: -4.5, bass: -4.5, chords: -6.5, pad: -9.5, lead: -7, arp: -11.5, fx: -12 };
 /** Global fader offset: leaves the master limiter ~1 dB of work at most (measured, see report). */
 export const MIX_HEADROOM_DB = -2;
 /** Genres whose arrangements leave more peak headroom (sparser / less transient-stacked) sit closer to unity (dB). */
@@ -17,42 +17,43 @@ const SUB_BASSES = new Set(['808-bass', 'sub-bass', 'reese-bass', 'wobble-bass',
 /**
  * Loudness normalisation per instrument (dB to reach -16 LUFS on a standard role phrase at unity fader), measured
  * by rendering every generator instrument headless (drum machines at 4-on-the-floor + backbeat + 8th hats, bass 8ths,
- * chords / pads / lead / arp phrases). Keys: 'role|preset', 'role|sf:<gm name>', 'machine:<drum machine>'.
- * Acoustic kits (VCSL, SR-16) carry +5 / +4 dB on top of the probe: their in-song ride / brush / ghost patterns and
+ * chords / pads / lead / arp phrases). Keys: 'role|preset', 'role|sf:<gm name>', 'machine:<drum machine>'. 'sf:' keys
+ * are measured on the source generated songs actually stream (multisample set via realInstrument, else MusyngKite).
+ * Acoustic kits (VCSL, SR-16) carry +7 / +4 dB on top of the probe: their in-song ride / brush / ghost patterns and
  * velocity layers read lower than the probe groove. Re-measure when presets change (presets are re-balanced separately).
  */
 export const LEVEL_FIX = {
-  "arp|arp-pluck": 6.5, "arp|arp-saw": 5, "arp|harp": 3, "arp|sf:orchestral_harp": 5.3, "bass|808-bass": -3.9,
+  "arp|arp-pluck": 6.5, "arp|arp-saw": 5, "arp|harp": 3, "arp|sf:orchestral_harp": 0.2, "bass|808-bass": -3.9,
   "bass|acid-bass": -3, "bass|chip-bass": -2.3, "bass|dub-bass": -4.4, "bass|finger-bass": -0.4, "bass|fm-bass": -3,
   "bass|moog-bass": -1.9, "bass|pluck-bass": -5.2, "bass|reese-bass": -5.7, "bass|saw-bass": -2.1,
-  "bass|sf:acoustic_bass": -4.5, "bass|sf:contrabass": -3, "bass|sf:electric_bass_finger": -0.7,
-  "bass|sf:electric_bass_pick": 0.6, "bass|sf:slap_bass_1": 0.5, "bass|sub-bass": -2.8, "bass|synthwave-bass": -2.1,
+  "bass|sf:acoustic_bass": -2.4, "bass|sf:contrabass": -2.4, "bass|sf:electric_bass_finger": 3.4,
+  "bass|sf:electric_bass_pick": -4.1, "bass|sf:slap_bass_1": 6.4, "bass|sub-bass": -2.8, "bass|synthwave-bass": -2.1,
   "bass|upright-bass": 0.4, "bass|wobble-bass": -7.7, "chords|bell": 1.5, "chords|celesta": 7.1, "chords|clav": 7.2,
   "chords|electric-piano": 3.4, "chords|future-chords": 0.3, "chords|glass-pad": 5.4, "chords|grand-piano": 8.4,
   "chords|guitar-clean": 3, "chords|guitar-dist": 2.8, "chords|house-stab": 5, "chords|lofi-keys": 0.6,
   "chords|organ-drawbar": -0.6, "chords|organ-rock": -2.1, "chords|pluck": 6.9, "chords|power-chord": 3,
-  "chords|sf:acoustic_grand_piano": -0.3, "chords|sf:acoustic_guitar_nylon": -0.9,
-  "chords|sf:acoustic_guitar_steel": 0.9, "chords|sf:clavinet": -2.5, "chords|sf:distortion_guitar": -4.6,
-  "chords|sf:electric_guitar_clean": 5.4, "chords|sf:electric_guitar_muted": 4.5, "chords|sf:electric_piano_1": -7.2,
-  "chords|sf:overdriven_guitar": -2.2, "chords|sf:string_ensemble_1": -1.1, "chords|steel-drum": 4.9,
-  "chords|strings": 1.1, "chords|supersaw-pad": 2.8, "chords|synthwave-pad": 2.5, "lead|acid-lead": 1.2,
-  "lead|bell": 4.6, "lead|brass-lead": 1.7, "lead|brass-section": 4.8, "lead|chip-lead": 6.1,
-  "lead|electric-piano": 7.3, "lead|flute": 2.1, "lead|fm-bell-lead": 8, "lead|fm-epiano": 7.4, "lead|grand-piano": 10,
-  "lead|guitar-clean": 2.8, "lead|guitar-lead": 1.1, "lead|hoover": -2, "lead|kalimba": 9.1, "lead|marimba": 13.3,
-  "lead|saw-lead": 1.5, "lead|sf:acoustic_grand_piano": 4, "lead|sf:alto_sax": -1.5, "lead|sf:brass_section": 1.2,
-  "lead|sf:distortion_guitar": -2.8, "lead|sf:electric_guitar_clean": 6, "lead|sf:electric_guitar_jazz": -1,
-  "lead|sf:fiddle": 0.3, "lead|sf:flute": -3.1, "lead|sf:french_horn": -0.6, "lead|sf:overdriven_guitar": 0.5,
-  "lead|sf:trumpet": 0.6, "lead|sf:vibraphone": 4.2, "lead|square-lead": 0.9, "lead|supersaw-lead": 4.9,
-  "lead|sync-lead": 1.6, "lead|trance-lead": 4.8, "lead|vibraphone": 7.8, "lead|whistle-lead": 2.3,
-  "machine:AkaiMPC60": -5.2, "machine:AlesisHR16": -7, "machine:AlesisSR16": 2.1, "machine:CasioRZ1": -2.1,
-  "machine:EmuSP12": -3.9, "machine:KorgMinipops": -2.3, "machine:LinnDrum": -2.9, "machine:LinnLM1": -0.1,
-  "machine:OberheimDMX": -1.4, "machine:RolandCompurhythm78": -1.9, "machine:RolandTR606": 0.1,
-  "machine:RolandTR808": -1.3, "machine:RolandTR909": -5.3, "machine:VCSLAcoustic": 8.2, "machine:YamahaRX5": -0.1,
-  "pad|ambient-pad": 0.8, "pad|brass-section": -0.2, "pad|choir-pad": 1.5, "pad|dark-pad": 0.8, "pad|fm-brass": 3,
-  "pad|glass-pad": 4.9, "pad|juno-strings": 4.3, "pad|organ-drawbar": -0.4, "pad|organ-rock": -2.9,
-  "pad|sf:brass_section": -1.6, "pad|sf:choir_aahs": -2.4, "pad|sf:string_ensemble_1": -2.5,
-  "pad|sf:string_ensemble_2": -2.3, "pad|string-pad": 1.5, "pad|strings": 0.3, "pad|supersaw-pad": 1.5,
-  "pad|warm-pad": 1.1
+  "chords|sf:acoustic_grand_piano": 0.6, "chords|sf:acoustic_guitar_nylon": 4.3,
+  "chords|sf:acoustic_guitar_steel": 4.3, "chords|sf:clavinet": 0.5, "chords|sf:distortion_guitar": -5.1,
+  "chords|sf:electric_guitar_clean": 8, "chords|sf:electric_guitar_muted": 4.8, "chords|sf:electric_piano_1": -7.3,
+  "chords|sf:overdriven_guitar": -3, "chords|sf:steel_drums": -0.9, "chords|sf:string_ensemble_1": -1.4,
+  "chords|steel-drum": 4.9, "chords|strings": 1.1, "chords|supersaw-pad": 2.8, "chords|synthwave-pad": 2.5,
+  "lead|acid-lead": 1.2, "lead|bell": 4.6, "lead|brass-lead": 1.7, "lead|brass-section": 4.8, "lead|chip-lead": 6.1,
+  "lead|electric-piano": 7.3, "lead|flute": 2.1, "lead|fm-bell-lead": 8, "lead|fm-epiano": 7.4,
+  "lead|grand-piano": 10, "lead|guitar-clean": 2.8, "lead|guitar-lead": 1.1, "lead|hoover": -2, "lead|kalimba": 9.1,
+  "lead|marimba": 13.3, "lead|saw-lead": 1.5, "lead|sf:acoustic_grand_piano": 1.5, "lead|sf:alto_sax": 0.9,
+  "lead|sf:brass_section": -0.4, "lead|sf:distortion_guitar": -1.2, "lead|sf:electric_guitar_clean": 9.3,
+  "lead|sf:electric_guitar_jazz": 9.3, "lead|sf:fiddle": -0.5, "lead|sf:flute": 4, "lead|sf:french_horn": -1,
+  "lead|sf:kalimba": 8.6, "lead|sf:marimba": 4, "lead|sf:overdriven_guitar": 1.9, "lead|sf:trumpet": 1.7,
+  "lead|sf:vibraphone": 7.1, "lead|square-lead": 0.9, "lead|supersaw-lead": 4.9, "lead|sync-lead": 1.6,
+  "lead|trance-lead": 4.8, "lead|vibraphone": 7.8, "lead|whistle-lead": 2.3, "machine:AkaiMPC60": -5.2,
+  "machine:AlesisHR16": -7, "machine:AlesisSR16": 2.1, "machine:CasioRZ1": -2.1, "machine:EmuSP12": -3.9,
+  "machine:KorgMinipops": -2.3, "machine:LinnDrum": -2.9, "machine:LinnLM1": -0.1, "machine:OberheimDMX": -1.4,
+  "machine:RolandCompurhythm78": -1.9, "machine:RolandTR606": 0.1, "machine:RolandTR808": -1.3,
+  "machine:RolandTR909": -5.3, "machine:VCSLAcoustic": 10.2, "machine:YamahaRX5": -0.1, "pad|ambient-pad": 0.8,
+  "pad|brass-section": -0.2, "pad|choir-pad": 1.5, "pad|dark-pad": 0.8, "pad|fm-brass": 3, "pad|glass-pad": 4.9,
+  "pad|juno-strings": 4.3, "pad|organ-drawbar": -0.4, "pad|organ-rock": -2.9, "pad|sf:brass_section": -2.6,
+  "pad|sf:choir_aahs": -1.8, "pad|sf:string_ensemble_1": -2.1, "pad|sf:string_ensemble_2": -2.1,
+  "pad|string-pad": 1.5, "pad|strings": 0.3, "pad|supersaw-pad": 1.5, "pad|warm-pad": 1.1
 };
 
 /** dB correction for an instrument in a role (clamped; unknown instruments: 0). */
@@ -64,7 +65,7 @@ export function levelFix(role, inst) {
   const v = k != null ? LEVEL_FIX[k] : undefined;
   // decaying sounds (bells, e-pianos, plucks, mallets) read quiet on a loudness meter but cut through on their
   // attacks: never boost them by more than a few dB
-  return clamp(v ?? 0, -9, role === 'pad' ? 5 : role === 'drums' ? 9 : role === 'bass' ? 6 : 3.5);
+  return clamp(v ?? 0, -9, role === 'pad' ? 5 : role === 'drums' ? 11 : role === 'bass' ? 6 : role === 'arp' ? 3.5 : role === 'lead' ? 6 : 5);
 }
 
 /** High-pass (Hz) per role: everything except kick & bass leaves the low end alone. */
@@ -131,8 +132,8 @@ export function mixTrack(track, ctx) {
   const side = ctx.side || 1;
   const sidechain = SIDECHAIN_FAMILIES.has(g.family) || SIDECHAIN_GENRES.has(g.id);
   const trim = (ROLE_TRIM_DB[role] ?? -6) + levelFix(role, ctx.instrument) + (role === 'bass' && SUB_BASSES.has(ctx.instrument?.preset) ? -3 : 0)
-    + (role === 'bass' && sidechain ? 2 : 0) // the ducker takes ~2 dB out on average
-    + (role === 'bass' && sf ? -3 : 0) // sampled basses sustain (walking / finger lines) and read hot in the mix
+    + (role === 'bass' && sidechain ? 3 : 0) // the ducker takes ~3 dB out on average
+    + (role === 'bass' && sf ? -5.5 : 0) // sampled basses sustain (walking / finger lines) and read hot in the mix
     + (role === 'drums' && ['cinematic', 'ambient'].includes(g.family) ? -4 : 0); // orchestral percussion supports, it doesn't lead
   track.volume = Math.round(clamp(0.8 * dbToGain(trim + (HEADROOM_BY_FAMILY[g.family] ?? MIX_HEADROOM_DB)), 0.02, 1.5) * 1000) / 1000;
   const fx = [];

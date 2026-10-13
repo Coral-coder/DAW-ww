@@ -260,9 +260,10 @@ export function resolvePadSamples(machineId) {
 export function padVariant(plan, padParams = {}, rrCounter = 0, roundRobin = false) {
   if (!plan?.variants?.length) return null;
   const n = plan.variants.length;
+  // Variants are DIFFERENT sounds of the machine (BD1, BD2, …), so a pad always plays its chosen one.
+  // Round-robin only cycles true alternate takes of that sound (several files in a velocity layer).
   const v = Math.round(Number(padParams.variant) || 0);
-  const i = roundRobin ? (((v + rrCounter) % n) + n) % n : ((v % n) + n) % n;
-  return plan.variants[i];
+  return plan.variants[((v % n) + n) % n];
 }
 /** Velocity layer of a variant for vel 0..1. */
 export function pickLayer(variant, vel) {
@@ -278,7 +279,7 @@ export function padLoadList(machineId, params = {}) {
   for (const [pad, p] of Object.entries(plan)) {
     const pp = params.pads?.[pad] || {};
     if (pp.mute) continue;
-    const variants = params.roundRobin ? p.variants.slice(0, 8) : [padVariant(p, pp)];
+    const variants = [padVariant(p, pp)];
     for (const v of variants) for (const L of v?.layers || []) urls.push(...L.urls);
   }
   return [...new Set(urls)];

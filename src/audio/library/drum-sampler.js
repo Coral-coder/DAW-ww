@@ -99,7 +99,9 @@ export class DrumSamplerInstrument extends DrumInstrument {
     const tone = clamp(num(p.tone, 0, -1, 1) + num(pad.tone, 0, -1, 1), -1, 1);
     const multiLayer = (variant.layers?.length || 1) > 1;
     // velocity: layered kits already sound softer at low velocity, so use a gentler curve there
-    const velGain = multiLayer ? 0.35 + 0.65 * vel : 0.08 + 0.92 * Math.pow(vel, 1.35);
+    // kicks anchor the groove: keep their level and tone steady (accents/ghosts change them only slightly)
+    const steady = padKey === 'kick';
+    const velGain = steady ? 0.8 + 0.2 * vel : multiLayer ? 0.35 + 0.65 * vel : 0.08 + 0.92 * Math.pow(vel, 1.35);
     const level = num(pad.gain, 1, 0, 2) * velGain * (1 + hum * 0.06 * jitter(2));
 
     const v = new Voice(ctx);
@@ -110,7 +112,7 @@ export class DrumSamplerInstrument extends DrumInstrument {
     let node = src;
     // velocity brightness (single-layer samples) + tone tilt
     const nyq = ctx.sampleRate / 2 - 100;
-    let lpHz = multiLayer ? 22000 : 2500 * Math.pow(2, vel * 3.2);
+    let lpHz = multiLayer || steady ? 22000 : 2500 * Math.pow(2, vel * 3.2);
     if (tone < 0) lpHz = Math.min(lpHz, 18000 * Math.pow(2, tone * 5));
     if (lpHz < nyq * 0.95) {
       const f = v.node(ctx.createBiquadFilter());

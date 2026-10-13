@@ -107,18 +107,18 @@ export function masterChainFor(genreId) {
   if (['ambient', 'cinematic'].includes(id) || f === 'ambient') lufs = -16;
   else if (f === 'jazz' || ['jazz', 'bossa-nova', 'blues', 'folk', 'country', 'gospel', 'soul', 'neo-soul', 'lofi-hip-hop', 'downtempo', 'trip-hop'].includes(id)) lufs = -14;
   else if (['house', 'techno', 'trance', 'bass', 'dnb', 'hard', 'garage', 'breaks', 'industrial'].includes(f) || ['hardstyle', 'brostep', 'dubstep', 'psytrance', 'eurobeat'].includes(id)) lufs = -9.5;
-  else if (f === 'rock' || ['metal', 'punk'].includes(id)) lufs = -9.5;
+  else if (f === 'rock' || ['metal', 'punk'].includes(id)) lufs = -10;
   const acoustic = lufs <= -14;
   return {
     lufs,
     params: {
-      low: acoustic ? 0 : 0.5,
+      low: acoustic || f === 'hiphop' ? 0 : 0.5, // 808 genres already carry plenty of sub
       tilt: acoustic ? 0.2 : 0.4,
       air: acoustic ? 1 : 1.5,
       glueThreshold: acoustic ? -20 : -18, glueRatio: acoustic ? 1.4 : 1.7, glueAttack: 0.03, glueRelease: 0.3,
       drive: acoustic ? 0.5 : 2,
       width: acoustic ? 1.05 : 1.15, widthFreq: 2500,
-      ceiling: -1, release: lufs >= -10 ? 0.09 : 0.14,
+      ceiling: -0.3, release: lufs >= -10 ? 0.09 : 0.14, // the limiter holds peaks ~1 dB under the ceiling: -0.3 lands true peak near -1.3 dBTP
     },
   };
 }
@@ -129,7 +129,9 @@ export function masterChainFor(genreId) {
  */
 export function createMasterChain(genreId, { preLufs = -16 } = {}) {
   const m = masterChainFor(genreId);
-  const gain = clamp(m.lufs - preLufs + 0.5, 0, 14);
+  // the glue + limiter take back ~0.4 dB of every dB pushed in (measured on main sections, see docs/SOUND.md)
+  const d = m.lufs - preLufs;
+  const gain = clamp(d * 1.4 + 0.5, 0, 14);
   return [createEffect('mastering', { ...m.params, gain: Math.round(gain * 10) / 10 })];
 }
 
@@ -225,13 +227,16 @@ export function finishSong(song, opts = {}) {
 }
 
 /**
- * Loudness of the generator's mix before mastering (LUFS), measured per family by rendering generated songs
- * headless with the master chain bypassed (see docs/SOUND.md). Re-measure when the mix levels change.
+ * Effective loudness of the generator's mix before mastering (LUFS) per family / id: measured on 16 bars of the main
+ * section (drop / chorus / head) rendered headless with the master bypassed, then calibrated so the mastering drive
+ * lands on masterChainFor().lufs (transient-heavy mixes lose more to the limiter, so they read a little quieter
+ * here than their raw pre-master loudness). 'acoustic': fallback for the -14 / -16 LUFS genres. Re-measure when the
+ * mix levels change.
  */
-export const PRE_MASTER_LUFS = { default: -17 };
+export const PRE_MASTER_LUFS = { default: -16.5, acoustic: -18.6, house: -17, trance: -16.1, pop: -15.8, hiphop: -16.6, jazz: -18.6 };
 export function estimatePreLufs(genreId) {
   const g = getGenre(genreId);
-  return PRE_MASTER_LUFS[g?.id] ?? PRE_MASTER_LUFS[g?.family] ?? PRE_MASTER_LUFS.default;
+  return PRE_MASTER_LUFS[g?.id] ?? PRE_MASTER_LUFS[g?.family] ?? (masterChainFor(genreId).lufs <= -14 ? PRE_MASTER_LUFS.acoustic : PRE_MASTER_LUFS.default);
 }
 
 export { multisampleFor, DEFAULT_SOUNDFONT_LIBRARY };
