@@ -11,7 +11,7 @@ let gen = null;
 import('../../gen/index.js').then((m) => { gen = m; }).catch(() => {});
 
 const EPS = 1e-6;
-const SETTINGS_KEY = 'heroic-rack';
+const SETTINGS_KEY = 'dawww-rack';
 const CORE_PADS = [36, 38, 39, 42, 46]; // always shown (kick, snare, clap, hats)
 const VOL_DEF = { key: 'volume', label: 'Volume', min: 0, max: 1.5, default: 0.8, step: 0.01 };
 const EUCLID_PRESETS = [

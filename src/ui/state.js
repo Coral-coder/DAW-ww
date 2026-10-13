@@ -1,7 +1,7 @@
 // UI-only state (never saved in the project): view, selection, zoom, panels.
 import { Emitter } from '../core/util.js';
 
-const PERSIST_KEYS = ['browserOpen', 'assistantOpen', 'deviceOpen', 'deviceHeight', 'view', 'theme', 'keyboardOctave'];
+const PERSIST_KEYS = ['browserOpen', 'assistantOpen', 'deviceOpen', 'deviceHeight', 'view', 'theme', 'keyboardOctave', 'autoMode'];
 
 export class UIState extends Emitter {
   constructor() {
@@ -16,6 +16,8 @@ export class UIState extends Emitter {
       deviceOpen: true,
       deviceHeight: 260,
       recording: false,
+      autoArm: false, // automation recording armed (header A● / Shift+A) — never persisted
+      autoMode: 'touch', // automation write mode: 'touch' | 'latch' | 'write'
       followPlayhead: true,
       keyboardOctave: 4,
       snap: 0.25, // beats (piano roll / arrangement)
@@ -23,7 +25,7 @@ export class UIState extends Emitter {
       expertMode: false,
     };
     try {
-      const saved = JSON.parse(localStorage.getItem('heroic-ui') || '{}');
+      const saved = JSON.parse(localStorage.getItem('dawww-ui') || '{}');
       for (const k of PERSIST_KEYS) if (k in saved) this.state[k] = saved[k];
     } catch { /* storage unavailable */ }
   }
@@ -39,7 +41,7 @@ export class UIState extends Emitter {
       try {
         const out = {};
         for (const k of PERSIST_KEYS) out[k] = this.state[k];
-        localStorage.setItem('heroic-ui', JSON.stringify(out));
+        localStorage.setItem('dawww-ui', JSON.stringify(out));
       } catch { /* ignore */ }
       this.emit('change', changed, this.state);
     }

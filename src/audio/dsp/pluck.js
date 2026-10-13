@@ -106,7 +106,7 @@ export function pluckTable(sampleRate, midi, layer = 1, tone = 0, decay = 1, ctx
     // normalise loudness of the first 0.25 s; fade the tail
     let s2 = 0; const nn = Math.min(len, Math.round(0.25 * sr));
     for (let i = 0; i < nn; i++) s2 += out[i] * out[i];
-    const g = 0.6 / Math.sqrt(s2 / nn || 1);
+    const g = 1.0 / Math.sqrt(s2 / nn || 1);
     const fade = Math.round(0.05 * sr);
     for (let i = 0; i < len; i++) out[i] *= g * (i > len - fade ? (len - i) / fade : 1);
     return makeBuffer([out], sr, ctx);

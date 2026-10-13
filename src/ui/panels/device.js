@@ -3,7 +3,7 @@
 // *structure* changes (target, instrument type, preset, fx list); parameter edits
 // update the existing controls in place, so knob drags stay smooth.
 import { h, icon, startDrag, fitCanvas, clear } from '../dom.js';
-import { knob, select, toggle, button, iconButton, paramPanel, contextMenu, promptText, confirmDialog, formatValue } from '../components.js';
+import { knob, select, toggle, button, iconButton, paramPanel, contextMenu, promptText, confirmDialog, formatValue, markAuto } from '../components.js';
 import { createEffect, DRUM_PADS } from '../../core/model.js';
 import { clamp, deepClone } from '../../core/util.js';
 import { EFFECT_DEFS, EFFECT_CATEGORIES, INSTRUMENT_DEFS, PRESETS, DRUM_KITS, resolveEffectParams } from '../../audio/index.js';
@@ -94,7 +94,7 @@ export function showEffectMenu(pos, onPick) {
 }
 
 // ============================================================================ helpers
-const USER_PRESET_KEY = 'heroic-user-presets';
+const USER_PRESET_KEY = 'dawww-user-presets';
 function loadUserPresets() {
   try { return JSON.parse(localStorage.getItem(USER_PRESET_KEY) || '{}') || {}; } catch { return {}; }
 }
@@ -583,9 +583,9 @@ export function createDevicePanel(app) {
   }
 
   /** Generic param panel + in-place updater. */
-  function paramsBlock(defs, values, scope, onChange) {
+  function paramsBlock(defs, values, scope, onChange, auto = null) {
     const panel = paramPanel({
-      defs, values, onChange,
+      defs, values, onChange, auto,
       sectionsOpen: Object.fromEntries(defs.map((d) => d.section || 'Main').map((s) => [s, sectionsOpen[`${scope}:${s}`] ?? !DEFAULT_CLOSED.has(s)])),
       onSectionToggle: (s, o) => { sectionsOpen[`${scope}:${s}`] = o; },
     });
@@ -630,7 +630,7 @@ export function createDevicePanel(app) {
     if (ins.type === 'sampler') updaters.push(samplerEditor(shell.body, tgt, onParam));
     if (def.plugin) updaters.push(pluginInstrumentEditor(app, shell.body, tgt, ins, { resolved, edit: (lbl, fn, o) => editIns(tgt, lbl, (i) => fn(i.params), o) }));
 
-    const pb = paramsBlock(panelDefs(def.params, skip), resolved, ins.type, onParam);
+    const pb = paramsBlock(panelDefs(def.params, skip), resolved, ins.type, onParam, { owner: tgt.id, prefix: 'inst:' });
     shell.body.appendChild(h('div.dv-params', pb.el));
     updaters.push(pb.update);
     return {
@@ -862,10 +862,12 @@ export function createDevicePanel(app) {
       numDefs = allNumDefs.filter((d) => d.key !== 'variant' || lastResolved?.machine); // variation: sampled machines only
       const knobs = numDefs.map((d) => {
         const k = knob({ def: d, value: vals[d.key] ?? d.default, size: 32, onChange: (v, { final }) => editPad(pad.key, `${pad.name}: ${d.label}`, (pd) => { pd[d.key] = v; }, { coalesce: true }) });
+        if (d.type === 'number') markAuto(k, trackId, `inst:pads.${pad.key}.${d.key}`);
         edCtl[d.key] = k;
         return k;
       });
       muteT = toggle({ label: 'Mute', value: !!vals.mute, cls: 'mute', title: 'Mute this pad', onChange: (v) => editPad(pad.key, `${pad.name}: mute`, (pd) => { pd.mute = v; }) });
+      markAuto(muteT, trackId, `inst:pads.${pad.key}.mute`);
       sampleLbl = h('span.dv-pad-sample', { title: 'Sample loaded on this pad (otherwise the kit’s synthesized voice plays)' });
       const loadBtn = button('Load sample…', () => loadSample(pad.key), { icon: 'upload', cls: 'small', title: 'Import an audio file and play it on this pad' });
       const pickBtn = iconButton('folder', (e) => pickSampleMenu(e, pad.key), 'Pick a sample already in the project / clear');
@@ -910,11 +912,11 @@ export function createDevicePanel(app) {
 
   function isSampleDrag(e) {
     const t = e.dataTransfer?.types || [];
-    return [...t].includes('application/x-heroic-sample') || [...t].includes('Files');
+    return [...t].includes('application/x-dawww-sample') || [...t].includes('Files');
   }
   async function handleSampleDrop(e, onId) {
     e.preventDefault();
-    const id = e.dataTransfer.getData('application/x-heroic-sample');
+    const id = e.dataTransfer.getData('application/x-dawww-sample');
     if (id && store.get().samples[id]) { onId(id); return; }
     const files = [...(e.dataTransfer.files || [])].filter((f) => /^audio\//.test(f.type) || /\.(wav|mp3|ogg|flac|aiff?|m4a)$/i.test(f.name));
     if (!files.length) { app.toast?.('Drop an audio file (wav, mp3, ogg, flac…)', { level: 'warn' }); return; }
@@ -1166,6 +1168,9 @@ export function createDevicePanel(app) {
     const pan = isBus ? knob({ def: panDef, value: tgt.bus.pan, size: 40, onChange: (v) => store.transact(`${tgt.name} pan`, (pp) => { owner(pp).pan = v; }, { coalesce: true }) }) : null;
     const mute = isBus ? toggle({ label: 'Mute', value: tgt.bus.mute, cls: 'mute', title: 'Mute this return', onChange: (v) => store.transact('Mute bus', (pp) => { owner(pp).mute = v; }) }) : null;
     const users = h('div.dv-note');
+    markAuto(vol, tgt.id, 'volume');
+    if (pan) markAuto(pan, tgt.id, 'pan');
+    if (mute) markAuto(mute, tgt.id, 'mute');
     shell.body.append(h('div.row', vol, pan, mute), users, h('div.row', button('Open mixer', () => app.showView('mixer'), { icon: 'mixer', cls: 'small' })));
     return {
       el: shell.el,
@@ -1188,6 +1193,7 @@ export function createDevicePanel(app) {
     const def = EFFECT_DEFS?.[fx.type];
     const name = (def?.plugin && fx.params?.name) || def?.name || fx.type;
     const power = h(`button.dv-power${fx.enabled ? '.on' : ''}`, { type: 'button', title: fx.enabled ? 'Bypass this effect' : 'Enable this effect' }, icon('power', 12));
+    markAuto(power, tgt.id, `fxen:${fx.id}`).autoSet = (on) => { power.classList.toggle('on', !!on); power.closest('.dv-card')?.classList.toggle('bypassed', !on); };
     power.addEventListener('click', (e) => { e.stopPropagation(); editTarget(tgt, `${fx.enabled ? 'Bypass' : 'Enable'} ${name}`, (o) => { const f = o.fx.find((x) => x.id === fx.id); if (f) f.enabled = !f.enabled; }); });
     const grip = h('span.dv-grip', { title: 'Drag to reorder' }, '⋮⋮');
     const left = iconButton('chevronRight', () => moveEffect(tgt, fx.id, index - 1), 'Move left', 'dv-move-left');
@@ -1226,14 +1232,14 @@ export function createDevicePanel(app) {
     // drag to reorder (HTML5 DnD on the header) — not on plugboard channels (cables set the order)
     shell.head.draggable = !patched;
     shell.head.addEventListener('dragstart', (e) => {
-      e.dataTransfer.setData('application/x-heroic-fx', fx.id);
+      e.dataTransfer.setData('application/x-dawww-fx', fx.id);
       e.dataTransfer.effectAllowed = 'move';
       shell.el.classList.add('dragging');
     });
     shell.head.addEventListener('dragend', () => { shell.el.classList.remove('dragging'); chain.querySelectorAll('.drop-before,.drop-after').forEach((x) => x.classList.remove('drop-before', 'drop-after')); });
     shell.el.addEventListener('dragover', (e) => {
       const types = [...(e.dataTransfer?.types || [])];
-      if (!types.includes('application/x-heroic-fx') && !types.includes('application/x-heroic-effect')) return;
+      if (!types.includes('application/x-dawww-fx') && !types.includes('application/x-dawww-effect')) return;
       e.preventDefault();
       const r = shell.el.getBoundingClientRect();
       const after = e.clientX > r.left + r.width / 2;
@@ -1244,8 +1250,8 @@ export function createDevicePanel(app) {
     shell.el.addEventListener('drop', (e) => {
       const after = shell.el.classList.contains('drop-after');
       shell.el.classList.remove('drop-before', 'drop-after');
-      const id = e.dataTransfer.getData('application/x-heroic-fx');
-      const newType = e.dataTransfer.getData('application/x-heroic-effect');
+      const id = e.dataTransfer.getData('application/x-dawww-fx');
+      const newType = e.dataTransfer.getData('application/x-dawww-effect');
       e.preventDefault();
       if (id) { if (id !== fx.id) moveEffect(tgt, id, index + (after ? 1 : 0)); } else if (newType && EFFECT_DEFS[newType]) addEffect(tgt, newType, {}, index + (after ? 1 : 0));
     });
@@ -1264,7 +1270,7 @@ export function createDevicePanel(app) {
     const pb = paramsBlock(defs, values, 'fx:' + fx.type, (k, v) => editTarget(tgt, `${name}: ${def.params.find((d) => d.key === k)?.label || k}`, (o) => {
       const f = o.fx.find((x) => x.id === fx.id);
       if (f) { f.params = f.params || {}; f.params[k] = v; }
-    }, { coalesce: true }));
+    }, { coalesce: true }), { owner: tgt.id, prefix: `fx:${fx.id}:` });
     shell.body.appendChild(h('div.dv-params', pb.el));
     const plugUpd = def.plugin ? pluginEffectEditor(app, shell.body, fx, { edit: (lbl, fn, o) => editTarget(tgt, lbl, (ow) => { const f = ow.fx.find((x) => x.id === fx.id); if (f) { f.params = f.params || {}; fn(f.params); } }, o) }) : null;
     return {
@@ -1280,13 +1286,13 @@ export function createDevicePanel(app) {
   function addEffectCard(tgt) {
     const b = h('button.dv-add-fx', { type: 'button', title: 'Add an insert effect (EQ, compressor, reverb, delay, distortion…)' }, icon('plus', 18), h('span', 'Add effect'));
     b.addEventListener('click', (e) => showEffectMenu(e, (type, params) => addEffect(tgt, type, params)));
-    b.addEventListener('dragover', (e) => { const t = [...(e.dataTransfer?.types || [])]; if (t.includes('application/x-heroic-fx') || t.includes('application/x-heroic-effect')) { e.preventDefault(); b.classList.add('drop'); } });
+    b.addEventListener('dragover', (e) => { const t = [...(e.dataTransfer?.types || [])]; if (t.includes('application/x-dawww-fx') || t.includes('application/x-dawww-effect')) { e.preventDefault(); b.classList.add('drop'); } });
     b.addEventListener('dragleave', () => b.classList.remove('drop'));
     b.addEventListener('drop', (e) => {
       b.classList.remove('drop');
       e.preventDefault();
-      const id = e.dataTransfer.getData('application/x-heroic-fx');
-      const type = e.dataTransfer.getData('application/x-heroic-effect');
+      const id = e.dataTransfer.getData('application/x-dawww-fx');
+      const type = e.dataTransfer.getData('application/x-dawww-effect');
       if (id) moveEffect(tgt, id, tgt.fx.length);
       else if (type && EFFECT_DEFS[type]) addEffect(tgt, type);
     });

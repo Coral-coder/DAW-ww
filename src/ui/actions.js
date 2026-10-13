@@ -290,6 +290,13 @@ export function createActions(app) {
     const armedAudio = get().tracks.filter((t) => t.type === 'audio' && t.arm);
     ui.set({ recording: true });
     if (armedAudio.length) { await startAudioRecording(); return; }
+    if (ui.get('autoArm')) {
+      // Automation armed: Record starts a recording pass (song mode) — move any control to write it
+      if (get().mode !== 'song') setMode('song');
+      toast('Recording automation: move any knob, fader or switch — each setting gets its own lane. Stop to finish the pass.');
+      await play();
+      return;
+    }
     if (!app.keyboardPiano?.enabled) { app.keyboardPiano.enabled = true; }
     toast('Recording: play notes with your computer keyboard (Z–M, Q–P) or a MIDI keyboard. Notes go into the selected track\'s active pattern. Arm an audio track (●) to record from your microphone instead.');
     await play();
@@ -302,7 +309,7 @@ export function createActions(app) {
   // every armed audio track at the beat where it was heard.
   const recorder = new AudioRecorder(engine);
   let audioTake = null; // { trackIds, loop, ctxStart, finishing }
-  const prefKey = 'heroic-countin';
+  const prefKey = 'dawww-countin';
   const getCountIn = () => { try { return localStorage.getItem(prefKey) === '1'; } catch { return false; } };
   const setCountIn = (v) => { try { localStorage.setItem(prefKey, v ? '1' : '0'); } catch { /* */ } ui.set({ countIn: !!v }); };
   ui.set({ countIn: getCountIn(), audioRecording: false });
@@ -507,7 +514,7 @@ export function createActions(app) {
   }
 
   async function openProject(file) {
-    if (!(file instanceof Blob)) [file] = await fileInput('.json,.heroic,.heroic.json,application/json');
+    if (!(file instanceof Blob)) [file] = await fileInput('.daW3,.daw3,.json,application/json');
     if (!file) return;
     try {
       const text = await file.text();
@@ -520,7 +527,7 @@ export function createActions(app) {
   async function saveProject() {
     const p = get();
     const safe = (p.name || 'project').replace(/[^\w\- ]+/g, '').trim() || 'project';
-    downloadBlob(new Blob([serializeProject(p)], { type: 'application/json' }), `${safe}.heroic.json`);
+    downloadBlob(new Blob([serializeProject(p)], { type: 'application/json' }), `${safe}.daW3`);
     await saveLocal(p).catch(() => {});
     toast('Project saved — reload it any time with Open (Ctrl+O)', { level: 'success' });
   }
@@ -836,11 +843,12 @@ export function createActions(app) {
       samples: opts.keepProject ? get().samples : {},
       name: opts.name || `${GENRES[genre]?.name || genre} sketch`,
       mode: 'song',
-      buses: base.buses,
-      master: base.master,
+      // the generator mixes the song: its own Reverb/Delay buses (tracks send to them) and master chain
+      buses: partial.buses || base.buses,
+      master: partial.master || base.master,
     };
-    // Give generated tracks tasteful sends to the shared reverb/delay buses.
-    const [rev, dly] = project.buses;
+    // Older generators: give generated tracks tasteful sends to the shared reverb/delay buses.
+    const [rev, dly] = partial.buses ? [] : project.buses;
     for (const t of project.tracks) {
       t.sends = t.sends || {};
       const role = t.role;
@@ -891,7 +899,7 @@ export function createActions(app) {
         { label: 'Stems (WAV per track)', icon: 'layers', onClick: () => exportWav({ stems: true }) },
         { label: 'MIDI file', icon: 'music', onClick: () => exportMidiFile() },
         { label: 'Strudel code', icon: 'code', onClick: () => exportCode() },
-        { label: 'Project file (.heroic.json)', icon: 'save', onClick: () => saveProject() },
+        { label: 'Project file (.daW3)', icon: 'save', onClick: () => saveProject() },
       ] },
       '-',
       { label: 'Plugins (SoundFonts, Faust, WAM)…', icon: 'plug', onClick: () => import('./plugins-dialog.js').then((m) => m.openPluginsDialog(app)) },
@@ -1017,7 +1025,7 @@ export function createActions(app) {
         card('drum', 'Start with a beat', 'Drum machine + step sequencer', () => { addTrack('drums'); generatePart('drums', { trackId: get().tracks.at(-1).id }); ui.set({ view: 'rack' }); }),
         card('piano', 'Empty project', 'Blank canvas with a synth track', () => { addTrack('electric-piano'); ui.set({ view: 'piano' }); }),
         card('code', 'Live code', 'Strudel-style patterns, import .strudel files', () => { addTrack('code'); ui.set({ view: 'code' }); }),
-        card('folder', 'Open project', 'Continue a saved .heroic.json file', () => openProject()),
+        card('folder', 'Open project', 'Continue a saved .daW3 file', () => openProject()),
         card('layers', 'Recent in browser', 'Restore an autosaved session', () => showLocalProjects()),
       ),
       h('p.muted', { style: { textAlign: 'center', fontSize: '12px' } }, 'Tip: press ? any time for shortcuts. Space plays, 1–7 switch views, ` toggles the keyboard piano.'));
@@ -1051,7 +1059,7 @@ export function createActions(app) {
           h('li', 'Import .strudel files, play them alongside the rest of the song, then "Render to tracks" to edit them as patterns.'),
           h('li', 'Export any project as Strudel code.'))),
         h('div', h('h4', 'Save & share'), h('ul',
-          h('li', 'Projects autosave in your browser. Download a .heroic.json file (Ctrl+S) to keep or share — samples included.'),
+          h('li', 'Projects autosave in your browser. Download a .daW3 file (Ctrl+S) to keep or share — samples included.'),
           h('li', 'Export WAV mixdowns, stems, MIDI or Strudel code.')))),
       h('div.section-title', 'Shortcuts'),
       h('table.shortcut-table', sc.map(([k, v]) => h('tr', h('td', h('kbd', k)), h('td', v)))));

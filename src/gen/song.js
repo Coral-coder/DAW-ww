@@ -3,7 +3,7 @@
 import { createRng, uid, clamp } from '../core/util.js';
 import { PRESETS } from '../audio/presets.js';
 import { createTrack, createPattern, createClip, createScene, createNote, TRACK_COLORS } from '../core/model.js';
-import { parsePitchClass, resolveScaleId, mod12, getProgression, pitchClassName, keyPrefersFlats } from '../theory/index.js';
+import { parsePitchClass, resolveScaleId, mod12, getProgression, pitchClassName, keyPrefersFlats, keyPitchClasses } from '../theory/index.js';
 import { GENRES, getGenre, ROLES } from './genres.js';
 import { generateDrumPattern } from './drums.js';
 import { generateProgression, progressionToNotes, pickGenreProgression, progressionBars, resolveKey } from './harmony.js';
@@ -12,6 +12,14 @@ import { generateMelody, generateCounterMelody, MELODY_STYLES } from './melody.j
 import { arpeggiate } from './arp.js';
 import { voiceChord } from '../theory/index.js';
 import { progressionFromProject } from './analyze.js';
+import { sectionKind, planSections, planSectionHarmony, filterSweepPoints, AutomationBuilder } from './arrange.js';
+import { applyGroove, shapeDynamics, grooveFor } from './groove.js';
+import { instrumentForRole, strumFor } from './sound.js';
+import { mixTrack, createSongBuses, createSongMaster } from './mix.js';
+import { writeMelody, makeMotif, varyMotif } from './melody.js';
+import { DRUM_STYLES, resolveDrumStyle } from './drums.js';
+import { createEffect } from '../core/model.js';
+import { addRides } from './rides.js';
 
 const ROLE_INFO = {
   drums: { name: 'Drums', color: TRACK_COLORS[0], volume: 0.85, pan: 0 },
@@ -28,17 +36,6 @@ const PAD_RANGE = [55, 74];
 const LEAD_FLOOR = 64;
 
 const BAND_FAMILIES = new Set(['rock', 'funk', 'jazz', 'blues', 'soul', 'caribbean', 'latin', 'americana', 'pop', 'african', 'retro', 'hiphop']);
-
-/** Map a section name to an arrangement function. */
-export function sectionKind(name = '') {
-  const n = name.toLowerCase();
-  if (/intro/.test(n)) return 'intro';
-  if (/outro|fade out|ending/.test(n)) return 'outro';
-  if (/build|pre|rise|lift/.test(n)) return 'build';
-  if (/break|bridge|reflection|fade|calm/.test(n)) return 'break';
-  if (/drop|chorus|hook|peak|climax|finale|bloom|^b$|solo/.test(n)) return 'main';
-  return 'verse';
-}
 
 function instrumentFor(role, genre) {
   if (role === 'drums') return { type: 'drums', preset: genre.drumKit, params: {} };
@@ -152,16 +149,86 @@ export function generatePartNotes(role, opts = {}) {
   return notes.filter((n) => n.start < length);
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Full songs
+// ---------------------------------------------------------------------------------------------------------------
+
+const ELECTRONIC = new Set(['house', 'techno', 'trance', 'bass', 'dnb', 'garage', 'breaks', 'hard', 'experimental', 'industrial']);
+const hash = (...xs) => xs.reduce((h, x) => (Math.imul(h ^ (typeof x === 'number' ? x : [...String(x)].reduce((a, c) => a * 31 + c.charCodeAt(0), 7)), 2654435761) >>> 0), 0x9e3779b9);
+
+/** Drum part for one section: 4-bar blocks with their own variations, phrase fills, transitions and crashes. */
+function sectionDrums(g, s, ctx) {
+  const { bpb, rng } = ctx;
+  const band = BAND_FAMILIES.has(g.family) && !ELECTRONIC.has(g.family);
+  const blockBars = s.bars % 4 === 0 || s.bars > 4 ? Math.min(4, s.bars) : s.bars;
+  const nb = Math.ceil(s.bars / blockBars);
+  const len = s.bars * bpb;
+  const e = s.energy;
+  const soft = s.kind === 'intro' || s.kind === 'outro' || s.kind === 'break';
+  const density = soft ? Math.min(e + 0.1, s.kind === 'break' ? 0.3 : 0.45) : clamp(e, 0.3, 1);
+  const nextMain = s.next && s.next.kind === 'main';
+  const nextDrums = s.next && s.next.roles.includes('drums');
+  const out = [];
+  for (let i = 0; i < nb; i++) {
+    const bars = Math.min(blockBars, s.bars - i * blockBars);
+    const last = i === nb - 1;
+    let fill = false, fillType;
+    if (last && s.next && bars > 1) {
+      fill = true;
+      if (s.kind === 'build') fillType = 'build';
+      else if (!nextDrums) fillType = 'break';
+      else if (!band) fillType = nextMain && e >= 0.45 ? 'snare-roll' : 'break';
+    } else if (!last && i % 2 === 1 && e >= 0.5 && bars > 1) {
+      fill = band || rng.chance(0.6);
+      if (!band) fillType = rng.chance(0.5) ? 'break' : 'snare-roll';
+    }
+    const crash = (i === 0 && (s.kind === 'main' || (band && s.prev && s.prev.roles.includes('drums')))) || (band && s.kind === 'main' && i % 2 === 0);
+    const notes = generateDrumPattern({
+      style: g.drumStyle, bars, rng, beatsPerBar: bpb, humanize: 0,
+      density: s.kind === 'build' ? clamp(density + (i / nb) * 0.2, 0, 1) : density,
+      variation: 0.2 + e * 0.35 + (i % 2) * 0.1, fill, fillType, crash: crash && e >= 0.45,
+    });
+    const off = i * blockBars * bpb;
+    for (const n of notes) { n.start += off; out.push(n); }
+  }
+  // pre-drop gap: the last half beat of a build goes silent so the drop hits
+  if (s.kind === 'build' && nextMain) return out.filter((n) => n.start < len - 0.5);
+  return out;
+}
+
+/** A bass walk-up / pickup into the next section's root on the last beat (band genres). */
+function bassPickup(notes, len, nextRoot, key) {
+  if (nextRoot == null) return notes;
+  const keyPcs = new Set(key.pcs);
+  const kept = notes.filter((n) => n.start < len - 1 + 1e-6 || n.start < len - 1);
+  const before = kept.filter((n) => n.start < len - 1 - 1e-6);
+  const last = before[before.length - 1];
+  const ref = last ? last.pitch : nextRoot;
+  let target = nextRoot;
+  while (target - ref > 6) target -= 12;
+  while (ref - target > 6) target += 12;
+  const below = (p) => { let q = p - 1; while (!keyPcs.has(mod12(q))) q--; return q; };
+  const s1 = below(target), s2 = below(s1);
+  const out = before.map((n) => (n.start + n.dur > len - 1 ? { ...n, dur: Math.max(0.1, len - 1 - n.start - 0.02) } : n));
+  const mk = (p, t, d, v) => { const x = createNote(p, t, d, v); return x; };
+  if (target < 28) target += 12;
+  out.push(mk(Math.max(28, s2), len - 0.5, 0.22, 0.72), mk(Math.max(28, s1), len - 0.25, 0.22, 0.78));
+  return out;
+}
+
 /**
- * generateSong({genre, key (pc | {root,scale} | 'F#'), scale, bpm, seed, name, progression, withHarmony}) -> partial project
- * {name, bpm, swing, key, genre, timeSig, tracks, patterns, clips, scenes, markers, loop, seed, progression,
- *  harmony? (with opts.withHarmony: [{startBeat, durBeats, roman, root, type, bass, name}]), harmonyLength?}
+ * generateSong({genre, key (pc | {root,scale} | 'F#'), scale, bpm, seed, name, progression, withHarmony, soundfonts, sampledDrums})
+ *  -> partial project {name, bpm, swing, key, genre, timeSig, tracks, patterns, clips, scenes, markers, buses, master, loop, seed,
+ *     progression, harmony? + harmonyLength? + patternHarmony? (withHarmony: the exact chords every pattern was written against)}
+ * A produced arrangement: per-section progressions (verse / chorus / pre-chorus / bridge), a motif-based lead with a
+ * distinct chorus hook, section-length patterns that vary every 4–8 bars (fills, drop-outs, crashes), genre groove
+ * (swing, micro-timing, ghost notes, strums, dynamics), filter / fade automation, genre sounds (sampled drum
+ * machines, SoundFonts for acoustic genres) and a mix (gain staging, EQ, compression, sidechain, sends, buses).
  */
 export function generateSong(opts = {}) {
   const g = getGenre(opts.genre) || GENRES.house;
   const seed = opts.seed ?? Math.floor(Math.random() * 1e9);
   const rng = createRng(seed);
-  // key
   let root = null;
   if (typeof opts.key === 'number') root = mod12(opts.key);
   else if (opts.key && typeof opts.key === 'object') root = mod12(opts.key.root ?? 0);
@@ -172,89 +239,190 @@ export function generateSong(opts = {}) {
   const bpm = Math.round(opts.bpm || g.defaultBpm);
   const timeSig = g.timeSig || [4, 4];
   const bpb = timeSig[0] * (4 / timeSig[1]);
+  const key = { root, scale };
 
-  // harmony: one loop for the whole song (sections re-voice/re-rhythm it)
+  // ---- harmony: the chorus/drop loop + per-section progressions
   const prog = opts.progression ? getProgression(opts.progression) : pickGenreProgression({ genre: g.id, scale, rng });
   let loopBars = prog ? Math.ceil(progressionBars(prog)) : 4;
   if (loopBars < 4) loopBars = 4;
   else if (loopBars > 4 && loopBars < 8) loopBars = 8;
-  const progression = generateProgression({ key: root, scale, genre: g.id, bars: loopBars, beatsPerBar: bpb, rng, progression: prog ? prog.id || prog.romans : undefined });
+  const mainId = prog ? prog.id || prog.romans : undefined;
+  const mainLoop = generateProgression({ key: root, scale, genre: g.id, bars: loopBars, beatsPerBar: bpb, rng, progression: mainId });
   const loopBeats = loopBars * bpb;
-  // drums use 8-bar phrases (fill at the phrase end) unless the harmonic loop is longer (12-bar blues -> 4-bar)
-  const drumBars = loopBars > 8 ? 4 : 8;
 
-  // tracks for every role used by the structure (and supported by the genre's palette)
   const used = new Set(g.structure.flatMap((s) => s.roles));
   const roles = ROLES.filter((r) => used.has(r) && (r === 'drums' || g.presets?.[r]));
+  const sections = planSections(g, { bpb, available: new Set(roles) });
+  const hplan = planSectionHarmony({ genre: g, root, scale, rng: createRng(hash(seed, 'harm')), main: mainId || mainLoop.map((c) => c.roman), sections });
+  const progCache = new Map();
+  const progs = sections.map((s) => {
+    const src = hplan[s.type] || mainId;
+    // the chorus re-uses the main loop's exact colours; other sections are voiced / coloured on their own
+    if (!hplan[s.type] || src === mainId) {
+      const out = [];
+      for (let off = 0; off < s.bars * bpb; off += loopBeats) for (const c of mainLoop) if (off + c.startBeat < s.bars * bpb) out.push({ ...c, startBeat: off + c.startBeat, durBeats: Math.min(c.durBeats, s.bars * bpb - off - c.startBeat) });
+      return out;
+    }
+    // same type & length -> the same chords (deterministic), so repeats share one progression
+    const ck = `${s.type}|${s.bars}`;
+    if (!progCache.has(ck)) progCache.set(ck, generateProgression({ key: root, scale, genre: g.id, bars: s.bars, beatsPerBar: bpb, rng: createRng(hash(seed, s.type)), progression: src }));
+    return progCache.get(ck);
+  });
+  const pcsOfKey = keyPitchClasses(root, scale);
+
+  // ---- tracks: genre sounds + mix
+  const [reverbBus, delayBus] = createSongBuses(g.id);
   const tracks = roles.map((role) => {
     const info = ROLE_INFO[role];
-    return createTrack({
-      name: info.name, color: info.color, volume: info.volume, pan: info.pan, role,
-      instrument: instrumentFor(role, g), sends: {},
-    });
+    const instrument = instrumentForRole(role, g.id, { soundfonts: opts.soundfonts, sampledDrums: opts.sampledDrums });
+    return createTrack({ name: info.name, color: info.color, volume: info.volume, pan: info.pan, role, instrument, sends: {} });
   });
+  const trackOf = (role) => tracks[roles.indexOf(role)];
+  const drumTrack = trackOf('drums');
+  const side = rng.chance(0.5) ? 1 : -1; // keys / guitars on one side, the arp answers on the other
+  for (const t of tracks) {
+    mixTrack(t, { genre: g.id, role: t.role, instrument: t.instrument, drumTrackId: drumTrack?.id, buses: [reverbBus, delayBus], side: t.role === 'chords' ? side : -side });
+  }
+  const groove = grooveFor(g.id);
+  const tripletDrums = (DRUM_STYLES[resolveDrumStyle(g.drumStyle)]?.grid || 16) === 12;
+
+  // ---- motifs: one idea per section type, re-used (with variation) whenever the section returns
+  const melodyMode = ['riff', 'ambient'].includes(g.melodyStyle) ? 'classic' : 'motif';
+  const mDensity = g.melodyStyle === 'sparse' ? 0.3 : g.melodyStyle === 'vocal' ? 0.55 : 0.65;
+  const motifs = {
+    verse: makeMotif({ rng: createRng(hash(seed, 'mv')), bpb, density: mDensity }),
+    chorus: makeMotif({ rng: createRng(hash(seed, 'mc')), bpb, density: mDensity, hook: true }),
+    bridge: makeMotif({ rng: createRng(hash(seed, 'mb')), bpb, density: mDensity * 0.8 }),
+  };
 
   const patterns = {};
   const clips = [];
   const scenes = [];
   const markers = [];
-  const cache = new Map(); // `${role}|${sectionName}` -> pattern
-  const nameCount = {};
-  let beat = 0;
-  let best = { energy: -1, section: null };
-  const sectionPatterns = [];
-
-  for (const section of g.structure) {
-    const kind = sectionKind(section.name);
-    nameCount[section.name] = (nameCount[section.name] || 0) + 1;
-    const label = nameCount[section.name] > 1 ? `${section.name} ${nameCount[section.name]}` : section.name;
-    const slots = {};
-    const secRng = createRng((seed + section.name.length * 7919 + Math.round(section.energy * 1000)) >>> 0);
-    let kick = null;
-    for (const role of roles) {
-      if (!section.roles.includes(role)) continue;
-      const track = tracks[roles.indexOf(role)];
-      const key = `${role}|${section.name}|${Math.round(section.energy * 10)}`;
-      let pat = cache.get(key);
-      if (!pat) {
-        const bars = role === 'drums' ? drumBars : loopBars;
-        const notes = generateRoleNotes(role, {
-          genre: g.id, key: root, scale, progression: role === 'drums' ? undefined : progression, bars: role === 'drums' ? drumBars : loopBars,
-          beatsPerBar: bpb, energy: section.energy, kind, rng: secRng, kickNotes: role === 'bass' ? kick : undefined,
-        });
-        let pname = `${ROLE_INFO[role].name} – ${section.name}`;
-        // the same section can recur at another energy (A / B / A'): keep pattern names unique per track
-        for (let k = 2; Object.values(patterns).some((x) => x.trackId === track.id && x.name === pname); k++) pname = `${ROLE_INFO[role].name} – ${section.name} ${k}`;
-        pat = createPattern(track.id, { name: pname, length: bars * bpb, notes: notes.filter((n) => n.start < bars * bpb), color: track.color });
-        patterns[pat.id] = pat;
-        cache.set(key, pat);
-      }
-      if (role === 'drums') {
-        // bass locks to the kick (looped over the harmonic loop)
-        kick = [];
-        for (let off = 0; off < loopBeats; off += pat.length) for (const n of pat.notes) if (n.pitch === 36) kick.push(off + n.start);
-      }
-      slots[track.id] = pat.id;
-      clips.push(createClip(track.id, { patternId: pat.id, start: beat, length: section.bars * bpb, name: label }));
+  const patternHarmony = {};
+  const auto = new Map(tracks.map((t) => [t.id, new AutomationBuilder()]));
+  const filterFx = new Map(); // trackId -> filter effect (added on demand for sweeps)
+  const ensureFilter = (t) => {
+    if (!filterFx.has(t.id)) {
+      const fx = createEffect('filter', { type: 'lowpass', cutoff: 20000, resonance: 1.1, slope: '12', depth: 0, mix: 1 });
+      filterFx.set(t.id, fx);
+      t.fx.unshift(fx);
     }
-    markers.push({ id: uid('mk'), beat, name: label });
-    scenes.push(createScene(label, slots));
-    sectionPatterns.push({ section, slots, start: beat });
-    if (section.energy > best.energy) best = { energy: section.energy, section, slots, start: beat };
-    beat += section.bars * bpb;
-  }
+    return filterFx.get(t.id);
+  };
+  const sweep = (t, a, b, from, to) => auto.get(t.id).add(`fx:${ensureFilter(t).id}:cutoff`, filterSweepPoints(a, b, from, to));
+  const sectionNotes = sections.map(() => ({}));
+  const padCache = new Map();
+  const electronic = ELECTRONIC.has(g.family) || ['synthwave', 'kpop', 'pop', 'future-bass', 'chillwave', 'eurobeat'].includes(g.id);
+  let best = { energy: -1, start: 0 };
+  const sectionSlots = [];
 
-  // active patterns: the most energetic section where the track plays, else its first pattern
+  sections.forEach((s, si) => {
+    const len = s.bars * bpb;
+    const progression = progs[si];
+    const srng = createRng(hash(seed, s.index, s.name));
+    const slots = {};
+    let kicks = [];
+    const nextProg = progs[si + 1];
+    const rise = s.next && s.next.energy > s.energy + 0.15 ? Math.min(2, s.bars) : 0;
+    const fall = s.kind === 'outro' ? Math.min(4, s.bars) : 0;
+    const harmonyOut = progression.map((c) => ({ startBeat: c.startBeat, durBeats: c.durBeats, roman: c.roman, root: c.chord.root, type: c.chord.type, bass: c.chord.bass ?? null, name: c.chord.name }));
+    for (const role of roles) {
+      if (!s.roles.includes(role)) continue;
+      const track = trackOf(role);
+      const rrng = createRng(hash(seed, s.index, role));
+      let notes = [];
+      if (role === 'drums') {
+        notes = sectionDrums(g, s, { bpb, rng: rrng });
+        kicks = notes.filter((n) => n.pitch === 36).map((n) => n.start);
+      } else if (role === 'bass') {
+        const style = s.kind === 'intro' || s.kind === 'outro' ? (['808', 'sub', 'drill'].includes(g.bassStyle) ? g.bassStyle : 'root') : g.bassStyle;
+        notes = generateBassline({ progression, style, key: root, scale, rng: rrng, beatsPerBar: bpb, length: len, density: 0.45 + s.energy * 0.55, kickNotes: kicks.length ? kicks : undefined });
+        const band = BAND_FAMILIES.has(g.family) && !['808', 'sub', 'drill', 'walking', 'blues', 'drone', 'reese'].includes(style);
+        if (band && s.next?.roles.includes('bass') && nextProg?.length && s.kind !== 'build') {
+          notes = bassPickup(notes, len, nextProg[0].chord.bass ?? nextProg[0].chord.root, { pcs: pcsOfKey });
+        }
+        // later choruses: a few octave pops on short off-beat notes
+        if (s.kind === 'main' && s.occurrence > 1) for (const n of notes) if (n.dur <= 0.5 && n.start % 1 !== 0 && rrng.chance(0.15) && n.pitch + 12 <= 55) n.pitch += 12;
+      } else if (role === 'chords') {
+        const calm = s.kind === 'break' || (ELECTRONIC.has(g.family) && (s.kind === 'intro' || s.kind === 'outro'));
+        const style = calm ? 'whole' : g.chordStyle;
+        notes = progressionToNotes(progression, { style, rng: rrng, beatsPerBar: bpb, length: len, vel: 0.58 + s.energy * 0.22 });
+      } else if (role === 'pad') {
+        if (!padCache.has(progression)) {
+          let prev = [];
+          padCache.set(progression, progression.map((c) => {
+            const v = c.chord?.type === '5' ? c.notes.map((n) => (n < 52 ? n + 12 : n)) : voiceChord(c.chord, { prev, range: PAD_RANGE, maxVoices: 4, context: c.notes, center: 63 });
+            prev = v;
+            return { ...c, notes: v.length ? v : c.notes };
+          }));
+        }
+        const padProg = padCache.get(progression);
+        notes = progressionToNotes(padProg, { style: 'whole', rng: rrng, beatsPerBar: bpb, length: len, vel: 0.5 + s.energy * 0.15 });
+      } else if (role === 'lead') {
+        if (melodyMode === 'classic' || s.name.toLowerCase() === 'solo') {
+          notes = generateRoleNotes('lead', { genre: g.id, key: root, scale, progression, bars: s.bars, beatsPerBar: bpb, energy: s.energy, kind: s.kind, rng: rrng, melodyStyle: s.name.toLowerCase() === 'solo' ? 'lead' : undefined });
+        } else {
+          const chorusLike = s.kind === 'main';
+          const breakLike = (s.kind === 'break' && s.type !== 'bridge') || s.kind === 'intro' || s.kind === 'outro';
+          let motif = chorusLike ? motifs.chorus : s.type === 'bridge' ? motifs.bridge : breakLike ? motifs.chorus : motifs.verse;
+          if (breakLike) motif = varyMotif(motif, 'augment', rrng);
+          if (s.kind === 'build') motif = varyMotif(motifs.verse, 'fragment', rrng);
+          const lo = LEAD_FLOOR;
+          notes = writeMelody({
+            progression, key: root, scale, motif, bpb, length: len, rng: rrng,
+            plan: chorusLike ? 'hook' : breakLike ? 'sparse' : s.bars >= 8 ? 'verse' : 'short',
+            range: [lo, chorusLike ? 90 : 86], center: chorusLike ? lo + 12 : lo + 8, variation: s.occurrence > 1 ? 0.8 : 0.3,
+            blues: g.id === 'blues',
+          });
+        }
+      } else if (role === 'arp') {
+        notes = generateRoleNotes('arp', { genre: g.id, key: root, scale, progression, bars: s.bars, beatsPerBar: bpb, energy: s.energy * 0.85, kind: s.kind, rng: rrng });
+      } else if (role === 'fx') {
+        notes = generateRoleNotes('fx', { genre: g.id, key: root, scale, progression, bars: s.bars, beatsPerBar: bpb, energy: s.energy, kind: s.kind, rng: rrng });
+      }
+      notes = notes.filter((n) => n.start < len - 1e-6);
+      // feel: groove (swing, micro-timing, ghosts, strums) and phrase dynamics
+      if (role !== 'fx') {
+        applyGroove(notes, { genre: g.id, groove, role, bpm, rng: rrng, length: len, strum: strumFor(track.instrument), tripletGrid: role === 'drums' && tripletDrums, energy: s.energy });
+        shapeDynamics(notes, { length: len, bpb, energy: s.energy, rise, fall, role });
+      }
+      sectionNotes[si][role] = notes;
+      const pat = createPattern(track.id, { name: `${ROLE_INFO[role].name} – ${s.label}`, length: len, notes: notes.map((n) => createNote(n.pitch, n.start, n.dur, n.vel)), color: track.color });
+      patterns[pat.id] = pat;
+      if (role !== 'drums' && role !== 'fx') patternHarmony[pat.id] = { harmony: harmonyOut, length: len };
+      slots[track.id] = pat.id;
+      clips.push(createClip(track.id, { patternId: pat.id, start: s.start, length: len, name: s.label }));
+      // automation: filtered intros and rising filters through builds (electronic); a lifting filter in pre-choruses
+      if (electronic && s.kind === 'intro' && (role === 'drums' || role === 'chords' || role === 'pad') && s.bars >= 4) sweep(track, s.start, s.start + len, role === 'drums' ? 380 : 500, 16000);
+      if (s.kind === 'build' && ['chords', 'pad', 'arp'].includes(role)) sweep(track, s.start, s.start + len, electronic ? 450 : 1500, 17000);
+    }
+    markers.push({ id: uid('mk'), beat: s.start, name: s.label });
+    scenes.push(createScene(s.label, slots));
+    sectionSlots.push({ s, slots });
+    if (s.energy > best.energy) best = { energy: s.energy, start: s.start };
+  });
+
+  // outro fade on loop-based genres; bands ring out on the last chord
+  const songEnd = sections.reduce((m, s) => Math.max(m, s.start + s.bars * bpb), 0);
+  const master = createSongMaster(g.id);
+  const outro = sections[sections.length - 1];
+  if (outro?.kind === 'outro' && (electronic || ['chill', 'ambient', 'retro', 'hiphop'].includes(g.family))) {
+    const fadeBars = Math.min(8, outro.bars);
+    master.automation.push({ id: uid('aut'), target: 'volume', enabled: true, points: [{ beat: songEnd - fadeBars * bpb, value: master.volume }, { beat: songEnd, value: 0 }] });
+  }
+  addRides({ genre: g, tracks, sections, bpb, auto, notesBy: (i, role) => sectionNotes[i]?.[role], buses: [reverbBus, delayBus], electronic, rng: createRng(hash(seed, 'rides')), ensureFilter });
+  for (const t of tracks) t.automation = auto.get(t.id).lanes();
   for (const t of tracks) {
-    const top = sectionPatterns.filter((s) => s.slots[t.id]).sort((a, b) => b.section.energy - a.section.energy)[0];
+    const top = sectionSlots.filter((x) => x.slots[t.id]).sort((a, b) => b.s.energy - a.s.energy)[0];
     t.activePatternId = top ? top.slots[t.id] : null;
   }
   const keyName = pitchClassName(root, keyPrefersFlats(root, scale));
   return {
     name: opts.name || `${g.name} in ${keyName}`,
     bpm,
-    swing: g.swing || 0,
-    key: { root, scale },
+    swing: 0, // the groove (incl. swing) is baked into the notes
+    key,
     genre: g.id,
     timeSig: [...timeSig],
     tracks,
@@ -262,13 +430,17 @@ export function generateSong(opts = {}) {
     clips,
     scenes,
     markers,
+    buses: [reverbBus, delayBus],
+    master,
     loop: { enabled: true, start: best.start || 0, end: (best.start || 0) + loopBeats },
     seed,
-    progression: progression.map((c) => c.roman),
-    // opts.withHarmony: the exact chords (timing, colour, slash bass) the parts were generated against
+    progression: mainLoop.map((c) => c.roman),
+    sections: sections.map((s, i) => ({ name: s.label, kind: s.kind, type: s.type, start: s.start, bars: s.bars, energy: s.energy, roles: [...s.roles], progression: [...new Set(progs[i].map((c) => c.roman))] })),
     ...(opts.withHarmony ? {
-      harmony: progression.map((c) => ({ startBeat: c.startBeat, durBeats: c.durBeats, roman: c.roman, root: c.chord.root, type: c.chord.type, bass: c.chord.bass ?? null, name: c.chord.name })),
+      harmony: mainLoop.map((c) => ({ startBeat: c.startBeat, durBeats: c.durBeats, roman: c.roman, root: c.chord.root, type: c.chord.type, bass: c.chord.bass ?? null, name: c.chord.name })),
       harmonyLength: loopBeats,
+      patternHarmony,
     } : {}),
   };
 }
+

@@ -24,8 +24,8 @@ const MIN_PPB = 1.2;
 const MAX_PPB = 480;
 const MIN_LANE = 26;
 const MAX_LANE = 180;
-const DT_SAMPLE = 'application/x-heroic-sample';
-const DT_PRESET = 'application/x-heroic-preset';
+const DT_SAMPLE = 'application/x-dawww-sample';
+const DT_PRESET = 'application/x-dawww-preset';
 const EPS = 1e-6;
 const AUTO_H = 58; // automation lane height (px)
 const AUTO_PAD = 7; // vertical padding inside an automation lane
@@ -188,7 +188,7 @@ export function clipsFromActivePatterns(app, { start = 0, bars = null } = {}) {
   return clips;
 }
 
-const loadPrefs = () => { try { return JSON.parse(localStorage.getItem('heroic-arrange') || '{}'); } catch { return {}; } };
+const loadPrefs = () => { try { return JSON.parse(localStorage.getItem('dawww-arrange') || '{}'); } catch { return {}; } };
 const mod = (a, n) => (n > 0 ? ((a % n) + n) % n : a);
 
 // ============================================================================ the view
@@ -208,7 +208,7 @@ export function createArrangeView(app) {
   let version = 0; // project version (bumped on every project change)
   let theme = {};
 
-  const savePrefs = () => { try { localStorage.setItem('heroic-arrange', JSON.stringify({ ppb, laneH, headW, snap: snapMode, autoOpen: [...autoOpen] })); } catch { /* ignore */ } };
+  const savePrefs = () => { try { localStorage.setItem('dawww-arrange', JSON.stringify({ ppb, laneH, headW, snap: snapMode, autoOpen: [...autoOpen] })); } catch { /* ignore */ } };
   const bpbNow = () => beatsPerBar(get());
   const snapStep = () => (snapMode === 'off' ? 0 : snapMode === 'bar' ? bpbNow() : Number(snapMode));
   const snapB = (b, ev, fn = Math.round) => {
@@ -2298,7 +2298,7 @@ export function createArrangeView(app) {
     const audio = files.filter(isAudio);
     const midi = files.filter((f) => /\.(mid|midi)$/i.test(f.name));
     const code = files.filter((f) => /\.(strudel|str|js|txt|tidal)$/i.test(f.name));
-    const json = files.filter((f) => /\.json$/i.test(f.name));
+    const json = files.filter((f) => /\.(json|daw3)$/i.test(f.name));
     if (audio.length) {
       const added = await actions.importSamples(audio);
       if (added?.[0]) await actions.placeSample(added[0].id, { trackId: track?.type === 'audio' ? track.id : undefined, start: beat });

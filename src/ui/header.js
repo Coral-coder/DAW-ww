@@ -1,6 +1,7 @@
 // Top bar: main menu, transport, tempo/key/genre, mode switch, master meter.
 import { h, icon } from './dom.js';
-import { numberField, select, contextMenu, meter, knob } from './components.js';
+import { numberField, select, contextMenu, meter, knob, markAuto } from './components.js';
+import { AUTO_MODES } from './automation-recorder.js';
 import { SCALES, pitchClassName } from '../theory/index.js';
 import { GENRES } from '../gen/genres.js';
 import { beatsPerBar } from '../core/model.js';
@@ -23,6 +24,10 @@ export function createHeader(app) {
   const playBtn = tbtn('play', 'Play / Pause (Space)', 'play', () => actions.togglePlay());
   const stopBtn = tbtn('stop', 'Stop (Space twice / Enter)', '', () => actions.stop());
   const recBtn = tbtn('record', 'Record (R): notes from the keyboard/MIDI into the selected pattern — or, with an audio track armed (●), audio from your microphone / line-in onto the timeline', 'rec', () => actions.toggleRecord());
+  // automation recording: arm (A●, Shift+A) + write mode
+  const autoBtn = h('button.transport-btn.auto-arm', { type: 'button', title: 'Automation Arm (Shift+A): while playing in SONG mode, every knob / fader / switch you move is recorded into its own automation lane' }, h('span.auto-arm-a', 'A'), h('span.auto-arm-dot'));
+  autoBtn.addEventListener('click', () => ui.set({ autoArm: !ui.get('autoArm') }));
+  const autoMode = select({ options: AUTO_MODES.map((m) => ({ value: m.value, label: m.label })), value: ui.get('autoMode') || 'touch', cls: 'auto-mode', title: 'Automation write mode:\n' + AUTO_MODES.map((m) => m.help).join('\n'), onChange: (v) => ui.set({ autoMode: v }) });
   const loopBtn = tbtn('loop', 'Loop region (L)', '', () => store.transact('Toggle loop', (p) => { p.loop.enabled = !p.loop.enabled; }));
   const metroBtn = tbtn('metronome', 'Metronome (M)', '', () => store.transact('Toggle metronome', (p) => { p.metronome = !p.metronome; }, { undo: false }));
   const lcd = h('div.lcd', { title: 'Position (bar.beat.step) — click to switch to time' }, '1.1.1');
@@ -75,6 +80,7 @@ export function createHeader(app) {
   masterMeter.style.height = '30px';
   const masterVol = knob({ def: { key: 'mv', label: 'Master', min: 0, max: 1.5, default: 0.9, step: 0.01 }, value: p0.master.volume, size: 26, showValue: false, label: false, onChange: (v, { final }) => { if (final && store.get().master.volume === v) return; store.transact('Master volume', (p) => { p.master.volume = v; }, { coalesce: !final }); } });
   masterVol.title = 'Master volume';
+  markAuto(masterVol, 'master', 'volume');
 
   const panelBtn = (ic, key, title) => {
     const b = h('button.icon-btn', { title }, icon(ic));
@@ -89,7 +95,7 @@ export function createHeader(app) {
   const el = h('header.app-header',
     h('div.hgroup', menuBtn, logo),
     h('div.hgroup', undoBtn, redoBtn),
-    h('div.hgroup', playBtn, stopBtn, recBtn, loopBtn, metroBtn, lcd),
+    h('div.hgroup', playBtn, stopBtn, recBtn, h('div.auto-arm-group', autoBtn, autoMode), loopBtn, metroBtn, lcd),
     h('div.hgroup', h('div.hfield', h('span.hlabel', 'BPM'), bpm), tap, h('div.hfield', h('span.hlabel', 'Sig'), sig), h('div.hfield', h('span.hlabel', 'Swing'), swing)),
     h('div.hgroup', h('div.hfield', h('span.hlabel', 'Key'), keyRoot), h('div.hfield', h('span.hlabel', 'Scale'), keyScale), h('div.hfield', h('span.hlabel', 'Genre'), genre)),
     h('div.hgroup', modeSwitch),
@@ -117,6 +123,8 @@ export function createHeader(app) {
     undoBtn.style.opacity = store.canUndo() ? 1 : 0.35;
     redoBtn.style.opacity = store.canRedo() ? 1 : 0.35;
     recBtn.classList.toggle('on', !!ui.get('recording'));
+    autoBtn.classList.toggle('on', !!ui.get('autoArm'));
+    autoMode.setValue(ui.get('autoMode') || 'touch');
     browserBtn.sync(); deviceBtn.sync(); assistBtn.sync();
   }
   app.subscribe(sync);
@@ -137,6 +145,7 @@ export function createHeader(app) {
       lcd.textContent = `${bar}.${beat}.${step}`;
     }
     playBtn.classList.toggle('on', !!engine.isPlaying);
+    autoBtn.classList.toggle('writing', !!ui.get('autoArm') && !!engine.isPlaying && p.mode === 'song');
     playBtn.replaceChildren(icon(engine.isPlaying ? 'pause' : 'play', 16));
     if (engine.getMeter && engine.ctx) {
       const m = engine.getMeter('master') || { l: 0, r: 0 };

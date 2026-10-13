@@ -156,7 +156,7 @@ export const GENRES = {
   }),
   trance: G('trance', 'Trance', 'trance', [132, 140], 138, {
     scales: ['minor', 'harmonic-minor'], drumKit: '909', drumStyle: 'trance', bassStyle: 'offbeat', chordStyle: 'trance-gate',
-    progressions: ['aeolian-loop', 'trance-uplift', 'trance-anthem', 'heroic-rise'], melodyStyle: 'hook', arp: { mode: 'updown', rate: 0.25, octaves: 2 },
+    progressions: ['aeolian-loop', 'trance-uplift', 'trance-anthem', 'epic-rise'], melodyStyle: 'hook', arp: { mode: 'updown', rate: 0.25, octaves: 2 },
     presets: { drums: '909', bass: 'saw-bass', chords: 'pluck', pad: 'supersaw-pad', lead: 'trance-lead', arp: 'arp-saw', fx: 'riser' },
     structure: 'trance', fx: ['Big hall reverb + delay on the lead', 'Gated supersaw pads', 'White-noise risers into drops'],
     tips: ['Long breakdowns with the main melody, then a huge build into the drop.', 'Rolling offbeat bass under a four-on-the-floor kick.', 'Supersaw leads in octaves with 1/8 dotted delay.'],
@@ -378,7 +378,7 @@ export const GENRES = {
   }),
   metal: G('metal', 'Metal', 'rock', [100, 200], 160, {
     humanize: 0.1, scales: ['phrygian', 'minor', 'harmonic-minor', 'phrygian-dominant'], drumKit: 'rock', drumStyle: 'metal', bassStyle: 'metal', chordStyle: 'power',
-    progressions: ['metal-power', 'metal-tritone', 'andalusian', 'heroic-rise'], melodyStyle: 'riff',
+    progressions: ['metal-power', 'metal-tritone', 'andalusian', 'epic-rise'], melodyStyle: 'riff',
     presets: { drums: 'rock', bass: 'saw-bass', chords: 'guitar-dist', pad: 'choir-pad', lead: 'guitar-lead', arp: 'arp-saw', fx: 'noise-sweep' },
     structure: 'rock', fx: ['High-gain amp sim', 'Tight gate', 'Kick click EQ'],
     tips: ['Palm-muted chugs locked with double-kick.', 'Phrygian b2 and tritones for darkness.', 'Tight editing: everything on the grid.'],
@@ -508,7 +508,7 @@ export const GENRES = {
   // ======================= CINEMATIC / INDUSTRIAL / HARD =======================
   cinematic: G('cinematic', 'Cinematic / Orchestral', 'cinematic', [60, 140], 90, {
     scales: ['minor', 'harmonic-minor', 'lydian', 'dorian'], drumKit: 'cinematic', drumStyle: 'cinematic', bassStyle: 'cinematic', chordStyle: 'ostinato',
-    progressions: ['cinematic-epic', 'chromatic-mediant', 'heroic-rise', 'dark-tension', 'lydian-float'], melodyStyle: 'lead',
+    progressions: ['cinematic-epic', 'chromatic-mediant', 'epic-rise', 'dark-tension', 'lydian-float'], melodyStyle: 'lead',
     presets: { drums: 'cinematic', bass: 'sub-bass', chords: 'strings', pad: 'choir-pad', lead: 'brass-section', arp: 'harp', fx: 'riser' },
     structure: 'cinematic', fx: ['Large hall reverb', 'Impacts and risers', 'Wide stereo strings'],
     tips: ['Ostinato strings drive momentum under sustained brass.', 'Big taiko/tom hits on climaxes.', 'Chromatic mediants (I–bVI) give awe and wonder.'],
@@ -522,14 +522,14 @@ export const GENRES = {
   }),
   hardstyle: G('hardstyle', 'Hardstyle', 'hard', [145, 160], 150, {
     scales: ['minor', 'harmonic-minor'], drumKit: 'hardstyle', drumStyle: 'hardstyle', bassStyle: 'hardstyle', chordStyle: 'whole',
-    progressions: ['hardstyle-euphoric', 'heroic-rise', 'aeolian-loop', 'eurobeat'], melodyStyle: 'hook',
+    progressions: ['hardstyle-euphoric', 'epic-rise', 'aeolian-loop', 'eurobeat'], melodyStyle: 'hook',
     presets: { drums: 'hardstyle', bass: 'saw-bass', chords: 'supersaw-pad', pad: 'supersaw-pad', lead: 'supersaw-lead', arp: 'arp-saw', fx: 'riser' },
     structure: 'hard', fx: ['Distorted kick with pitch envelope', 'Huge reverb on leads', 'Screeches'],
     tips: ['The kick IS the bass: distorted, pitched tail tuned to the key.', 'Off-beat "reverse bass" fills the gaps between kicks.', 'Euphoric supersaw melodies in the breakdown.'],
   }),
   eurobeat: G('eurobeat', 'Eurobeat', 'retro', [150, 165], 155, {
     scales: ['minor', 'harmonic-minor'], drumKit: '909', drumStyle: 'eurobeat', bassStyle: 'offbeat', chordStyle: 'pulse8',
-    progressions: ['eurobeat', 'royal-road', 'kpop-drama', 'heroic-rise'], melodyStyle: 'lead', arp: { mode: 'up', rate: 0.25, octaves: 2 },
+    progressions: ['eurobeat', 'royal-road', 'kpop-drama', 'epic-rise'], melodyStyle: 'lead', arp: { mode: 'up', rate: 0.25, octaves: 2 },
     presets: { drums: '909', bass: 'saw-bass', chords: 'supersaw-pad', pad: 'brass-section', lead: 'brass-lead', arp: 'arp-saw', fx: 'riser' },
     structure: 'pop', fx: ['Bright reverb', 'Gated brass stabs'],
     tips: ['Octave-bouncing offbeat bass at 155+ BPM.', 'Synth-brass riffs and dramatic minor melodies.', 'Big pre-chorus builds into the chorus hook.'],

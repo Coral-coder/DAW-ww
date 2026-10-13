@@ -1,7 +1,36 @@
 // Reusable UI controls: knobs, sliders, toggles, selects, menus, modals, toasts,
 // and auto-generated parameter panels driven by ParamDef metadata.
 import { h, icon, startDrag, clear } from './dom.js';
-import { clamp } from '../core/util.js';
+import { clamp, Emitter } from '../core/util.js';
+
+// ---------- automation hooks (used by src/ui/automation-recorder.js) ----------
+/**
+ * Global "control touch" signal: 'touchstart' / 'touchend' (el) while a knob / fader is held by the
+ * pointer — the automation recorder uses it to know when the user lets go (TOUCH mode).
+ */
+export const controlEvents = new Emitter();
+/** Tag a control with the automation target it edits (owner: track id | bus id | 'master'). The
+ * recorder animates tagged controls during playback (via el.setValue / el.autoSet) and offers the
+ * right-click automation menu on them. */
+export function markAuto(el, owner, target) {
+  if (el && owner && target) { el.dataset.autoOwner = owner; el.dataset.autoTarget = target; bindAutoContext(el); }
+  return el;
+}
+let autoContextHook = null;
+/** fn(el, event) -> true when it handled the right-click (shows "Show / Clear / Add automation lane"). */
+export function setAutoContextHook(fn) { autoContextHook = fn; }
+/** Route right-clicks on a tagged control to the automation context hook (idempotent). */
+export function bindAutoContext(el) {
+  if (!el || el._autoCtx) return el;
+  el._autoCtx = true;
+  el.addEventListener('contextmenu', (e) => {
+    if (!autoContextHook || !el.dataset.autoTarget) return;
+    if (autoContextHook(el, e)) { e.preventDefault(); e.stopPropagation(); }
+  });
+  return el;
+}
+export const touchStart = (el) => controlEvents.emit('touchstart', el);
+export const touchEnd = (el) => controlEvents.emit('touchend', el);
 
 // ---------- value mapping helpers ----------
 function toNorm(def, v) {
@@ -89,13 +118,15 @@ export function knob({ def, value, onChange, size = 38, label, color, showValue 
   }
   svg.addEventListener('pointerdown', (e) => {
     e.preventDefault();
+    if (e.button !== 0) return;
     const n0 = toNorm(def, v);
     const v0 = v;
     el.classList.add('active');
+    touchStart(el);
     startDrag(e, (dx, dy, ev) => {
       const sens = ev.shiftKey ? 0.0015 : 0.006;
       set(fromNorm(def, n0 + (-dy + dx * 0.3) * sens));
-    }, () => { el.classList.remove('active'); if (v !== v0) onChange && onChange(v, { final: true }); }); // a plain click changes nothing
+    }, () => { el.classList.remove('active'); if (v !== v0) onChange && onChange(v, { final: true }); touchEnd(el); }); // a plain click changes nothing
   });
   svg.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -127,9 +158,12 @@ export function fader({ def, value, onChange, vertical = true, length = 120, col
     onChange && onChange(v, { final: false });
   }
   el.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
     e.preventDefault();
+    el.classList.add('active');
+    touchStart(el);
     setFromEvent(e);
-    startDrag(e, (_dx, _dy, ev) => setFromEvent(ev), () => onChange && onChange(v, { final: true }));
+    startDrag(e, (_dx, _dy, ev) => setFromEvent(ev), () => { el.classList.remove('active'); onChange && onChange(v, { final: true }); touchEnd(el); });
   });
   el.addEventListener('dblclick', () => { v = def.default ?? 0; render(); onChange && onChange(v, { final: true }); });
   el.addEventListener('wheel', (e) => {
@@ -255,7 +289,11 @@ export function trackSelect({ value, onChange, title, exclude = null, noneLabel 
   return el;
 }
 
-export function paramPanel({ defs, values = {}, onChange, color, sectionsOpen = {}, onSectionToggle }) {
+/**
+ * auto (optional): { owner, prefix } tags every control with its automation target `prefix + key`
+ * (e.g. { owner: trackId, prefix: 'fx:<fxId>:' }) — see markAuto.
+ */
+export function paramPanel({ defs, values = {}, onChange, color, sectionsOpen = {}, onSectionToggle, auto = null }) {
   const root = h('div.param-panel');
   const bySection = new Map();
   for (const d of defs) {
@@ -280,6 +318,10 @@ export function paramPanel({ defs, values = {}, onChange, color, sectionsOpen = 
       c = h('div.param-enum', h('label', d.label), h('span.muted', String(val ?? '')));
     }
     controls[d.key] = c;
+    if (auto?.owner && c) {
+      const target = (auto.prefix || '') + d.key;
+      markAuto(c.matches?.('.knob') ? c : c.querySelector('select, button.toggle') || c, auto.owner, target);
+    }
     return c;
   };
   for (const [section, list] of bySection) {

@@ -9,7 +9,7 @@ import * as genres from '../../gen/genres.js';
 import * as theory from '../../theory/index.js';
 import { DRUM_MACHINES } from '../../audio/library/drum-machines.js';
 
-const LS_OPEN = 'heroic-browser-open';
+const LS_OPEN = 'dawww-browser-open';
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } };
 const CATEGORY_ORDER = ['Bass', 'Lead', 'Keys', 'Piano', 'Pad', 'Pluck', 'Chords', 'Strings', 'Brass', 'Arp', 'Mallets', 'World', 'FX'];
@@ -219,7 +219,7 @@ export function createBrowserPanel(app) {
     const groups = order.map((c) => group('inst:' + c, c, cats.get(c).map(([id, pr]) => item({
       key: 'preset:' + id, ic: 'music', label: pr.name, meta: (pr.instrument?.type || '').toUpperCase().slice(0, 5),
       title: `${pr.name} — ${pr.category}${pr.roles?.length ? ' · ' + pr.roles.join(', ') : ''}\nDouble-click or drag to add a track · right-click for more`,
-      drag: { 'application/x-heroic-preset': id },
+      drag: { 'application/x-dawww-preset': id },
       onClick: () => setInfo(pr.name, `${pr.description || `${cap(pr.instrument?.type || 'synth')} preset`}${pr.roles?.length ? ` · Roles: ${pr.roles.join(', ')}` : ''}`, `${pr.genres?.length ? 'Used in: ' + pr.genres.slice(0, 6).map(cap).join(', ') + '. ' : ''}Double-click or drag onto the timeline to add.`),
       onDblClick: () => actions.addTrack(id),
       onMenu: (e) => { const t = selectedTrack(); contextMenu(e, [
@@ -238,7 +238,7 @@ export function createBrowserPanel(app) {
     const items = Object.entries(DRUM_KITS).filter(([id, k]) => matches(k.name, k.description || '', id, 'drum kit drums')).map(([id, k]) => item({
       key: 'kit:' + id, ic: 'drum', label: k.name || id,
       title: `${k.description || k.name}\nDouble-click or drag to add a drum track · right-click to load on the selected drum track`,
-      drag: { 'application/x-heroic-kit': id, 'application/x-heroic-preset': id },
+      drag: { 'application/x-dawww-kit': id, 'application/x-dawww-preset': id },
       onClick: () => setInfo(k.name || id, k.description || 'Synthesized drum kit', 'Double-click to add a drum track with this kit.'),
       onDblClick: () => actions.addTrack(id),
       onMenu: (e) => { const t = selectedTrack(); const isDrum = t?.instrument?.type === 'drums'; contextMenu(e, [
@@ -345,7 +345,7 @@ export function createBrowserPanel(app) {
     const items = list.sort((a, b) => a.name.localeCompare(b.name)).map((s) => item({
       key: 'sample:' + s.id, ic: 'wave', label: s.name, meta: fmtDur(s.duration),
       title: `${s.name}${s.duration ? ` (${fmtDur(s.duration)})` : ''}\nClick ▶ to listen · drag onto a track, drum pad or sampler · right-click for more`,
-      drag: { 'application/x-heroic-sample': s.id },
+      drag: { 'application/x-dawww-sample': s.id },
       onClick: () => setInfo(s.name, `${s.mime || 'audio'}${s.duration ? ' · ' + fmtDur(s.duration) : ''}`, 'Drag onto the arrangement or a drum pad. Right-click: place at playhead / load into a sampler.'),
       onDblClick: () => auditionSample(s.id),
       onMenu: (e) => contextMenu(e, [
@@ -460,7 +460,7 @@ export function createBrowserPanel(app) {
       key: 'pat:' + pt.id, ic: 'grid', label: pt.name, meta: `${Math.round((pt.length / beatsPerBar(p)) * 100) / 100} bar · ${pt.notes.length}`,
       cls: (pt.id === t.activePatternId ? 'current' : '') + (pt.id === selPat ? ' sel' : ''),
       title: `${pt.name}: ${pt.notes.length} notes, ${pt.length} beats${pt.id === t.activePatternId ? ' (active)' : ''}\nClick to select · double-click to edit`,
-      drag: { 'application/x-heroic-pattern': pt.id },
+      drag: { 'application/x-dawww-pattern': pt.id },
       onClick: () => actions.selectPattern(pt.id),
       onDblClick: () => { actions.selectPattern(pt.id); ui.set({ view: isDrums ? 'rack' : 'piano' }); },
       onMenu: (e) => contextMenu(e, [

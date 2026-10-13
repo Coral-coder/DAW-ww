@@ -51,6 +51,7 @@ export function installKeyboard(app) {
     const view = VIEWS.find((v) => v.key === e.key);
     if (view) { ui.set({ view: view.id }); return; }
     if (k === 'b') ui.set({ browserOpen: !ui.get('browserOpen') });
+    else if (k === 'a' && e.shiftKey) ui.set({ autoArm: !ui.get('autoArm') }); // automation recording arm
     else if (k === 'a') ui.set({ assistantOpen: !ui.get('assistantOpen') });
     else if (k === 'd') ui.set({ deviceOpen: !ui.get('deviceOpen') });
     else if (k === 'l') app.store.transact('Toggle loop', (p) => { p.loop.enabled = !p.loop.enabled; });

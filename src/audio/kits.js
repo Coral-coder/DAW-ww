@@ -327,37 +327,39 @@ export const DRUM_KITS = {
 };
 
 /**
- * Per-pad level trims (dB) so every kit has the same mix balance: kick ≈ -12 LUFS (max momentary,
+ * Per-pad level trims (dB) so every kit has the same mix balance: kick ≈ -12 LUFS before KIT_LEVEL_DB (max momentary,
  * vel 0.8), snare/clap 1.5-3 dB under it, toms -15, hats -20..-24, percussion -17..-25. Measured
  * with the QA harness (docs/SOUND.md) and applied to per-kit copies of the shared recipes.
  */
+/** Overall kit level (dB) so drums sit with the normalised instrument presets. */
+const KIT_LEVEL_DB = -3;
 const PAD_TRIM_DB = {
-  "808": { kick: 1.9, snare: 9.1, clap: 13.4, rim: 7.9, hihat: 13.3, openhat: 8.1, tomlow: 2.6, tommid: 2.5, tomhigh: 2.4, crash: 2.3, ride: 1, cowbell: -2, tambourine: -1.4, shaker: 2.1, conga: 3.5, clave: 6.1 },
-  "909": { kick: 3.2, snare: 6.1, clap: 10.7, rim: 7.9, hihat: 6.4, openhat: 2.5, tomlow: 4.5, tommid: 4.3, tomhigh: 4.2, crash: 0.7, ride: -0.7, cowbell: -2, tambourine: -1.4, shaker: 2.1, conga: 3.5, clave: 6.1 },
-  "trap": { kick: -1.2, snare: 8.9, clap: 14.7, rim: 8.3, hihat: 12, openhat: 7.2, tomlow: 2.6, tommid: 2.5, tomhigh: 2.4, crash: 2.3, ride: 1, cowbell: -2, tambourine: -1.4, shaker: 2.1, conga: 3.5, clave: 6.1 },
-  "lofi": { kick: 7.7, snare: 13.5, clap: 10, rim: 7.4, hihat: 20.9, openhat: 16.3, tomlow: 2.9, tommid: 2.7, tomhigh: 2.6, crash: 7.8, ride: -1.7, cowbell: 0.7, tambourine: 9.7, shaker: 9.3, conga: 2.9, clave: 2.8 },
-  "acoustic": { kick: 8.1, snare: 8.6, clap: 8.4, rim: 6.3, hihat: 5.1, openhat: 0.7, tomlow: 2.9, tommid: 2.7, tomhigh: 2.6, crash: -3.1, ride: -4.9, cowbell: 0.5, tambourine: -2.2, shaker: 1.6, conga: 2.9, clave: 2.5 },
-  "rock": { kick: 4.1, snare: -1.4, clap: 3.8, rim: 3.6, hihat: 1, openhat: -3.7, tomlow: -0.8, tommid: -1.2, tomhigh: -1.2, crash: -8.1, ride: -9, cowbell: -2, tambourine: -5.8, shaker: -2.8, conga: -0.3, clave: -1 },
-  "techno": { kick: 1.2, snare: 6.1, clap: 2.7, rim: 0.2, hihat: 11.2, openhat: 7.7, tomlow: 4.5, tommid: 4.3, tomhigh: 4.2, crash: 0.7, ride: -0.7, cowbell: -2, tambourine: -1.4, shaker: 2.1, conga: 3.5, clave: 6.1 },
-  "house": { kick: 5.8, snare: 6.1, clap: 9.6, rim: 7.9, hihat: 6.4, openhat: 2.4, tomlow: 4.5, tommid: 4.3, tomhigh: 4.2, crash: 0.7, ride: -0.7, cowbell: -2, tambourine: -1.4, shaker: 2, conga: 3.5, clave: 6.1 },
-  "breaks": { kick: 3.3, snare: 0.5, clap: 8.8, rim: 6.6, hihat: 9.9, openhat: 5.3, tomlow: 2.9, tommid: 2.7, tomhigh: 2.6, crash: 1.2, ride: -4, cowbell: 0.7, tambourine: 1.2, shaker: 3.4, conga: 2.9, clave: 2.5 },
-  "dnb": { kick: 5.9, snare: 1.5, clap: 8.4, rim: 6.3, hihat: 8.6, openhat: 4.6, tomlow: 2.9, tommid: 2.7, tomhigh: 2.6, crash: -3.1, ride: -4.9, cowbell: 0.5, tambourine: -2.2, shaker: 1.6, conga: 2.9, clave: 2.5 },
-  "jazz": { kick: 10.6, snare: 19.9, clap: 8.4, rim: 6.3, hihat: 12.6, openhat: 0.7, tomlow: 2.8, tommid: 2.7, tomhigh: 2.6, crash: -3.1, ride: -6, cowbell: 0.5, tambourine: -2.2, shaker: 1.6, conga: 2.9, clave: 2.5 },
-  "latin": { kick: 10.8, snare: 8.5, clap: 8.4, rim: 6.3, hihat: 5.1, openhat: 0.7, tomlow: 4.3, tommid: 4.3, tomhigh: 3.2, crash: -3.1, ride: -4.9, cowbell: -2.8, tambourine: -2.2, shaker: 2.2, conga: 3.5, clave: 1.5 },
-  "afro": { kick: 7.4, snare: 12.3, clap: 8.4, rim: 6.3, hihat: 5.1, openhat: 0.7, tomlow: 3.6, tommid: 2.8, tomhigh: 3.3, crash: -3.1, ride: -4.9, cowbell: -0.3, tambourine: -2.2, shaker: 0.9, conga: 2.8, clave: 2.5 },
-  "reggaeton": { kick: 3.1, snare: 8.3, clap: 13.7, rim: 7.9, hihat: 9.9, openhat: 8.1, tomlow: 2.6, tommid: 2.5, tomhigh: 2.4, crash: 2.3, ride: 1, cowbell: -2, tambourine: -1.4, shaker: 2.1, conga: 3.5, clave: 6.1 },
-  "chip": { kick: 10.5, snare: 10.7, clap: 13, rim: 9.9, hihat: 6.8, openhat: 3.8, tomlow: 7.9, tommid: 7.6, tomhigh: 7.5, crash: 0.1, ride: 3.5, cowbell: 8.2, tambourine: 2.6, shaker: 3.8, conga: 9.1, clave: 7.4 },
-  "industrial": { kick: 1.9, snare: -1.9, clap: -3.2, rim: -6, hihat: -6, openhat: -10.1, tomlow: -0.5, tommid: -0.8, tomhigh: -0.9, crash: -7, ride: -9.7, cowbell: -9.2, tambourine: -7.9, shaker: -6.3, conga: -2, clave: -0.6 },
-  "hardstyle": { kick: 1.3, snare: -1.9, clap: 3.4, rim: 7.9, hihat: 6.4, openhat: 2.5, tomlow: 4.5, tommid: 4.3, tomhigh: 4.2, crash: -2.6, ride: -0.7, cowbell: -2, tambourine: -1.4, shaker: 2.1, conga: 3.5, clave: 6.1 },
-  "phonk": { kick: -0.6, snare: 2.9, clap: 13.6, rim: 8, hihat: 1.5, openhat: -3, tomlow: 2.6, tommid: 2.5, tomhigh: 2.4, crash: 4.6, ride: 1.8, cowbell: -9.1, tambourine: 0.6, shaker: 3.1, conga: 3.5, clave: 6.1 },
-  "garage": { kick: 5.6, snare: 7.9, clap: 10.7, rim: 6.6, hihat: 9.5, openhat: 2.5, tomlow: 4.5, tommid: 4.3, tomhigh: 4.2, crash: 0.7, ride: -0.7, cowbell: -2, tambourine: -1.4, shaker: 3.4, conga: 3.5, clave: 6.1 },
-  "cinematic": { kick: 1.4, snare: 4.5, clap: 5.3, rim: 6.3, hihat: 5.1, openhat: 0.7, tomlow: 0.3, tommid: -0.4, tomhigh: -0.7, crash: -5.4, ride: -5.9, cowbell: 0.5, tambourine: -2.2, shaker: 1.6, conga: 2.9, clave: 2.5 },
+  "808": { kick: 1.9, snare: 9.1, clap: 13.4, rim: 7.9, hihat: 15.3, openhat: 10.1, tomlow: 2.6, tommid: 2.5, tomhigh: 2.4, crash: 4.3, ride: 3.0, cowbell: -2.0, tambourine: 0.6, shaker: 4.1, conga: 3.5, clave: 6.1 },
+  "909": { kick: 3.2, snare: 6.1, clap: 10.7, rim: 7.9, hihat: 8.4, openhat: 4.5, tomlow: 4.5, tommid: 4.3, tomhigh: 4.2, crash: 2.7, ride: 1.3, cowbell: -2.0, tambourine: 0.6, shaker: 4.1, conga: 3.5, clave: 6.1 },
+  "trap": { kick: -1.2, snare: 8.9, clap: 14.7, rim: 8.3, hihat: 14.0, openhat: 9.2, tomlow: 2.6, tommid: 2.5, tomhigh: 2.4, crash: 4.3, ride: 3.0, cowbell: -2.0, tambourine: 0.6, shaker: 4.1, conga: 3.5, clave: 6.1 },
+  "lofi": { kick: 7.7, snare: 13.5, clap: 10.0, rim: 7.4, hihat: 22.9, openhat: 18.3, tomlow: 2.9, tommid: 2.7, tomhigh: 2.6, crash: 9.8, ride: 0.3, cowbell: 0.7, tambourine: 11.7, shaker: 11.3, conga: 2.9, clave: 2.8 },
+  "acoustic": { kick: 8.1, snare: 8.6, clap: 8.4, rim: 6.3, hihat: 7.1, openhat: 2.7, tomlow: 2.9, tommid: 2.7, tomhigh: 2.6, crash: -1.1, ride: -2.9, cowbell: 0.5, tambourine: -0.3, shaker: 3.6, conga: 2.9, clave: 2.5 },
+  "rock": { kick: 4.1, snare: -1.4, clap: 3.8, rim: 3.6, hihat: 3.0, openhat: -1.7, tomlow: -0.8, tommid: -1.2, tomhigh: -1.2, crash: -6.1, ride: -7.0, cowbell: -2.0, tambourine: -3.8, shaker: -0.9, conga: -0.3, clave: -1.0 },
+  "techno": { kick: 1.2, snare: 6.1, clap: 2.7, rim: 0.2, hihat: 13.2, openhat: 9.7, tomlow: 4.5, tommid: 4.3, tomhigh: 4.2, crash: 2.7, ride: 1.3, cowbell: -2.0, tambourine: 0.6, shaker: 4.1, conga: 3.5, clave: 6.1 },
+  "house": { kick: 5.8, snare: 6.1, clap: 9.6, rim: 7.9, hihat: 8.4, openhat: 4.4, tomlow: 4.5, tommid: 4.3, tomhigh: 4.2, crash: 2.7, ride: 1.3, cowbell: -2.0, tambourine: 0.6, shaker: 4.0, conga: 3.5, clave: 6.1 },
+  "breaks": { kick: 3.3, snare: 0.5, clap: 8.8, rim: 6.6, hihat: 11.9, openhat: 7.3, tomlow: 2.9, tommid: 2.7, tomhigh: 2.6, crash: 3.2, ride: -2.0, cowbell: 0.7, tambourine: 3.2, shaker: 5.4, conga: 2.9, clave: 2.5 },
+  "dnb": { kick: 5.9, snare: 1.5, clap: 8.4, rim: 6.3, hihat: 10.6, openhat: 6.6, tomlow: 2.9, tommid: 2.7, tomhigh: 2.6, crash: -1.1, ride: -2.9, cowbell: 0.5, tambourine: -0.3, shaker: 3.6, conga: 2.9, clave: 2.5 },
+  "jazz": { kick: 10.6, snare: 19.9, clap: 8.4, rim: 6.3, hihat: 14.6, openhat: 2.7, tomlow: 2.8, tommid: 2.7, tomhigh: 2.6, crash: -1.1, ride: -4.0, cowbell: 0.5, tambourine: -0.3, shaker: 3.6, conga: 2.9, clave: 2.5 },
+  "latin": { kick: 10.8, snare: 8.5, clap: 8.4, rim: 6.3, hihat: 7.1, openhat: 2.7, tomlow: 4.3, tommid: 4.3, tomhigh: 3.2, crash: -1.1, ride: -2.9, cowbell: -2.9, tambourine: -0.3, shaker: 4.2, conga: 3.5, clave: 1.5 },
+  "afro": { kick: 7.4, snare: 12.3, clap: 8.4, rim: 6.3, hihat: 7.1, openhat: 2.7, tomlow: 3.6, tommid: 2.8, tomhigh: 3.3, crash: -1.1, ride: -2.9, cowbell: -0.3, tambourine: -0.3, shaker: 2.9, conga: 2.8, clave: 2.5 },
+  "reggaeton": { kick: 3.1, snare: 8.3, clap: 13.7, rim: 7.9, hihat: 11.9, openhat: 10.1, tomlow: 2.6, tommid: 2.5, tomhigh: 2.4, crash: 4.3, ride: 3.0, cowbell: -2.0, tambourine: 0.6, shaker: 4.1, conga: 3.5, clave: 6.1 },
+  "chip": { kick: 10.5, snare: 10.7, clap: 13.0, rim: 9.9, hihat: 8.8, openhat: 5.8, tomlow: 7.9, tommid: 7.6, tomhigh: 7.5, crash: 2.1, ride: 5.5, cowbell: 8.2, tambourine: 4.6, shaker: 5.8, conga: 9.1, clave: 7.4 },
+  "industrial": { kick: 1.9, snare: -1.9, clap: -3.2, rim: -6.0, hihat: -4.0, openhat: -8.1, tomlow: -0.5, tommid: -0.8, tomhigh: -0.9, crash: -5.1, ride: -7.7, cowbell: -9.2, tambourine: -5.9, shaker: -4.3, conga: -2.0, clave: -0.6 },
+  "hardstyle": { kick: 1.3, snare: -1.9, clap: 3.4, rim: 7.9, hihat: 8.4, openhat: 4.5, tomlow: 4.5, tommid: 4.3, tomhigh: 4.2, crash: -0.6, ride: 1.3, cowbell: -2.0, tambourine: 0.6, shaker: 4.1, conga: 3.5, clave: 6.1 },
+  "phonk": { kick: -0.6, snare: 2.9, clap: 13.6, rim: 8.0, hihat: 3.5, openhat: -1.0, tomlow: 2.6, tommid: 2.5, tomhigh: 2.4, crash: 6.6, ride: 3.8, cowbell: -9.1, tambourine: 2.6, shaker: 5.1, conga: 3.5, clave: 6.1 },
+  "garage": { kick: 5.6, snare: 7.9, clap: 10.7, rim: 6.6, hihat: 11.5, openhat: 4.5, tomlow: 4.5, tommid: 4.3, tomhigh: 4.2, crash: 2.7, ride: 1.3, cowbell: -2.0, tambourine: 0.6, shaker: 5.5, conga: 3.5, clave: 6.1 },
+  "cinematic": { kick: 1.4, snare: 4.5, clap: 5.3, rim: 6.3, hihat: 7.1, openhat: 2.7, tomlow: 0.3, tommid: -0.4, tomhigh: -0.6, crash: -3.4, ride: -3.9, cowbell: 0.5, tambourine: -0.3, shaker: 3.6, conga: 2.9, clave: 2.5 },
 };
 for (const [id, k] of Object.entries(DRUM_KITS)) {
   const tr = PAD_TRIM_DB[id] || {};
   const voices = {};
   for (const [pad, v] of Object.entries(k.voices)) {
-    voices[pad] = tr[pad] ? { ...v, gain: Math.round((v.gain ?? 1) * 10 ** (tr[pad] / 20) * 1000) / 1000 } : v;
+    voices[pad] = { ...v, gain: Math.round((v.gain ?? 1) * 10 ** (((tr[pad] || 0) + KIT_LEVEL_DB) / 20) * 1000) / 1000 };
   }
   k.voices = voices;
 }

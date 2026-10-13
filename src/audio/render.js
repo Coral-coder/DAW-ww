@@ -104,7 +104,7 @@ export async function renderOffline(source, opts = {}) {
         if (keyOnly.has(t.id) && !t.mute) {
           return { ...t, solo: false, volume: 0, sends: {}, automation: (t.automation || []).filter((l) => !/^(volume|send:)/.test(String(l.target))) };
         }
-        return { ...t, mute: true, solo: false };
+        return { ...t, mute: true, solo: false, automation: (t.automation || []).filter((l) => l.target !== 'mute') }; // a mute lane must not un-mute it
       }),
     };
     out[track.id] = await renderOnce(variant, cfg);

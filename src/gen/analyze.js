@@ -38,7 +38,8 @@ export function detectPatternChords(pattern, bpb = 4) {
       if (!chord) continue;
       const prev = out[out.length - 1];
       const ringOut = Math.max(...c.notes.map((n) => n.start + n.dur));
-      const end = i + 1 < chordClusters.length ? Math.min(chordClusters[i + 1].t, Math.max(ringOut, c.t + 0.25)) : Math.min(length, ringOut);
+      // a chord holds (harmonically) until the next chord, even when the part rests in between
+      const end = i + 1 < chordClusters.length ? chordClusters[i + 1].t : Math.min(length, Math.max(ringOut, c.t + 0.25));
       if (prev && prev.chord.root === chord.root && prev.chord.type === chord.type) { prev.end = end; continue; }
       out.push({ start: c.t, end, chord, notes: c.notes.map((n) => n.pitch).sort((a, b) => a - b) });
     }

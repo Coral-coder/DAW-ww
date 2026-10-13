@@ -31,7 +31,7 @@ const KEY_W = 66;
 const DRUM_KEY_W = 112;
 const MIN_PPB = 8, MAX_PPB = 640;
 const EPS = 1e-6;
-const SETTINGS_KEY = 'heroic-piano';
+const SETTINGS_KEY = 'dawww-piano';
 
 // shared clipboard (survives pattern switches)
 let clipboard = null; // { notes: [{pitch, start(rel), dur, vel}], span, origin }

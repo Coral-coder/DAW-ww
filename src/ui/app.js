@@ -8,6 +8,7 @@ import { AudioEngine, PRESETS } from '../audio/index.js';
 import { createActions } from './actions.js';
 import { createHeader } from './header.js';
 import { installKeyboard } from './keyboard.js';
+import { installAutomationRecorder } from './automation-recorder.js';
 
 export const VIEWS = [
   { id: 'arrange', label: 'Arrange', icon: 'timeline', key: '1', module: './views/arrange.js', factory: 'createArrangeView', help: 'Timeline: place pattern & audio clips into a full song.' },
@@ -24,7 +25,7 @@ export async function createApp(rootEl) {
   const ui = new UIState();
   const engine = new AudioEngine(store);
   const app = { store, ui, engine, views: {}, toast };
-  window.heroic = app; // handy for debugging / automation
+  window.dawww = app; // handy for debugging / automation
 
   // ---- render batching: components call app.subscribe(fn) and get rAF-batched updates ----
   const subs = new Set();
@@ -168,6 +169,7 @@ export async function createApp(rootEl) {
   engine.on?.('error', (e) => { console.error('[engine]', e); });
 
   installKeyboard(app);
+  installAutomationRecorder(app);
 
   await showView(ui.get('view'));
   app.panels = {
