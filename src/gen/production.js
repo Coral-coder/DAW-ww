@@ -15,6 +15,7 @@ import { createEffect, createTrack, createPattern, createClip } from '../core/mo
 import { getGenre } from './genres.js';
 import { applyExpression } from './expression.js';
 import { PRESET_GM, realInstrumentDef, multisampleFor, DEFAULT_SOUNDFONT_LIBRARY } from '../audio/library/instrument-map.js';
+import { toStrudel } from './strudel-sounds.js';
 
 const ELECTRONIC_FAMILIES = new Set(['house', 'techno', 'trance', 'bass', 'dnb', 'garage', 'breaks', 'hard', 'experimental', 'industrial', 'retro']);
 /** Presets kept as synths in electronic genres (their character is the synth). */
@@ -172,13 +173,17 @@ export function addLayers(song, { genre } = {}) {
   };
   const pad = song.tracks.find((t) => t.role === 'pad' && !t.layerOf);
   if (pad && LAYER_GENRES.pad.has(g.id) && !/string|choir/.test(pad.instrument?.params?.instrument || pad.instrument?.preset || '')) {
-    layer(pad, { name: 'Strings Layer', instrument: realInstrumentDef('string_ensemble_1', { role: 'pad', fallbackPreset: 'strings', params: { attack: 0.15, release: 0.8 } }), gainDb: -8 });
+    const strings = realInstrumentDef('string_ensemble_1', { role: 'pad', fallbackPreset: 'strings', params: { attack: 0.15, release: 0.8 } });
+    // (a song on Strudel sounds layers Strudel's strings)
+    layer(pad, { name: 'Strings Layer', instrument: pad.instrument?.type === 'strudel' ? toStrudel(strings) : strings, gainDb: -8 });
   }
   const lead = song.tracks.find((t) => t.role === 'lead' && !t.layerOf);
   // (a Faust supersaw lead is doubled the same way — its fallback preset names the synth it stands for)
-  if (lead && LAYER_GENRES.lead.has(g.id) && (lead.instrument?.type === 'synth' || lead.instrument?.type === 'faust')) {
-    const lp = lead.instrument.preset || lead.instrument.fallbackPreset;
-    layer(lead, { name: 'Lead Octave', instrument: { type: 'synth', preset: lp === 'square-lead' ? 'saw-lead' : 'square-lead', params: {} }, transpose: 12, gainDb: -11 });
+  if (lead && LAYER_GENRES.lead.has(g.id) && ['synth', 'faust', 'strudel'].includes(lead.instrument?.type)) {
+    const sd = lead.instrument.type === 'strudel';
+    const lp = sd ? lead.instrument.fallbackPreset : lead.instrument.preset || lead.instrument.fallbackPreset;
+    const oct = { type: 'synth', preset: lp === 'square-lead' ? 'saw-lead' : 'square-lead', params: {} };
+    layer(lead, { name: 'Lead Octave', instrument: sd ? toStrudel(oct) : oct, transpose: 12, gainDb: -11 });
   }
   return added;
 }
@@ -210,7 +215,7 @@ export function finishSong(song, opts = {}) {
       report.sampled++;
     }
     if (opts.presetFx !== false && !t.layerOf) {
-      const key = inst?.type === 'soundfont' ? inst.params?.instrument : inst?.preset;
+      const key = inst?.type === 'soundfont' ? inst.params?.instrument : inst?.type === 'strudel' ? inst.fallbackPreset : inst?.preset;
       const chain = presetFxChain(key, { genre }).map(([type, params]) => createEffect(type, params));
       if (chain.length) {
         // colour before the mix chain (EQ / dynamics / sidechain stay last)

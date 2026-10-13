@@ -16,7 +16,7 @@ import { beatsPerBar, songLengthBeats, createPattern, createClip, createNote, DR
 import { evaluate, queryEvents, splitTopLevel, stripComments } from './strudel.js';
 import { drumPitch } from './convert.js';
 import { compactSteps, detectSwing, unswing, swingCall, scaleCandidates, toDegree, weightedSeq, mergeRests } from './idioms.js';
-import { labelFor, kitBank, strudelSound, hasArrangement } from './song-code.js';
+import { labelFor, kitBank, strudelSound, strudelCall, hasArrangement } from './song-code.js';
 import { barChordTokens, cycleOf } from '../gen/livemeta.js';
 import { detectPatternChords } from '../gen/analyze.js';
 import { applyGroove } from '../gen/groove.js';
@@ -510,8 +510,13 @@ export function songToLiveCode(project, opts = {}) {
     const name = nameOf.get(t.id);
     const ref = refOf.get(t.id);
     const ns = notesOf(t);
-    const sound = exp || !t.instrument?.preset ? strudelSound(t) : t.instrument.preset;
-    const tail = fxTail(t, project);
+    const sd = t.instrument?.type === 'strudel';
+    const sound = sd || exp || !t.instrument?.preset ? strudelSound(t) : t.instrument.preset;
+    // Strudel patch tracks: .s("<sound>") + the patch's own controls, so the code plays exactly the DAW's sound
+    // (the patch's room / delay win over the track's reverb / delay sends)
+    const patchTail = sd ? strudelCall(t).replace(/^\.s\("[^"]*"\)/, '') : '';
+    const sendTail = fxTail(t, project);
+    const tail = patchTail + (sd ? sendTail.replace(/\.room\([^)]*\)/g, (m) => (/\.room\(/.test(patchTail) ? '' : m)).replace(/\.delay\([^)]*\)/g, (m) => (/\.delay\(/.test(patchTail) ? '' : m)) : sendTail);
     let body, fn = false;
     if (role === 'drums') {
       body = drumsIdea(ns, ref, bpb, t.instrument?.preset ? kitBank(t.instrument.preset) : '').body;

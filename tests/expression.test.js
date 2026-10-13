@@ -291,9 +291,12 @@ test('production: realInstrument keeps synths where they belong, upgrades acoust
 });
 
 test('production: generateSong applies finishSong by default (real instruments, expression, master)', () => {
-  const s = generateSong({ genre: 'jazz', seed: 7 });
+  // (strudel: false — the built-in / multisampled instrument path; by default the piano is Strudel's own)
+  const s = generateSong({ genre: 'jazz', seed: 7, strudel: false });
   const keys = s.tracks.find((t) => t.role === 'chords');
   assert.equal(keys.instrument.params.multisample, 'salamander');
+  const sd = generateSong({ genre: 'jazz', seed: 7 }).tracks.find((t) => t.role === 'chords');
+  assert.deepEqual([sd.instrument.type, sd.instrument.preset, sd.instrument.fallbackPreset], ['strudel', 'sd-piano', 'grand-piano']);
   assert.ok(keys.instrument.params.range && keys.instrument.fallbackPreset);
   assert.equal(s.master.fx[0].type, 'mastering');
   const synth = generateSong({ genre: 'jazz', seed: 7, soundfonts: false, production: false });

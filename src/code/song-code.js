@@ -23,6 +23,8 @@ import {
 } from './idioms.js';
 import { valueAt, parseTarget } from '../core/automation.js';
 import { grooveFor } from '../gen/groove.js';
+import { resolveInstrumentDef } from '../audio/presets.js';
+import { strudelPatchCode } from '../audio/strudel-patches.js';
 
 const EPS = 1e-6;
 const SHARP = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b'];
@@ -375,6 +377,7 @@ function fxParam(fx, key, def) {
 export function soundCall(track, { export: exp = false } = {}) {
   const inst = track.instrument || {};
   if (inst.type === 'drums') return inst.preset ? `.bank("${kitBank(inst.preset)}")` : '';
+  if (inst.type === 'strudel') return strudelCall(track); // the patch itself: code and DAW sound identical
   const s = exp ? strudelSound(track) : inst.preset || ({ synth: 'sawtooth', fm: 'fm', organ: 'organ', sampler: 'piano' }[inst.type]) || 'sawtooth';
   return `.s("${s}")`;
 }
@@ -725,8 +728,17 @@ const KIT_BANK = {
 export const kitBank = (kit) => KIT_BANK[String(kit || '').toLowerCase()] || kit;
 
 /** DAW preset -> a Strudel sound that exists on strudel.cc (export flavour). */
+/**
+ * A 'strudel' instrument's patch as Strudel code: `.s("supersaw").lpf(1200).lpenv(3).room(.3)` — the sound and every
+ * control the DAW instrument sends to superdough except the patch gain (the code's .gain() is the track level).
+ */
+export function strudelCall(track) {
+  return strudelPatchCode(resolveInstrumentDef(track.instrument).params, { gain: false });
+}
+
 export function strudelSound(track) {
   const inst = track.instrument || {};
+  if (inst.type === 'strudel') return String(resolveInstrumentDef(inst).params.s || 'triangle');
   const id = String(inst.preset || inst.params?.instrument || '').toLowerCase();
   const has = (...ws) => ws.some((w) => id.includes(w));
   if (inst.type === 'soundfont' && inst.params?.instrument) return `gm_${String(inst.params.instrument).replace(/^gm_/, '')}`;

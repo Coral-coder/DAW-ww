@@ -879,6 +879,8 @@ export const CONTROLS = [
   ['fmh'], ['vib', 'vibrato'], ['vibmod', 'vmod'], ['detune', 'det'], ['unison'], ['postgain'],
   ['duck', 'duckorbit'], ['dry'], ['chord'], ['anchor'], ['mode'], ['dict'], ['offset'], ['unit'], ['loop'],
   ['phaser', 'ph'], ['tremolo'], ['amp'], ['channel'], ['dur'], ['penv'], ['noise'], ['squiz'],
+  // superdough synth controls used by Strudel patches (src/audio/strudel-patches.js)
+  ['spread'], ['pattack', 'patt'], ['pdecay', 'pdec'], ['fmattack'], ['fmdecay'], ['fmsustain'], ['fmrelease'], ['adsr'],
 ];
 // `color` is kept as a visual no-op in Strudel's REPL; we still record it as a value key.
 CONTROLS.push(['color', 'colour']);
@@ -901,8 +903,10 @@ function controlValue(name, v) {
       return o;
     }
     if (name === 'mode') return { mode: v };
+    if (name === 'adsr') return Object.fromEntries(['attack', 'decay', 'sustain', 'release'].map((k, i) => [k, v[i]]).filter(([, x]) => x !== undefined).map(([k, x]) => [k, Number(x)]));
     return { [name]: v[0] };
   }
+  if (name === 'adsr') return { attack: Number(v) };
   return { [name]: v };
 }
 

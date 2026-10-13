@@ -37,6 +37,7 @@ import { applyGroove, shapeDynamics } from './groove.js';
 import { mixTrack } from './mix.js';
 import { faustFor } from './plugins.js';
 import { realInstrumentDef } from '../audio/library/instrument-map.js';
+import { toStrudel } from './strudel-sounds.js';
 import { AutomationBuilder, ARP_HOME } from './arrange.js';
 
 const hash = (...xs) => xs.reduce((h, x) => (Math.imul(h ^ (typeof x === 'number' ? x : [...String(x)].reduce((a, c) => a * 31 + c.charCodeAt(0), 7)), 2654435761) >>> 0), 0x2545f491);
@@ -173,8 +174,17 @@ const PERC_KIT = { latin: 'latin', african: 'afro', caribbean: 'latin', cinemati
 
 const sample = (gm, role, fallbackPreset, params = {}) => realInstrumentDef(gm, { role, fallbackPreset, params });
 
-/** Instrument def of an extra role in a genre. */
+/**
+ * Instrument def of an extra role in a genre: its Strudel patch where one fits (src/gen/strudel-sounds.js; the
+ * built-in / sampled def stays as fallback), else the built-in / sampled def. opts.strudel === false (or
+ * soundfonts: false) keeps the built-in ones.
+ */
 export function extraInstrument(role, g, opts = {}) {
+  const def = extraInstrumentDef(role, g, opts);
+  return opts.strudel !== false && opts.soundfonts !== false ? toStrudel(def) : def;
+}
+
+function extraInstrumentDef(role, g, opts = {}) {
   const plugins = opts.plugins !== false && opts.soundfonts !== false;
   const sf = opts.soundfonts !== false;
   const drums = (kit) => ({ type: 'drums', preset: kit, params: { kit } });

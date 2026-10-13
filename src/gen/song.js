@@ -323,7 +323,7 @@ export function generateSong(opts = {}) {
   const [reverbBus, delayBus] = createSongBuses(g.id);
   const tracks = roles.map((role) => {
     const info = ROLE_INFO[role];
-    const instrument = instrumentForRole(role, g.id, { soundfonts: opts.soundfonts, sampledDrums: opts.sampledDrums, plugins: opts.plugins });
+    const instrument = instrumentForRole(role, g.id, { soundfonts: opts.soundfonts, sampledDrums: opts.sampledDrums, plugins: opts.plugins, strudel: opts.strudel });
     return createTrack({ name: info.name, color: info.color, volume: info.volume, pan: info.pan, role, instrument, sends: {} });
   });
   const trackOf = (role) => tracks[roles.indexOf(role)];

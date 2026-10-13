@@ -10,6 +10,7 @@ import { INSTRUMENT_DEFS, getParamDefaults } from './defs.js';
 import { DRUM_KITS } from './kits.js';
 import { PluginInstrument, isPluginType } from './plugin-instrument.js';
 import { DrumSamplerInstrument, usesDrumSampler } from './library/drum-sampler.js';
+import { StrudelVoice } from './strudel-voice.js';
 
 export { PRESETS, PRESET_CATEGORIES, INSTRUMENT_DEFS, getParamDefaults, DRUM_KITS };
 
@@ -20,9 +21,15 @@ export const INSTRUMENT_TYPES = [
   { type: 'drums', label: 'Drum Machine', description: '16 synthesized pads, 20 kits, per-pad tune/decay/tone or samples' },
   { type: 'sampler', label: 'Sampler', description: 'Pitched / sliced playback of a project sample with ADSR and filter' },
   { type: 'drumsampler', label: 'Sampled Drum Machine', description: 'Real samples of 35 classic drum machines (TR-808/909, LinnDrum, SP-12, MPC60…) — synth kit fallback offline' },
+  { type: 'strudel', label: 'Strudel Sound', description: 'Strudel\'s own audio engine (superdough): its synths, samples and GM soundfonts with filter envelopes, FM, vowel, room & delay — the fallback preset plays if it can\'t load' },
 ];
 
-const ENGINES = { synth: SynthInstrument, fm: FMInstrument, organ: OrganInstrument, drums: DrumInstrument, sampler: SamplerInstrument, drumsampler: DrumSamplerInstrument };
+const ENGINES = { synth: SynthInstrument, fm: FMInstrument, organ: OrganInstrument, drums: DrumInstrument, sampler: SamplerInstrument, drumsampler: DrumSamplerInstrument, strudel: StrudelVoice };
+/** Built-in preset a 'strudel' instrument falls back to when superdough / its sound can't load. */
+export function strudelFallbackPreset(def) {
+  const id = def?.fallbackPreset || PRESETS[def?.preset]?.fallbackPreset;
+  return id && PRESETS[id] && PRESETS[id].instrument.type !== 'strudel' ? id : 'pluck';
+}
 
 /** Merge defaults ← preset ← def.params (preset type wins on mismatch). -> { type, params } */
 export function resolveInstrument(def) { return resolveInstrumentDef(def); }
@@ -57,7 +64,9 @@ export class Instrument {
       this._kind = kind;
       this.fallbackActive = false;
       this._fallbackReady = null;
-      this.engine = isPluginType(type) ? new PluginInstrument(type, this.ctx, this.output, params, this.opts) : new ENGINES[kind](this.ctx, this.output, params, this.opts);
+      this.engine = isPluginType(type) ? new PluginInstrument(type, this.ctx, this.output, params, this.opts)
+        : kind === 'strudel' ? new StrudelVoice(this.ctx, this.output, params, { ...this.opts, makeFallback: () => this._fallbackEngine(strudelFallbackPreset(instrumentDef)) })
+          : new ENGINES[kind](this.ctx, this.output, params, this.opts);
       if (old) { try { old.dispose(); } catch (e) { warn(e); } }
       if (isPluginType(type)) {
         this._pluginParamsJson = pluginKeyJson;
@@ -68,6 +77,12 @@ export class Instrument {
     }
     this.type = type;
     this.params = params;
+  }
+  /** A built-in engine playing preset `presetId` (fallback of 'strudel' instruments). */
+  _fallbackEngine(presetId) {
+    const fb = resolveInstrument({ preset: presetId, params: {} });
+    const Engine = fb.type !== 'strudel' && ENGINES[fb.type];
+    return Engine ? new Engine(this.ctx, this.output, fb.params, this.opts) : null;
   }
   /** If the plugin fails to load, swap in the built-in preset `fallbackPreset` so the track never goes silent. */
   _watchFallback(engine, presetId) {

@@ -6,7 +6,7 @@ import { PRESETS, resolveInstrumentDef, listPresets, PRESET_CATEGORIES } from '.
 import { DRUM_KITS } from '../src/audio/kits.js';
 import { DRUM_PADS } from '../src/core/model.js';
 
-const TYPES = ['synth', 'fm', 'organ', 'drums', 'sampler', 'drumsampler', 'soundfont', 'faust', 'wam'];
+const TYPES = ['synth', 'fm', 'organ', 'drums', 'sampler', 'drumsampler', 'soundfont', 'faust', 'wam', 'strudel'];
 
 test('INSTRUMENT_DEFS covers every instrument type with well-formed ParamDefs', () => {
   assert.deepEqual(Object.keys(INSTRUMENT_DEFS).sort(), [...TYPES].sort());

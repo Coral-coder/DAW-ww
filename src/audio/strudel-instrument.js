@@ -14,6 +14,7 @@
 // soundfont loading included) — the offline renderer waits for it before letting time advance.
 //
 // Same interface as CodeInstrument: trigger(time, value, durSec, ev), allNotesOff(time), dispose().
+import '../code/strudel.js'; // (first: strudel.js <-> strudel-real.js import each other; this order initialises both)
 import { loadStrudelAudio, strudelSoundsReady } from '../code/strudel-real.js';
 
 const isOfflineCtx = (ctx) => typeof OfflineAudioContext !== 'undefined' && ctx instanceof OfflineAudioContext;
@@ -21,7 +22,10 @@ let owner = null; // OfflineAudioContext currently rendering with superdough (re
 const live = new Set(); // realtime instruments
 let ControllerClass = null;
 const workletCtx = new WeakMap(); // ctx -> Promise (worklets added)
+const workletOk = new WeakMap(); // ctx -> true once superdough's AudioWorklets are added to it
 const WORKLET_TIMEOUT = 6000;
+/** Did superdough's AudioWorklets load on `ctx` (supersaw, pulse, shape, crush…)? */
+export const workletsLoaded = (ctx) => workletOk.get(ctx) === true;
 
 /**
  * Adds superdough's AudioWorklet modules (supersaw, pulse, crush, shape, distort, djf, ladder filter, …)
@@ -31,7 +35,7 @@ const WORKLET_TIMEOUT = 6000;
 function ensureWorklets(sd, ctx) {
   if (!workletCtx.has(ctx)) {
     const urls = typeof sd.daw3WorkletUrls === 'function' ? sd.daw3WorkletUrls() : [];
-    const load = Promise.all(urls.map((u) => ctx.audioWorklet?.addModule(u))).catch((e) => console.warn('[strudel] AudioWorklets unavailable:', e?.message || e));
+    const load = Promise.all(urls.map((u) => ctx.audioWorklet?.addModule(u))).then(() => { if (urls.length && ctx.audioWorklet) workletOk.set(ctx, true); }, (e) => console.warn('[strudel] AudioWorklets unavailable:', e?.message || e));
     let timer;
     const timeout = new Promise((resolve) => { timer = setTimeout(() => { console.warn('[strudel] AudioWorklets are taking long to load — continuing without waiting'); resolve(); }, WORKLET_TIMEOUT); });
     workletCtx.set(ctx, Promise.race([load, timeout]).finally(() => clearTimeout(timer)));
@@ -97,7 +101,7 @@ export class StrudelInstrument {
     globalThis.__daw3SuperdoughCtx = this.ctx; // pooled nodes of other contexts are not reused
   }
 
-  /** ev: the scheduler event ({cycle, cps, hapDur}) — superdough wants Strudel's timing. */
+  /** ev: the scheduler event ({cycle, cps, hapDur}) — superdough wants Strudel's timing. Returns superdough's promise (if any). */
   trigger(time, value, durSec, ev) {
     if (this.fallback) { this.fallback.trigger(time, value, durSec, ev); return; }
     if (!this.ready || this.disposed || !value || typeof value !== 'object') return;
@@ -116,7 +120,9 @@ export class StrudelInstrument {
     if (p && typeof p.then === 'function') {
       const q = p.catch((e) => this.onError(e)).finally(() => this.pending.delete(q));
       this.pending.add(q);
+      return p;
     }
+    return undefined;
   }
 
   /** Resolves when every sound triggered so far has its audio nodes in place (or after timeoutMs). */

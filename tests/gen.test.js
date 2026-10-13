@@ -241,6 +241,9 @@ function checkSong(s, label) {
     } else if (t.instrument.type === 'soundfont') {
       // GM SoundFont with the closest synth preset as fallback
       assert.ok(t.instrument.params.instrument && G.ALL_PRESET_IDS.includes(t.instrument.fallbackPreset), `${label}: soundfont fallback`);
+    } else if (t.instrument.type === 'strudel') {
+      // Strudel patch (superdough) with the built-in preset it replaces as fallback
+      assert.ok(t.instrument.preset?.startsWith('sd-') && G.ALL_PRESET_IDS.includes(t.instrument.fallbackPreset), `${label}: strudel fallback`);
     } else if (t.instrument.type === 'faust') {
       // Faust plugin (catalog code inline) with the closest built-in preset as fallback
       assert.ok(t.instrument.params.code && G.ALL_PRESET_IDS.includes(t.instrument.fallbackPreset), `${label}: faust fallback`);

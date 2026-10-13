@@ -2,6 +2,7 @@
 // PRESETS[id] = { name, category, roles[], genres[], instrument:{type, params} }
 import { getParamDefaults, sanitizeParams, INSTRUMENT_DEFS } from './defs.js';
 import { DRUM_KITS } from './kits.js';
+import { STRUDEL_PATCHES } from './strudel-patches.js';
 
 // osc 2's def default is +7 ct (a detuned layer for the init patch); presets state their tuning explicitly
 const synth = (params) => ({ type: 'synth', params: { osc2Fine: 0, ...params } });
@@ -485,6 +486,15 @@ for (const [id, db] of Object.entries(LEVEL_DB)) {
   if (pp) pp.gain = Math.round(Math.min(2, Math.max(0.02, (pp.gain ?? 0.8) * 10 ** (db / 20))) * 1000) / 1000;
 }
 
+/* Strudel patches (src/audio/strudel-patches.js): type 'strudel' presets in the 'Strudel' category; each carries
+   the built-in preset that plays when superdough can't (fallbackPreset). */
+for (const sp of STRUDEL_PATCHES) {
+  PRESETS[sp.id] = {
+    name: sp.name, category: 'Strudel', roles: sp.roles, genres: sp.genres, fallbackPreset: sp.fallbackPreset, strudel: true,
+    description: `Strudel sound (superdough): ${sp.patch.s}`, instrument: { type: 'strudel', params: { ...sp.patch } },
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* Resolution                                                           */
 /* ------------------------------------------------------------------ */
@@ -520,7 +530,7 @@ export function resolveInstrumentDef(def) {
   return { type, params: sanitizeParams(type, params) };
 }
 
-export const PRESET_CATEGORIES = ['Bass', 'Lead', 'Keys', 'Pad', 'Pluck', 'Arp', 'FX', 'Orchestral', 'Guitar'];
+export const PRESET_CATEGORIES = ['Bass', 'Lead', 'Keys', 'Pad', 'Pluck', 'Arp', 'FX', 'Orchestral', 'Guitar', 'Strudel'];
 
 /** Filter presets: listPresets({category, role, genre, type}) -> [{id, ...preset}] */
 export function listPresets(filter = {}) {

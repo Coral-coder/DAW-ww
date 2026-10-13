@@ -6,6 +6,9 @@ import { drumInstrumentForGenre } from '../audio/library/drum-machines.js';
 import { getGenre } from './genres.js';
 import { realInstrument } from './production.js';
 import { GENRE_FAUST, faustFor } from './plugins.js';
+import { toStrudel } from './strudel-sounds.js';
+
+export { toStrudel, strudelPatchFor, PRESET_STRUDEL, GM_STRUDEL } from './strudel-sounds.js';
 
 export const SOUNDFONT_LIBRARY = 'FluidR3_GM';
 
@@ -56,7 +59,7 @@ const SF_PARAMS = {
 
 /** Guitar / piano-ish parts get strums or rolls (ms between notes). */
 export function strumFor(inst) {
-  const name = inst?.type === 'soundfont' ? inst.params?.instrument || '' : inst?.preset || '';
+  const name = inst?.type === 'soundfont' ? inst.params?.instrument || '' : inst?.type === 'strudel' ? inst.fallbackPreset || inst.preset || '' : inst?.preset || '';
   if (/guitar|nylon|steel|harp|koto|banjo/.test(name)) return 11;
   if (/piano|clav|epiano|lofi-keys|organ/.test(name)) return 4;
   return 0;
@@ -76,6 +79,14 @@ export function instrumentForRole(role, genreId, opts = {}) {
     return { ...def, params: { ...def.params, humanize: 0, roundRobin: true } };
   }
   const preset = g.presets?.[role] || null;
+  // Strudel's own audio engine (superdough) for every melodic role it has a patch for — the genre's preset / GM
+  // instrument becomes the closest Strudel patch, the preset its fallback (src/gen/strudel-sounds.js).
+  // opts.strudel === false (or soundfonts: false = nothing downloaded) keeps the built-in / plugin instruments.
+  if (opts.strudel !== false && opts.soundfonts !== false) {
+    const gm = GENRE_SOUNDFONTS[g.id]?.[role];
+    const sd = toStrudel(gm ? { type: 'soundfont', preset: null, params: { instrument: gm }, fallbackPreset: preset } : { type: PRESETS[preset]?.instrument.type || 'synth', preset, params: {} });
+    if (sd?.type === 'strudel') return sd;
+  }
   // Faust plugin where it beats the preset (supersaw trance leads, analog pads, KS plucks, bells, organs) — the
   // preset is its fallback. opts.plugins === false (or soundfonts: false = nothing downloaded) keeps built-ins.
   if (opts.plugins !== false && opts.soundfonts !== false && GENRE_FAUST[g.id]?.[role] && preset) return faustFor(role, g.id, preset);
@@ -90,3 +101,5 @@ export function instrumentForRole(role, genreId, opts = {}) {
 
 /** True when an instrument is a sampled / acoustic sound (used by the mixer for EQ / level choices). */
 export const isAcoustic = (inst) => inst?.type === 'soundfont';
+/** True when an instrument plays through Strudel's audio engine (superdough). */
+export const isStrudel = (inst) => inst?.type === 'strudel';

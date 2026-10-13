@@ -640,7 +640,14 @@ export class MixGraph {
 
   /** The Strudel-engine code instruments of this graph (see strudel-instrument.js). */
   strudelInstruments() {
-    return [...this.tracks.values()].map((e) => e.code).filter((c) => c instanceof StrudelInstrument);
+    const out = [];
+    for (const e of this.tracks.values()) {
+      if (e.code instanceof StrudelInstrument) out.push(e.code);
+      // 'strudel' instrument tracks (src/audio/strudel-voice.js)
+      const sdi = e.instrument?.engine?.sdi;
+      if (sdi instanceof StrudelInstrument) out.push(sdi);
+    }
+    return out;
   }
 
   /** Instrument for live play (null for audio/code tracks). */

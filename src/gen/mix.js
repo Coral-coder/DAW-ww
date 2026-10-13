@@ -62,7 +62,12 @@ export function levelFix(role, inst) {
   if (!inst) return 0;
   let k;
   if (role === 'drums') k = inst.params?.machine ? `machine:${inst.params.machine}` : null;
-  else k = `${role}|${inst.type === 'soundfont' ? `sf:${inst.params?.instrument}` : inst.preset}`;
+  else if (inst.type === 'strudel') {
+    // Strudel patches are loudness-matched to their fallback preset (src/audio/strudel-patches.js): their own
+    // 'role|strudel:<id>' entry when measured separately, else the fallback preset's
+    k = `${role}|strudel:${inst.preset}`;
+    if (LEVEL_FIX[k] === undefined) k = `${role}|${inst.fallbackPreset}`;
+  } else k = `${role}|${inst.type === 'soundfont' ? `sf:${inst.params?.instrument}` : inst.preset}`;
   const v = k != null ? LEVEL_FIX[k] : undefined;
   // decaying sounds (bells, e-pianos, plucks, mallets) read quiet on a loudness meter but cut through on their
   // attacks: never boost them by more than a few dB
@@ -132,7 +137,7 @@ export function mixTrack(track, ctx) {
   const sp = spaceFor(g);
   const side = ctx.side || 1;
   const sidechain = SIDECHAIN_FAMILIES.has(g.family) || SIDECHAIN_GENRES.has(g.id);
-  const trim = (ROLE_TRIM_DB[role] ?? -6) + levelFix(role, ctx.instrument) + (role === 'bass' && SUB_BASSES.has(ctx.instrument?.preset) ? -3 : 0)
+  const trim = (ROLE_TRIM_DB[role] ?? -6) + levelFix(role, ctx.instrument) + (role === 'bass' && SUB_BASSES.has(ctx.instrument?.type === 'strudel' ? ctx.instrument.fallbackPreset : ctx.instrument?.preset) ? -3 : 0)
     + (role === 'bass' && sidechain ? 3 : 0) // the ducker takes ~3 dB out on average
     + (role === 'bass' && sf ? (/acoustic_bass|contrabass/.test(ctx.instrument.params?.instrument) ? -5.5 : -3) : 0) // sampled basses sustain (walking / finger lines) and read hot in the mix
     + (role === 'drums' && ['cinematic', 'ambient'].includes(g.family) ? -4 : 0); // orchestral percussion supports, it doesn't lead
