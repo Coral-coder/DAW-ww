@@ -550,6 +550,24 @@ export function songToLiveCode(project, opts = {}) {
       const v0 = valueAt(lane.points, a + 0.01), v1 = valueAt(lane.points, b - 0.01);
       if (!(v0 > 1) || !(v1 > 1)) continue;
       const hz = (v) => Number(Math.min(16000, v).toPrecision(2));
+      // the lane's shape across the section (not just its ends): a ride that rises and falls inside a section
+      // (a 303 cutoff ride, a filter LFO) is a moving filter, never its endpoints' average as a static low-pass
+      const N = Math.max(8, Math.min(64, s.bars * 2));
+      const vs = Array.from({ length: N + 1 }, (_, i) => valueAt(lane.points, a + 0.01 + (b - a - 0.02) * (i / N)));
+      const lo = Math.min(...vs), hi = Math.max(...vs);
+      let turns = 0;
+      for (let i = 2, dir = 0; i <= N; i++) {
+        const d = Math.sign(vs[i] - vs[i - 1]);
+        if (d && dir && d !== dir) turns++;
+        if (d) dir = d;
+      }
+      if (hi > lo * 1.5 && turns >= 1) {
+        const per = (s.bars * 2) / (turns + 1); // bars per cycle, snapped to a phrase length (1 / 2 / 4 / 8 / 16 …)
+        return `.lpf(sine.rangex(${hz(lo)}, ${hz(hi)}).slow(${2 ** Math.max(0, Math.round(Math.log2(per)))}))`;
+      }
+      // a short opening ramp (a hook fading in over its first bar or two) leaves the filter open for the section
+      const open = vs.findIndex((v) => v >= v1 * 0.9);
+      if (v1 > v0 * 1.5 && v1 >= 15000 && open >= 0 && open / N < 0.5) return '';
       if (v1 > v0 * 1.5) return `.lpf(saw.rangex(${hz(v0)}, ${hz(v1)}).slow(${s.bars}))`;
       if (v0 > v1 * 1.5) return `.lpf(isaw.rangex(${hz(v1)}, ${hz(v0)}).slow(${s.bars}))`;
       if (Math.max(v0, v1) < 15000) return `.lpf(${Math.round((v0 + v1) / 2 / 100) * 100})`;

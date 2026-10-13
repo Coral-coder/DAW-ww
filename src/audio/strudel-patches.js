@@ -82,7 +82,10 @@ export const STRUDEL_PATCHES = [
   P('sd-vocal-chop', 'Vocal Chop Synth', 'lead', ['lead'], ['house', 'deep-house', 'uk-garage', 'future-bass', 'tropical-house'],
     { s: 'sawtooth', vowel: 'o', lpf: 3200, hpf: 250, attack: 0.003, decay: 0.14, sustain: 0.35, release: 0.08, ...echo(0.25, 0.35), ...space(0.2), gain: 4.4 }, 'saw-lead'),
   P('sd-acid-lead', 'Acid Lead', 'lead', ['lead'], ['acid', 'techno', 'trance', 'breaks'],
-    { s: 'sawtooth', lpf: 700, resonance: 16, lpenv: 3.5, lpdecay: 0.15, lpsustain: 0.1, attack: 0.002, decay: 0.2, sustain: 0.7, release: 0.06, shape: 0.25, ...echo(0.25, 0.45), gain: 0.823 }, 'acid-lead'),
+    // 303-style: closed base cutoff opened per note by a snappy filter envelope (the "accent"), resonance high but
+    // not self-oscillating, moderate drive, a short dotted echo — acid-flavoured genres only (techno / tech house
+    // use the plucks below). Cutoff movement across a section comes from the generator's filter ride (rides.js).
+    { s: 'sawtooth', lpf: 480, resonance: 11, lpenv: 4.5, lpattack: 0.002, lpdecay: 0.13, lpsustain: 0.08, lprelease: 0.06, attack: 0.002, decay: 0.18, sustain: 0.6, release: 0.06, shape: 0.15, ...echo(0.12, 0.3), gain: 0.74 }, 'acid-lead'),
   P('sd-fm-bell', 'FM Bell', 'lead', ['lead', 'chords', 'arp'], ['ambient', 'chillwave', 'future-bass', 'phonk', 'pop', 'trap'],
     { s: 'sine', fm: 3, fmh: 3.5, fmdecay: 0.6, fmsustain: 0, attack: 0.001, decay: 1.4, sustain: 0, release: 0.8, ...space(0.3, 4), gain: 0.326 }, 'fm-bell-lead'),
   P('sd-chip-lead', 'Chip Lead', 'lead', ['lead', 'arp'], ['chiptune', 'eurobeat', 'synthwave'],
@@ -96,7 +99,14 @@ export const STRUDEL_PATCHES = [
   P('sd-pluck-hook', 'Filtered Pluck Hook', 'lead', ['lead', 'arp'], ['deep-house', 'house', 'future-garage', 'tropical-house', 'pop'],
     { s: 'square', lpf: 1100, resonance: 4, lpenv: 3, lpdecay: 0.14, attack: 0.002, decay: 0.2, sustain: 0.15, release: 0.12, ...echo(0.3, 0.4), ...space(0.2), gain: 0.389 }, 'pluck'),
   P('sd-tech-stab', 'Tech Stab', 'lead', ['lead', 'chords'], ['tech-house', 'techno', 'minimal'],
-    { s: 'sawtooth', lpf: 1500, resonance: 5, lpenv: 2.5, lpdecay: 0.07, hpf: 180, attack: 0.001, decay: 0.09, sustain: 0, release: 0.05, ...echo(0.2, 0.35), ...space(0.15), gain: 1.055 }, 'house-stab'),
+    { s: 'sawtooth', lpf: 1300, resonance: 3, lpenv: 2.5, lpdecay: 0.07, hpf: 180, attack: 0.001, decay: 0.09, sustain: 0, release: 0.05, ...echo(0.15, 0.3), ...space(0.15), gain: 1.055 }, 'house-stab'),
+  // tech-house hook: a muted, mono-ish "bleep" — square through a closed low-pass opened for ~70 ms per note, no
+  // sustain, a short slap echo; sits under the drums (mix.js trims it) and ducks with the kick
+  P('sd-tech-bleep', 'Tech Bleep', 'lead', ['lead', 'arp'], ['tech-house', 'minimal'],
+    { s: 'square', lpf: 650, resonance: 6, lpenv: 3, lpattack: 0.002, lpdecay: 0.07, lpsustain: 0, lprelease: 0.05, hpf: 220, attack: 0.001, decay: 0.12, sustain: 0, release: 0.04, ...echo(0.12, 0.25), ...space(0.12), gain: 0.9 }, 'pluck'),
+  // techno hook: hypnotic filtered saw pluck, moderate resonance; the slow filter LFO is the generator's ride
+  P('sd-techno-pluck', 'Hypnotic Pluck', 'lead', ['lead', 'arp'], ['techno', 'minimal', 'tech-house'],
+    { s: 'sawtooth', lpf: 900, resonance: 7, lpenv: 2.5, lpattack: 0.003, lpdecay: 0.16, lpsustain: 0.15, lprelease: 0.1, hpf: 200, attack: 0.002, decay: 0.2, sustain: 0.15, release: 0.1, ...echo(0.18, 0.4), ...space(0.2, 4), gain: 0.85 }, 'arp-pluck'),
   P('sd-gm-saw-lead', 'GM Saw Lead', 'lead', ['lead'], ['eurobeat', 'synthwave', 'electro'],
     { s: 'gm_lead_2_sawtooth', release: 0.15, ...echo(0.2, 0.35), gain: 1.023 }, 'saw-lead'),
 

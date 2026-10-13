@@ -71,7 +71,7 @@ export function presetFxChain(presetId, { genre } = {}) {
     // harmonics so the sub reads on small speakers
     return [fx('saturator', { type: 'tube', drive: 5, tone: 7000, output: -2.5, mix: 0.35 })];
   }
-  if (/^(saw-lead|square-lead|supersaw-lead|trance-lead|sync-lead|hoover|acid-lead)$/.test(id)) {
+  if (/^(saw-lead|square-lead|supersaw-lead|trance-lead|sync-lead|hoover)$/.test(id)) { // (acid-lead carries its own drive)
     return [fx('saturator', { type: 'soft', drive: 3, tone: 12000, output: -1.5, mix: 0.4 }), fx('chorus', { rate: 0.6, depth: 0.25, delay: 0.01, spread: 1, mix: 0.18 })];
   }
   if (/^(electric-piano|fm-epiano|lofi-keys|electric_piano_1|electric_piano_2)$/.test(id)) {

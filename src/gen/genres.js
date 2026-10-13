@@ -236,14 +236,14 @@ export const GENRES = {
   'tech-house': G('tech-house', 'Tech House', 'house', [122, 128], 125, {
     swing: 0.12, scales: ['minor', 'phrygian', 'dorian'], drumKit: '909', drumStyle: 'tech-house', bassStyle: 'tech', chordStyle: 'stabs',
     progressions: ['techno-drone', 'house-minor-7', 'techno-two'], melodyStyle: 'riff',
-    presets: { drums: '909', bass: 'fm-bass', chords: 'house-stab', pad: 'dark-pad', lead: 'acid-lead', arp: 'arp-pluck', fx: 'noise-sweep' },
+    presets: { drums: '909', bass: 'fm-bass', chords: 'house-stab', pad: 'dark-pad', lead: 'pluck', arp: 'arp-pluck', fx: 'noise-sweep' },
     structure: 'house', fx: ['Short room reverb on percussion', 'Distortion on the bass', 'Filter automation'],
     tips: ['The bassline is the hook: short, syncopated and groovy.', 'Shuffled 16th hats and quirky percussion keep it rolling.', 'Vocal chops and one-shots add character.'],
   }),
   techno: G('techno', 'Techno', 'techno', [125, 140], 132, {
     scales: ['minor', 'phrygian', 'dorian'], drumKit: 'techno', drumStyle: 'techno', bassStyle: 'rolling', chordStyle: 'stabs',
     progressions: ['techno-drone', 'techno-two', 'psy-phrygian'], melodyStyle: 'riff', arp: { mode: 'random', rate: 0.25, octaves: 2 },
-    presets: { drums: 'techno', bass: 'saw-bass', chords: 'house-stab', pad: 'dark-pad', lead: 'acid-lead', arp: 'arp-saw', fx: 'noise-sweep' },
+    presets: { drums: 'techno', bass: 'saw-bass', chords: 'house-stab', pad: 'dark-pad', lead: 'arp-pluck', arp: 'arp-saw', fx: 'noise-sweep' },
     structure: 'techno', fx: ['Long dark reverb on stabs (send, then gate/duck)', 'Delay throws', 'Saturation on the kick bus'],
     tips: ['Kick is king: tune the rumble below it and sidechain everything.', 'Build tension with filter automation instead of chord changes.', 'Repetition with subtle evolution — add or remove one element every 8–16 bars.'],
   }),

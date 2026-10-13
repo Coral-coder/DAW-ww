@@ -38,6 +38,8 @@ export const LEVEL_FIX = {
   "chords|sf:electric_guitar_clean": 8, "chords|sf:electric_guitar_muted": 4.8, "chords|sf:electric_piano_1": -7.3,
   "chords|sf:overdriven_guitar": -6, "chords|sf:steel_drums": -0.9, "chords|sf:string_ensemble_1": -1.4,
   "chords|steel-drum": 4.9, "chords|strings": 1.1, "chords|supersaw-pad": 2.8, "chords|synthwave-pad": 2.5,
+  // club hooks sit under the kick / bass (tech house bleep, techno pluck, 303 lead): a few dB below the measured match
+  "lead|strudel:sd-tech-bleep": -2.5, "lead|strudel:sd-techno-pluck": -2, "lead|strudel:sd-acid-lead": -1,
   "lead|acid-lead": 1.2, "lead|bell": 4.6, "lead|brass-lead": 1.7, "lead|brass-section": 4.8, "lead|chip-lead": 6.1,
   "lead|electric-piano": 7.3, "lead|flute": 2.1, "lead|fm-bell-lead": 8, "lead|fm-epiano": 7.4,
   "lead|grand-piano": 10, "lead|guitar-clean": 2.8, "lead|guitar-lead": 1.1, "lead|hoover": -2, "lead|kalimba": 9.1,
@@ -185,6 +187,8 @@ export function mixTrack(track, ctx) {
       track.pan = 0;
       fx.push(eqHpf(ROLE_HPF.lead, { b6On: true, b6Freq: 3200, b6Gain: sf ? 1.5 : 0, b6Q: 0.8 }));
       fx.push(createEffect('compressor', { threshold: -18, ratio: 2.5, attack: 0.008, release: 0.18, knee: 8, makeup: 1.5, mix: 1 }));
+      // club leads breathe with the kick (a light duck, less than the bass / chords)
+      if (sidechain && ctx.drumTrackId && ['house', 'techno'].includes(g.family)) fx.push(createEffect('ducker', { sourceTrackId: ctx.drumTrackId, amount: 0.25, threshold: -22, attack: 0.004, release: 0.15 }));
       send(rev, 0.2 * sp.scale);
       send(dly, 0.13);
       break;

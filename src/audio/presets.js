@@ -165,8 +165,8 @@ export const PRESETS = {
   })),
   'acid-lead': P('Acid Lead', 'Lead', ['lead'], ['acid', 'techno', 'trance', 'breaks'], synth({
     osc1Wave: 'saw', osc1Level: 0.85, osc2Wave: 'square', osc2Level: 0.3, osc2Octave: -1,
-    filterType: 'lp24', cutoff: 800, resonance: 0.82, velToFilter: 0.6, filterDrive: 0.4, ...fenv(4, 0.002, 0.25, 0.1, 0.12),
-    ...env(0.002, 0.3, 0.85, 0.08), mono: true, glide: 0.07, analog: 0.15, drive: 0.45, driveType: 'tube', gain: 0.6,
+    filterType: 'lp24', cutoff: 650, resonance: 0.72, velToFilter: 0.7, filterDrive: 0.25, ...fenv(4.2, 0.002, 0.18, 0.08, 0.1),
+    ...env(0.002, 0.3, 0.7, 0.07), mono: true, glide: 0.07, analog: 0.15, drive: 0.3, driveType: 'tube', gain: 0.6,
   })),
   // hard-synced saw (Prophet-5 / OB-Xd style) with an envelope-opened filter
   'sync-lead': P('Sync Lead', 'Lead', ['lead'], ['electro', 'synthwave', 'rock', 'edm', 'french-house'], synth({

@@ -32,12 +32,14 @@ export const GM_STRUDEL = {
 /**
  * Genre-idiomatic patches per role, ahead of the generic preset mapping: house hooks are M1-style piano / organ
  * stabs, plucks and vowel "vocal chop" synths — never a soft e-piano as the lead; deep house keeps the Rhodes for
- * chords with a filtered pluck hook; tech house short percussive stabs; trance the supersaw (generic mapping).
+ * chords with a filtered pluck hook; tech house a muted bleep over short stabs; techno a hypnotic
+ * filtered pluck (the 303 acid lead stays with acid-flavoured genres: psytrance, breakbeat); trance the supersaw (generic mapping).
  */
 export const GENRE_STRUDEL = {
   house: { lead: 'sd-house-piano' },
   'deep-house': { lead: 'sd-pluck-hook' },
-  'tech-house': { lead: 'sd-tech-stab', chords: 'sd-tech-stab' },
+  'tech-house': { lead: 'sd-tech-bleep', chords: 'sd-tech-stab' },
+  techno: { lead: 'sd-techno-pluck' },
   'progressive-house': { chords: 'sd-pluck-hook' },
   'uk-garage': { lead: 'sd-vowel-lead', chords: 'sd-house-organ' },
   'two-step': { lead: 'sd-vowel-lead' },

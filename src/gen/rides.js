@@ -108,12 +108,54 @@ export function addRides(ctx) {
       const cut = [], res = [];
       for (const s of playing) {
         const a = s.start, z = s.start + s.bars * bpb;
-        const hi = s.kind === 'main' ? 1400 + rng() * 600 : 700 + rng() * 300;
-        cut.push({ beat: a, value: 320 }, { beat: a + (z - a) * 0.75, value: Math.round(hi) }, { beat: z - 0.01, value: 480 });
+        // drops open the filter (never sit a 303 at a static few hundred Hz through the main section)
+        const lo = s.kind === 'main' ? 650 : 380;
+        const hi = s.kind === 'main' ? 2200 + rng() * 800 : 900 + rng() * 300;
+        cut.push({ beat: a, value: lo }, { beat: a + (z - a) * 0.75, value: Math.round(hi) }, { beat: z - 0.01, value: Math.round(lo * 1.4) });
         res.push({ beat: a, value: s.kind === 'main' ? 0.88 : 0.78 }, { beat: z - 0.01, value: s.kind === 'main' ? 0.9 : 0.8 });
       }
       b.add('inst:cutoff', cut);
       b.add('inst:resonance', res);
+    }
+
+    // ---- club leads (electronic): fade in through a low-pass when they enter (no abrupt hook entrances);
+    // techno / acid patches get a slow filter LFO (the hypnotic movement) through the sections they play
+    if (role === 'lead' && electronic && !t.layerOf && t.instrument?.type !== 'synth') {
+      const lfo = /^sd-(techno-pluck|acid-lead)$/.test(t.instrument?.preset || '') ? (t.instrument.preset === 'sd-acid-lead' ? [800, 3600] : [900, 4000]) : null;
+      // the automation stays sparse (<= 64 points): the LFO is sampled every 2 bars, every 4 on long songs
+      const build = (step) => {
+        const pts = [];
+        let prevPlays = false;
+        for (const s of sections) {
+          const plays = s.roles.includes(role);
+          const a = s.start, z = s.start + s.bars * bpb;
+          if (plays) {
+            const entering = !prevPlays;
+            // a drop opens fast (1 bar), elsewhere the hook rises over up to 4 bars
+            const ramp = entering ? Math.min(s.kind === 'main' ? 1 : 4, Math.max(1, Math.floor(s.bars / 2))) * bpb : 0;
+            if (entering) pts.push({ beat: r3(Math.max(0, a - 0.01)), value: 20000 }, { beat: a, value: s.kind === 'main' ? 1200 : 500 });
+            if (lfo) {
+              // one LFO cycle per 8 bars (sine), starting after the fade-in
+              const period = 8 * bpb;
+              for (let x = a + ramp; x < z - 0.01; x += step * bpb) {
+                const ph = ((x - a) % period) / period;
+                pts.push({ beat: r3(x), value: Math.round(lfo[0] * (lfo[1] / lfo[0]) ** (0.5 - 0.5 * Math.cos(2 * Math.PI * ph))) });
+              }
+            } else if (entering) {
+              pts.push({ beat: r3(a + ramp), value: 20000 });
+            }
+          }
+          prevPlays = plays;
+        }
+        return pts;
+      };
+      let pts = build(2);
+      if (pts.length > 60) pts = build(4);
+      if (pts.length > 60) pts = build(8);
+      if (pts.length >= 2) {
+        const fx = ensureFilter(t);
+        b.add(`fx:${fx.id}:cutoff`, pts.sort((x, y) => x.beat - y.beat));
+      }
     }
   }
 }
