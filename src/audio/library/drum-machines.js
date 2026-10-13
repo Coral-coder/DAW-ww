@@ -323,7 +323,12 @@ export function preferredKitForGenre(genreId, family) {
 export function drumInstrumentForGenre(genreId, { kit, family } = {}) {
   const machine = preferredKitForGenre(genreId, family);
   const k = kit || DRUM_MACHINES[machine]?.kit || '808';
-  return { type: 'drums', preset: k, params: { kit: k, machine } };
+  const params = { kit: k, machine };
+  // dnb / jungle: the backbeat snare is loud and up-front — round off its top so it cracks without stinging
+  if (String(family || '').toLowerCase() === 'dnb' || /dnb|drum-and-bass|jungle/.test(String(genreId || ''))) {
+    params.pads = { snare: { tone: -0.3, gain: 0.85 }, clap: { tone: -0.3, gain: 0.85 } };
+  }
+  return { type: 'drums', preset: k, params };
 }
 
 // ---------------------------------------------------------------------------- params (UI metadata)

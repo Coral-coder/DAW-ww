@@ -55,7 +55,7 @@ const BASE_MELODIC = ['bass', 'chords', 'pad', 'lead', 'arp'];
 
 const INFO = {
   perc: { name: 'Percussion', color: TRACK_COLORS[0], mix: 'drums', db: -8, hpf: 180 },
-  top: { name: 'Break Ghosts', color: TRACK_COLORS[0], mix: 'drums', db: -12, hpf: 400 },
+  top: { name: 'Break Ghosts', color: TRACK_COLORS[0], mix: 'drums', db: -15, hpf: 400 },
   sub: { name: 'Sub', color: TRACK_COLORS[1], mix: 'bass', db: -1 },
   counter: { name: 'Counter', color: TRACK_COLORS[4], mix: 'lead', db: -4.5 },
   strings: { name: 'Strings', color: TRACK_COLORS[7], mix: 'pad', db: -3 },
