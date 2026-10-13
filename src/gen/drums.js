@@ -343,7 +343,7 @@ export function generateDrumPattern(opts = {}) {
   // fills
   if (opts.fill) {
     const type = opts.fillType || style.fill;
-    applyFill(type, bars - 1, add, remove, rng, density, bpb, styleId);
+    applyFill(type, bars - 1, add, remove, rng, density, bpb, styleId, stepDur);
   }
   if (opts.crash) add('crash', 0, 0.9, 1);
 
@@ -517,7 +517,8 @@ function mutateBar(bar, add, remove, rng, style, bpb, stepDur) {
   }
 }
 
-function applyFill(type, bar, add, remove, rng, density, bpb, styleId) {
+function applyFill(type, bar, add, remove, rng, density, bpb, styleId, stepDur = 0.25) {
+  const sub = stepDur > 0.3 ? 1 / 3 : 0.25; // triplet grid styles fill in triplets
   if (type === 'none' || bar < 0) return;
   const end = (bar + 1) * bpb;
   const inZone = (from) => (n) => n.start >= from - 1e-6 && n.start < end;
@@ -579,10 +580,13 @@ function applyFill(type, bar, add, remove, rng, density, bpb, styleId) {
       const beats = density > 0.75 && styleId !== 'punk' ? 2 : 1;
       const from = end - beats;
       remove((n) => inZone(from)(n) && n.pitch !== DRUM_PITCH.kick);
-      const seq = beats === 2
-        ? ['snare', 'snare', 'tomhigh', 'tomhigh', 'tommid', 'tommid', 'tomlow', 'tomlow']
-        : ['snare', 'tomhigh', 'tommid', 'tomlow'];
-      seq.forEach((pad, k) => add(pad, from + k * 0.25, 0.65 + 0.3 * (k / seq.length)));
+      const per = Math.round(1 / sub);
+      const order = ['snare', 'tomhigh', 'tommid', 'tomlow'];
+      const count = beats * per;
+      for (let k = 0; k < count; k++) {
+        const pad = order[Math.min(order.length - 1, Math.floor((k / count) * order.length))];
+        add(pad, from + k * sub, 0.65 + 0.3 * (k / count), sub);
+      }
       break;
     }
   }

@@ -125,7 +125,7 @@ const RANDOM_RANGES = {
   osc1Level: [0.5, 1], osc2Level: [0, 0.8], osc3Level: [0, 0.6], osc1Octave: [-1, 0, 'int'], osc2Octave: [-1, 1, 'int'], osc3Octave: [-2, 0, 'int'],
   osc1Fine: [-8, 8], osc2Fine: [-15, 15], osc3Fine: [-10, 10], subLevel: [0, 0.6], noiseLevel: [0, 0.12],
   unison: [1, 5, 'int'], unisonDetune: [5, 35], unisonSpread: [0.2, 1], superDetune: [0.1, 0.6],
-  lfo1Depth: [0, 0.3], lfo2Depth: [0, 0.3], lfo1Rate: [0.1, 8, 'log'], lfo2Rate: [0.05, 4, 'log'], drive: [0, 0.35], glide: [0, 0.15],
+  lfo1Depth: [0, 0.08], lfo2Depth: [0, 0.08], lfo1Rate: [0.1, 8, 'log'], lfo2Rate: [0.05, 4, 'log'], drive: [0, 0.35], glide: [0, 0.15],
   feedback: [0, 0.5], vibDepth: [0, 0.3],
   pitch: [-3, 3], tone: [-0.5, 0.5],
   percDecay: [0.1, 0.8], percLevel: [0.3, 0.9], click: [0, 0.6], rotaryDepth: [0.3, 1],
@@ -503,6 +503,8 @@ export function createDevicePanel(app) {
     const rnd = Math.random;
     for (const d of defs) {
       if (RANDOM_SKIP.has(d.key) || (d.advanced && !RANDOM_RANGES[d.key])) continue;
+      if (d.key === 'glide' && !cur.mono) continue;
+      if (/^lfo\dDepth$/.test(d.key) && (cur[d.key.replace('Depth', 'Target')] || 'none') === 'none') continue;
       if (d.type === 'number') {
         let [lo, hi, mode] = RANDOM_RANGES[d.key] || [];
         if (/^op\dRatio$/.test(d.key)) { if (rnd() < amount) out[d.key] = OP_RATIOS[Math.floor(rnd() * OP_RATIOS.length)]; continue; }

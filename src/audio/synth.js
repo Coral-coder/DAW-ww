@@ -272,14 +272,23 @@ export class Voice {
   src(s) { this.sources.push(s); this.nodes.push(s); return s; }
   ext(src, dest) { src.connect(dest); this.extConns.push([src, dest]); }
   startAll(t) {
-    for (const s of this.sources) s.start(t);
-    const first = this.sources[0];
-    if (first) first.onended = () => this.cleanup();
+    let pending = this.sources.length;
+    for (const s of this.sources) {
+      s.start(t);
+      // clean up once every source has ended (sources may stop at different times)
+      s.onended = () => { if (--pending <= 0) this.cleanup(); };
+    }
   }
+  /** Stop every source at t (or at its own earlier stop time if given via stopEach). */
   stopAt(t) {
     this.end = t;
-    for (const s of this.sources) { try { s.stop(t); } catch { /* already stopped */ } }
+    for (const s of this.sources) {
+      const own = s._stopAt;
+      try { s.stop(own != null && own < t ? own : t); } catch { /* already stopped */ }
+    }
   }
+  /** Schedule an individual source to stop early (e.g. a short click layer). */
+  stopSource(s, t) { s._stopAt = t; try { s.stop(t); } catch { /* */ } }
   cleanup() {
     if (this.done) return;
     this.done = true;
@@ -649,6 +658,19 @@ export class SynthInstrument extends BaseInstrument {
       const sum = v.node(ctx.createGain());
       sum.gain.value = partGain * (wave === 'supersaw' ? 1.5 : 1);
       sum.connect(g);
+      // stereo: bucket parts into left / centre / right panners (3 nodes instead of one per osc)
+      const buckets = {};
+      const bucketFor = (pan) => {
+        const b = pan < -0.15 ? -1 : pan > 0.15 ? 1 : 0;
+        if (b === 0) return sum;
+        if (!buckets[b]) {
+          const pn = v.node(ctx.createStereoPanner());
+          pn.pan.value = b * Math.min(1, spread * 0.9 + 0.1);
+          pn.connect(sum);
+          buckets[b] = pn;
+        }
+        return buckets[b];
+      };
       for (const [dc, pan] of parts) {
         const osc = v.src(ctx.createOscillator());
         setOscWave(ctx, osc, wave, p[`osc${i}Width`]);
@@ -656,11 +678,7 @@ export class SynthInstrument extends BaseInstrument {
         fsrc.connect(osc.frequency);
         osc.detune.value = cents + dc;
         detuneTargets.push([osc.detune, cents + dc]);
-        if (Math.abs(pan) > 0.01) {
-          const pn = v.node(ctx.createStereoPanner());
-          pn.pan.value = pan;
-          osc.connect(pn); pn.connect(sum);
-        } else osc.connect(sum);
+        osc.connect(bucketFor(pan));
       }
     }
     // sub oscillator

@@ -225,6 +225,7 @@ export function paramPanel({ defs, values = {}, onChange, color, sectionsOpen = 
   const root = h('div.param-panel');
   const bySection = new Map();
   for (const d of defs) {
+    if (d.type === 'sample' || d.hidden) continue; // samples are picked by dedicated editors
     const s = d.section || 'Main';
     if (!bySection.has(s)) bySection.set(s, []);
     bySection.get(s).push(d);

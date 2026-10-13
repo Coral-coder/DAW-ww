@@ -72,7 +72,6 @@ export function arpeggiate(input, opts = {}) {
     : [{ start: opts.start ?? 0, dur: opts.length ?? 4, notes: input || [] }];
   const total = isProg ? segments.reduce((m, s) => Math.max(m, s.start + s.dur), 0) : (opts.start ?? 0) + (opts.length ?? 4);
   const out = [];
-  let globalStep = 0;
   let seqPos = 0;
   for (const seg of segments) {
     const seq = arpSequence(seg.notes, mode, octaves, rng);
@@ -84,7 +83,6 @@ export function arpeggiate(input, opts = {}) {
       if (t >= total - 1e-6) break;
       const stepIdx = Math.round(t / rate);
       const pv = pattern ? pattern[stepIdx % pattern.length] : 1;
-      globalStep++;
       if (!pv) { continue; }
       const beatPos = t % 1;
       const acc = accent ? (Math.abs(beatPos) < 1e-6 ? 1 : Math.abs(beatPos - 0.5) < 1e-6 ? 0.85 : 0.72) : 0.85;
@@ -98,6 +96,5 @@ export function arpeggiate(input, opts = {}) {
       for (const p of pitches) out.push(createNote(p, Math.round(t * 10000) / 10000, Math.round(dur * 10000) / 10000, Math.round(vel * 100) / 100));
     }
   }
-  void globalStep;
   return out;
 }

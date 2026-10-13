@@ -18,8 +18,7 @@
 .arr-seg .icon-btn.on { background: var(--accent); color: #fff; border-color: transparent; }
 .arr-snap { height: 26px; font-size: 12px; }
 .arr-toolbar .toggle { height: 26px; }
-.arr-hint { color: var(--text-3); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 360px; }
-@media (max-width: 1300px) { .arr-hint { display: none; } }
+.arr-hint { flex: 1 1 0; min-width: 0; text-align: right; color: var(--text-3); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* pattern-mode / empty-timeline banner */
 .arr-banner {

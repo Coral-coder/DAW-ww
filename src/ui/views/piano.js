@@ -29,7 +29,6 @@ const TOOLS = [
 ];
 const KEY_W = 66;
 const DRUM_KEY_W = 112;
-const RULER_H = 22;
 const MIN_PPB = 8, MAX_PPB = 640;
 const EPS = 1e-6;
 const SETTINGS_KEY = 'heroic-piano';
@@ -81,16 +80,16 @@ export function createPianoView(app) {
 
   // ---------------------------------------------------------------- DOM
   const toolbar = h('div.view-toolbar.piano-toolbar');
-  const keysCv = h('canvas.piano-keys', { title: 'Click / drag to audition. Shift+click selects every note on that key' });
-  const rulerCv = h('canvas.piano-ruler', { title: 'Click to move the playhead. Drag the ▼ end marker to change the pattern length' });
+  const keysCv = h('canvas.piano-keys', { 'aria-label': 'Piano keyboard', title: 'Click / drag to audition. Shift+click selects every note on that key' });
+  const rulerCv = h('canvas.piano-ruler', { 'aria-label': 'Timeline ruler', title: 'Click to move the playhead. Drag the ▼ end marker to change the pattern length' });
   const gridCv = h('canvas.piano-grid-canvas');
   const spacer = h('div.piano-spacer');
-  const scroller = h('div.piano-scroller', { tabIndex: 0 }, spacer);
+  const scroller = h('div.piano-scroller', { tabIndex: 0, role: 'application', 'aria-label': 'Note grid. Click to add notes, drag to move, Delete removes, arrows nudge, Ctrl+A/C/V/D' }, spacer);
   const playhead = h('div.piano-playhead');
   const rulerHead = h('div.piano-playhead.ruler');
   const gridWrap = h('div.piano-gridwrap', gridCv, playhead, scroller);
   const rulerWrap = h('div.piano-rulerwrap', rulerCv, rulerHead);
-  const velCv = h('canvas.piano-vel-canvas', { title: 'Velocity: drag to set, sweep across to paint. Only selected notes are affected when there is a selection' });
+  const velCv = h('canvas.piano-vel-canvas', { 'aria-label': 'Velocity lane', title: 'Velocity: drag to set, sweep across to paint. Only selected notes are affected when there is a selection' });
   const velResizer = h('div.piano-vel-resizer', { title: 'Drag to resize the velocity lane' });
   const velLabel = h('div.piano-vel-label', h('span', 'Velocity'));
   const corner = h('div.piano-corner');
@@ -112,7 +111,6 @@ export function createPianoView(app) {
   const bpb = () => beatsPerBar(proj());
   const rowH = () => (isDrum ? Math.max(S.rowH, 20) : S.rowH);
   const ppb = () => S.ppb || 80;
-  const snapV = () => S.snap;
   const gridStep = () => S.snap || 0.25;
   const snapRound = (b) => (S.snap ? Math.round(b / S.snap + EPS) * S.snap : b);
   const snapFloor = (b) => (S.snap ? Math.floor(b / S.snap + EPS) * S.snap : b);
@@ -297,10 +295,10 @@ export function createPianoView(app) {
       const m = rows[r].pitch;
       if (isDrum) {
         ctx.fillStyle = r % 2 ? colors.bg2 : colors.bg3;
-      } else if (isBlack(m)) {
+      } else if (isBlack(m) && !S.fold) {
         ctx.fillStyle = colors.light ? colors.bg3 : colors.bg;
       } else {
-        ctx.fillStyle = colors.light ? colors.bg2 : colors.bg2;
+        ctx.fillStyle = colors.bg2;
       }
       ctx.fillRect(0, y, w, rh);
       if (!isDrum && S.scaleHL) {
@@ -437,6 +435,22 @@ export function createPianoView(app) {
         ctx.fillText(rows[r].name || pitchLabel(m), 8, y + rh / 2, w - 14);
         ctx.fillStyle = cur.track?.color || colors.accent;
         ctx.fillRect(0, y, 3, rh - 1);
+        continue;
+      }
+      if (S.fold) {
+        // folded rows aren't contiguous semitones: draw a labelled list instead of a keyboard
+        const inK = inKey(m);
+        ctx.fillStyle = on ? colors.accent2 : inK ? colors.white : colors.black;
+        ctx.fillRect(0, y, w, rh - 1);
+        if (hover?.pitch === m && !on) { ctx.fillStyle = hexA(colors.accent, 0.22); ctx.fillRect(0, y, w, rh); }
+        if (isRoot(m)) { ctx.fillStyle = colors.accent; ctx.fillRect(w - 6, y + 1, 6, rh - 2); }
+        if (rh >= 9) {
+          ctx.fillStyle = on || inK ? '#20232c' : '#c9cedd';
+          ctx.textAlign = 'right';
+          ctx.font = `${isRoot(m) ? '600 ' : ''}${Math.min(11, rh - 3)}px ${colors.font}`;
+          ctx.fillText(nn(m), w - 9, y + rh / 2 + 0.5);
+          ctx.font = `${Math.min(11, rh - 3)}px ${colors.font}`;
+        }
         continue;
       }
       const black = isBlack(m);
@@ -874,7 +888,7 @@ export function createPianoView(app) {
       ] },
       ...(isD ? [] : [
         { label: 'Invert (mirror pitches)', icon: 'redo', onClick: invertPitches },
-        { label: 'Arpeggiate chords', icon: 'wave', submenu: ['up', 'down', 'updown', 'random'].map((m) => ({ label: m === 'updown' ? 'Up-down' : m[0].toUpperCase() + m.slice(1), onClick: () => arpeggiate(m) })) },
+        { label: 'Arpeggiate chords', icon: 'wave', submenu: [['up', 'Up'], ['down', 'Down'], ['updown', 'Up-down'], ['downup', 'Down-up'], ['converge', 'Converge'], ['pinky', 'Pinky (top note pedal)'], ['thumb', 'Thumb (bass pedal)'], ['random', 'Random']].map(([m, l]) => ({ label: l, onClick: () => arpeggiate(m) })) },
       ]),
       '-',
       { label: 'Select', icon: 'pointer', submenu: [

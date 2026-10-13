@@ -200,7 +200,7 @@ export function generateMelody(opts = {}) {
 }
 
 /**
- * generateCounterMelody({melody, progression, key, scale, range=[52,72], density=0.5, rng, seed, beatsPerBar=4, length})
+ * generateCounterMelody({melody, progression, key, scale, range=[52,72], density=0.5, rng, seed, length})
  * Fills gaps/long notes of the melody with chord tones below it, preferring contrary motion and 3rds/6ths.
  */
 export function generateCounterMelody(opts = {}) {
@@ -208,7 +208,6 @@ export function generateCounterMelody(opts = {}) {
   const melody = (opts.melody || []).slice().sort((a, b) => a.start - b.start);
   const progression = opts.progression || [];
   const { root, scale } = resolveKey(opts);
-  const bpb = opts.beatsPerBar || 4;
   const length = opts.length ?? Math.max(
     progression.reduce((m, c) => Math.max(m, c.startBeat + c.durBeats), 0),
     melody.reduce((m, n) => Math.max(m, n.start + n.dur), 0),
@@ -258,6 +257,5 @@ export function generateCounterMelody(opts = {}) {
     prevMel = mel ? mel.pitch : prevMel;
     prevInterval = mel ? (mel.pitch - p) % 12 : null;
   }
-  void bpb;
   return out;
 }

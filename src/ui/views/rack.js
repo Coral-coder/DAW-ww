@@ -12,7 +12,7 @@ import('../../gen/index.js').then((m) => { gen = m; }).catch(() => {});
 
 const EPS = 1e-6;
 const SETTINGS_KEY = 'heroic-rack';
-const DEFAULT_PADS = [36, 38, 39, 42]; // shown for an empty drum pattern
+const CORE_PADS = [36, 38, 39, 42, 46]; // always shown (kick, snare, clap, hats)
 const VOL_DEF = { key: 'volume', label: 'Volume', min: 0, max: 1.5, default: 0.8, step: 0.01 };
 const EUCLID_PRESETS = [
   [3, 8, 0, 'Tresillo'], [5, 8, 0, 'Cinquillo'], [3, 16, 0, ''], [5, 16, 0, 'Bossa'], [7, 16, 0, ''],
@@ -148,8 +148,7 @@ export function createRackView(app) {
         out.push({ kind: 'head', track: t, pat, steps });
         if (collapsed.has(t.id)) continue;
         const used = new Set((pat?.notes || []).map((n) => n.pitch));
-        let pads = DRUM_PADS.filter((d) => S.showAll || used.has(d.pitch)).map((d) => d.pitch);
-        if (!pads.length) pads = DEFAULT_PADS.slice();
+        const pads = DRUM_PADS.filter((d) => S.showAll || used.has(d.pitch) || CORE_PADS.includes(d.pitch)).map((d) => d.pitch);
         for (const m of [...used].sort((a, b) => a - b)) if (!DRUM_PADS.some((d) => d.pitch === m)) pads.push(m);
         for (const m of pads) out.push({ kind: 'pad', track: t, pat, steps, pitch: m, name: padName(m) });
       } else {
@@ -162,9 +161,13 @@ export function createRackView(app) {
   function guessMelPitch(pat) {
     const notes = pat?.notes || [];
     if (!notes.length) return defaultMelPitch();
-    const counts = new Map();
-    for (const n of notes) counts.set(n.pitch, (counts.get(n.pitch) || 0) + 1);
-    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0][0];
+    // key root in the octave closest to the median pitch of the pattern
+    const ps = notes.map((n) => n.pitch).sort((a, b) => a - b);
+    const med = ps[Math.floor(ps.length / 2)];
+    const root = keyInfo().root;
+    let best = defaultMelPitch(), bd = Infinity;
+    for (let m = root; m <= 127; m += 12) { const d = Math.abs(m - med); if (d < bd) { bd = d; best = m; } }
+    return best;
   }
   const sigOf = (rs) => JSON.stringify([res(), rs.map((r) => [r.kind, r.track.id, r.pat?.id, r.pitch, r.steps, r.track.name, r.track.color])]);
 
@@ -319,7 +322,7 @@ export function createRackView(app) {
     let notes = null;
     if (gen?.generateDrumPattern) {
       try {
-        const all = gen.generateDrumPattern({ genre, bars, rng, density: 0.5 + rng() * 0.4, variation: rng() });
+        const all = gen.generateDrumPattern({ genre, bars, rng, density: 0.5 + rng() * 0.4, variation: rng(), beatsPerBar: beatsPerBar(p) });
         if (Array.isArray(all)) notes = all.filter((n) => n.pitch === row.pitch);
         if (notes && !notes.length && rng() < 0.7) notes = null; // genre doesn't use this pad: invent something
       } catch { notes = null; }
@@ -487,12 +490,13 @@ export function createRackView(app) {
       const lbl = beatStart ? (beatIdx % bpb === 0 ? `${beatIdx / bpb + 1}` : `${Math.floor(beatIdx / bpb) + 1}.${(beatIdx % bpb) + 1}`) : '';
       cells.push(h(`div.rack-ruler-cell${beatStart ? '.beat' : ''}${beatStart && beatIdx % bpb === 0 ? '.bar' : ''}`, lbl));
     }
-    ruler.replaceChildren(h('div.rack-head.rack-ruler-head', h('span', 'Rack'), h('span.rack-ruler-hint', 'Click steps · drag to paint · right-click accent · shift-click ratchet · wheel velocity')), h('div.rack-steps', cells));
+    ruler.replaceChildren(h('div.rack-head.rack-ruler-head', h('span', 'Rack'), h('span.rack-ruler-hint', { title: 'Click a step to toggle · drag to paint/erase · right-click: accent / ghost (melodic rows: pitch menu) · Shift+click: ratchet ×2/×3/×4 · wheel: velocity (melodic: pitch)' }, 'Click steps · drag to paint · right-click accent · shift-click ratchet · wheel velocity')), h('div.rack-steps', cells));
   }
 
   function buildRow(row, idx) {
     const t = row.track;
-    const elRow = h(`div.rack-row.${row.kind}`, { dataset: { idx: String(idx) }, style: { '--c': t.color } });
+    const elRow = h(`div.rack-row.${row.kind}`, { dataset: { idx: String(idx) } });
+    elRow.style.setProperty('--c', t.color || 'var(--accent)');
     const head = h('div.rack-head');
     const menuBtn = iconButton('menu', (e) => contextMenu(anchorEv(e), row.kind === 'head' ? headMenuItems(row) : rowMenuItems(row)), 'Row options: generate, fill, euclidean, randomize, shift, copy/paste, open in piano roll');
     menuBtn.classList.add('rack-menu');
@@ -579,6 +583,7 @@ export function createRackView(app) {
       const ns = buckets.get(i);
       const on = !!ns?.length;
       st.classList.toggle('on', on);
+      st.setAttribute('aria-pressed', on ? 'true' : 'false');
       const fill = st.firstChild, label = st.lastChild;
       if (on) {
         const v = Math.max(...ns.map((n) => n.vel ?? 0.8));
@@ -618,8 +623,9 @@ export function createRackView(app) {
   function syncToolbar() {
     const p = proj();
     const t = selTrack();
-    trackLabel.textContent = t ? t.name : 'No track';
+    trackLabel.textContent = t ? t.name : '';
     trackLabel.style.color = t?.color || '';
+    for (const x of [trackLabel, patSel, newPatBtn, dupPatBtn]) x.classList.toggle('hidden', !t);
     const pats = t ? patternsForTrack(p, t.id) : [];
     patSel.replaceChildren(...pats.map((pt) => h('option', { value: pt.id }, pt.name)));
     if (t?.activePatternId) patSel.value = t.activePatternId;
@@ -668,7 +674,7 @@ export function createRackView(app) {
     for (const r of rows) updateRow(r);
     updateFocus();
     syncToolbar();
-    void p;
+
   }
 
   // ---------------------------------------------------------------- step interaction (delegated)

@@ -122,7 +122,7 @@ export function createAssistantPanel(app) {
   function chordTargetTrack() {
     const p = get();
     const t = selectedTrack();
-    if (t && t.type === 'instrument' && t.instrument?.type !== 'drums') return t;
+    if (t && t.type === 'instrument' && t.instrument?.type !== 'drums' && !['bass', 'drums'].includes(t.role)) return t;
     return p.tracks.find((x) => x.type === 'instrument' && x.instrument?.type !== 'drums' && (x.role === 'chords' || x.role === 'pad'))
       || p.tracks.find((x) => x.type === 'instrument' && x.instrument?.type !== 'drums') || null;
   }
@@ -141,8 +141,12 @@ export function createAssistantPanel(app) {
     app.setStatus?.(`${chord.name || theory.chordName(chord)} on ${t.name}: ${notes.map((n) => theory.noteName(n)).join(' ')}`);
   }
   function insertChord(chord, { at = null, prev = null } = {}) {
-    const t = chordTargetTrack();
-    if (!t) { toast('Select an instrument track first', { level: 'warn' }); return; }
+    let t = chordTargetTrack();
+    if (!t || ['bass', 'lead', 'arp', 'fx'].includes(t.role)) {
+      t = actions.addTrack(PRESETS['electric-piano'] ? 'electric-piano' : 'synth', { role: 'chords', name: 'Chords' });
+      if (!t) return;
+      toast(`Created a "${t.name}" track for your chords`, { timeout: 2000 });
+    }
     const p = get();
     const bpb = beatsPerBar(p);
     let pat = selectedPattern();

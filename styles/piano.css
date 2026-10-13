@@ -57,3 +57,4 @@
 .piano-empty .empty-state p { margin: 0; line-height: 1.5; }
 .piano-empty .empty-state > .icon { color: var(--accent); opacity: .8; }
 :root[data-theme="light"] .piano-playhead { background: var(--accent); box-shadow: none; }
+.piano-empty .btn:not(.primary) { color: var(--text); }

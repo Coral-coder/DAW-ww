@@ -153,7 +153,8 @@ export function createBrowserPanel(app) {
     return det;
   }
   function item({ key, ic, label, meta, title, onClick, onDblClick, onMenu, drag, actionsEls = [], cls = '' }) {
-    const row = h(`div.br-item${cls ? '.' + cls : ''}${selectedKey === key ? '.selected' : ''}`, { title: title || '', tabIndex: 0, draggable: !!drag, dataset: { key } },
+    const clsSel = String(cls).split(/\s+/).filter(Boolean).map((c) => '.' + c).join('');
+    const row = h(`div.br-item${clsSel}${selectedKey === key ? '.selected' : ''}`, { title: title || '', tabIndex: 0, draggable: !!drag, dataset: { key } },
       ic ? icon(ic, 13) : null, h('span.br-label', label), meta ? h('span.br-meta', meta) : null, h('span.br-actions', actionsEls));
     row.addEventListener('click', (e) => {
       if (e.target.closest('.br-actions')) return;
@@ -443,8 +444,11 @@ export function createBrowserPanel(app) {
     if (!prog) return;
     const p = get();
     const bpb = beatsPerBar(p);
+    // chords go to the selected harmony track; never overwrite drums, bass or lead lines
+    const harmonic = (x) => x && x.type === 'instrument' && x.instrument?.type !== 'drums' && !['bass', 'lead', 'arp', 'fx', 'drums'].includes(x.role);
     let t = selectedTrack();
-    if (!t || t.type !== 'instrument' || t.instrument?.type === 'drums') {
+    if (!harmonic(t)) t = p.tracks.find((x) => harmonic(x) && (x.role === 'chords' || x.role === 'pad')) || null;
+    if (!t) {
       const preset = PRESETS['electric-piano'] ? 'electric-piano' : 'synth';
       t = actions.addTrack(preset, { role: 'chords', name: 'Chords' });
     }
@@ -495,7 +499,7 @@ export function createBrowserPanel(app) {
       const names = pr.romans.map((r) => theory.romanToChord(r, p.key.root, p.key.scale)?.name || r);
       return item({
         key: 'prog:' + pr.id, ic: 'layers', label: pr.name.replace(/\s*\(.*\)$/, ''), meta: pr.romans.slice(0, 4).join('–') + (pr.romans.length > 4 ? '…' : ''),
-        title: `${pr.name}\n${pr.description || ''}\nIn your key: ${names.join(' – ')}\nMood: ${(pr.moods || []).join(', ')}\nClick to write it into the selected track's pattern (one chord per bar)`,
+        title: `${pr.name}\n${pr.description || ''}\nIn your key: ${names.join(' – ')}\nMood: ${(pr.moods || []).join(', ')}\nDouble-click to write it into the selected chords/keys track (or a new Chords track), one chord per bar`,
         onClick: () => setInfo(pr.name, `${names.join(' – ')} — ${pr.description || ''}`, 'Double-click (or +) to insert into the selected chord track.'),
         onDblClick: () => insertProgression(pr.id),
         actionsEls: [actBtn('plus', 'Insert into selected track (or a new chords track)', () => insertProgression(pr.id))],

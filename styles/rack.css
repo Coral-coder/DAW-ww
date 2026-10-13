@@ -89,3 +89,4 @@
 :root[data-theme="light"] .rack-step { background: var(--bg-2); }
 :root[data-theme="light"] .rack-step.alt { background: var(--bg-3); }
 :root[data-theme="light"] .rack-step.on { background: color-mix(in srgb, var(--c) 25%, #fff); }
+.rack-empty .btn:not(.primary) { color: var(--text); }

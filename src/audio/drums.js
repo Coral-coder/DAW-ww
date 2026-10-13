@@ -56,10 +56,48 @@ export function playDrumVoice(ctx, dest, t, def, o = {}) {
   const bright = Math.pow(2, tone);
   const vel = num(o.vel, 0.8, 0, 1);
   const fx = o.fx || {};
-  const sum = v.node(ctx.createGain());
-  sum.gain.value = 1;
   let end = t + 0.02;
 
+  // ---- post chain first (lp -> hp -> drive -> crush -> out -> pan); layers feed `entry` ----
+  const drive = clamp(num(def.drive, 0) + num(fx.drive, 0), 0, 1);
+  const pre = drive > 0.001 ? 1 + drive * 2 : 1; // drive pre-gain folded into layer levels
+  const out = v.node(ctx.createGain());
+  out.gain.value = 0.8 * num(def.gain, 1, 0, 4) * num(o.gain, 1, 0, 4) * (0.12 + 0.88 * vel) / (drive > 0.001 ? 1 + drive * 1.2 : 1);
+  v.amp = out;
+  const chain = [];
+  const lp = num(def.lp ?? fx.lp, 0);
+  if (lp > 0) {
+    const f = v.node(ctx.createBiquadFilter());
+    f.type = 'lowpass'; f.frequency.value = clamp(lp * Math.pow(2, tone * 1.2), 40, nyq); f.Q.value = -3;
+    chain.push(f);
+  }
+  const hp = num(def.hp, 0);
+  if (hp > 0) {
+    const f = v.node(ctx.createBiquadFilter());
+    f.type = 'highpass'; f.frequency.value = clamp(hp, 20, nyq);
+    chain.push(f);
+  }
+  if (drive > 0.001) {
+    const ws = v.node(ctx.createWaveShaper()); ws.curve = getDriveCurve(drive);
+    chain.push(ws);
+  }
+  const crush = num(def.crush ?? fx.crush, 0);
+  if (crush >= 1 && crush < 16) {
+    const ws = v.node(ctx.createWaveShaper()); ws.curve = getCrushCurve(crush);
+    chain.push(ws);
+  }
+  chain.push(out);
+  for (let i = 0; i < chain.length - 1; i++) chain[i].connect(chain[i + 1]);
+  const entry = chain[0];
+  let last = out;
+  const pan = num(o.pan, 0, -1, 1) + num(def.pan, 0, -1, 1);
+  if (Math.abs(pan) > 0.001) {
+    const pn = v.node(ctx.createStereoPanner()); pn.pan.value = clamp(pan, -1, 1);
+    last.connect(pn); last = pn;
+  }
+  last.connect(dest);
+
+  // ---- tonal bodies ----
   for (const L of def.tones || []) {
     const f = clamp(num(L.freq, 100) * ratio, 10, nyq);
     const osc = v.src(ctx.createOscillator());
@@ -69,16 +107,25 @@ export function playDrumVoice(ctx, dest, t, def, o = {}) {
     if (Math.abs(ps - 1) > 0.001) osc.frequency.exponentialRampToValueAtTime(f, t + Math.max(0.002, num(L.pitchDecay, 0.03) * Math.sqrt(dm)));
     if (L.pitchEnd) osc.frequency.exponentialRampToValueAtTime(clamp(f * num(L.pitchEnd, 1, 0.1, 4), 10, nyq), t + num(L.decay, 0.3) * dm);
     const g = v.node(ctx.createGain());
-    const lvl = num(L.level, 0.8, 0, 2) * Math.pow(2, -tone * 0.25);
+    const lvl = pre * num(L.level, 0.8, 0, 2) * Math.pow(2, -tone * 0.25);
     end = Math.max(end, decayEnv(g.gain, t, lvl, num(L.attack, 0.001), num(L.decay, 0.3) * dm));
-    osc.connect(g); g.connect(sum);
+    osc.connect(g); g.connect(entry);
   }
+  // ---- noise layers (noise + click share one white source when colours match) ----
+  const noiseSrcs = {};
+  const noiseSrc = (color) => {
+    const c = color || 'white';
+    if (!noiseSrcs[c]) {
+      const ns = v.src(ctx.createBufferSource());
+      ns.buffer = getNoiseBuffer(ctx, c);
+      ns.loop = true;
+      noiseSrcs[c] = ns;
+    }
+    return noiseSrcs[c];
+  };
   const N = def.noise;
   if (N && num(N.level, 0.5) > 0) {
-    const ns = v.src(ctx.createBufferSource());
-    ns.buffer = getNoiseBuffer(ctx, N.color || 'white');
-    ns.loop = true;
-    let node = ns;
+    let node = noiseSrc(N.color);
     if (N.filter && N.filter !== 'none') {
       const fl = v.node(ctx.createBiquadFilter());
       fl.type = { hp: 'highpass', bp: 'bandpass', lp: 'lowpass' }[N.filter] || 'bandpass';
@@ -87,12 +134,12 @@ export function playDrumVoice(ctx, dest, t, def, o = {}) {
       node.connect(fl); node = fl;
     }
     if (N.hp) {
-      const hp = v.node(ctx.createBiquadFilter());
-      hp.type = 'highpass'; hp.frequency.value = clamp(num(N.hp, 500) * bright, 20, nyq);
-      node.connect(hp); node = hp;
+      const h = v.node(ctx.createBiquadFilter());
+      h.type = 'highpass'; h.frequency.value = clamp(num(N.hp, 500) * bright, 20, nyq);
+      node.connect(h); node = h;
     }
     const g = v.node(ctx.createGain());
-    const lvl = num(N.level, 0.5, 0, 2) * Math.pow(2, tone * 0.4);
+    const lvl = pre * num(N.level, 0.5, 0, 2) * Math.pow(2, tone * 0.4);
     const bursts = Math.round(num(N.bursts, 1, 1, 8));
     const dec = num(N.decay, 0.2) * dm;
     if (bursts > 1) {
@@ -110,92 +157,80 @@ export function playDrumVoice(ctx, dest, t, def, o = {}) {
     } else {
       end = Math.max(end, decayEnv(g.gain, t, lvl, num(N.attack, 0.0008), dec));
     }
-    node.connect(g); g.connect(sum);
+    node.connect(g); g.connect(entry);
   }
+  const C = def.click;
+  let clickOnly = null;
+  if (C && num(C.level, 0) > 0) {
+    const bp = v.node(ctx.createBiquadFilter());
+    bp.type = 'bandpass'; bp.frequency.value = clamp(num(C.freq, 3000) * bright, 100, nyq); bp.Q.value = 0.7;
+    const g = v.node(ctx.createGain());
+    const cEnd = decayEnv(g.gain, t, pre * num(C.level, 0.3, 0, 2), 0.0003, num(C.decay, 0.006));
+    end = Math.max(end, cEnd);
+    const shared = !!noiseSrcs.white;
+    const ns = noiseSrc('white');
+    ns.connect(bp); bp.connect(g); g.connect(entry);
+    if (!shared) clickOnly = { ns, end: cEnd + 0.01 };
+  }
+  // ---- metallic layer: cached looping buffer of summed oscillators ----
   const M = def.metal;
   if (M && num(M.level, 0.5) > 0) {
-    const freqs = Array.isArray(M.freqs) && M.freqs.length ? M.freqs : METAL_808;
-    const scale = num(M.scale, 1, 0.1, 8) * ratio;
-    const msum = v.node(ctx.createGain());
-    msum.gain.value = 1 / Math.sqrt(freqs.length);
-    for (const fr of freqs) {
-      const osc = v.src(ctx.createOscillator());
-      osc.type = M.wave === 'sine' || M.wave === 'triangle' ? M.wave : 'square';
-      osc.frequency.value = clamp(num(fr, 400) * scale, 10, nyq);
-      osc.connect(msum);
-    }
-    let node = msum;
+    const freqs = (Array.isArray(M.freqs) && M.freqs.length ? M.freqs : METAL_808)
+      .map((fr) => clamp(num(fr, 400) * num(M.scale, 1, 0.1, 8) * ratio, 10, nyq));
+    const src = v.src(ctx.createBufferSource());
+    src.buffer = getMetalBuffer(ctx, freqs, M.wave === 'sine' || M.wave === 'triangle' ? M.wave : 'square');
+    src.loop = true;
+    let node = src;
     if (M.bp) {
       const bp = v.node(ctx.createBiquadFilter());
       bp.type = 'bandpass'; bp.frequency.value = clamp(num(M.bp, 8000) * bright, 50, nyq); bp.Q.value = num(M.q, 1, 0.1, 30);
       node.connect(bp); node = bp;
     }
     if (M.hp) {
-      const hp = v.node(ctx.createBiquadFilter());
-      hp.type = 'highpass'; hp.frequency.value = clamp(num(M.hp, 6000) * bright, 20, nyq);
-      node.connect(hp); node = hp;
+      const h = v.node(ctx.createBiquadFilter());
+      h.type = 'highpass'; h.frequency.value = clamp(num(M.hp, 6000) * bright, 20, nyq);
+      node.connect(h); node = h;
     }
     const g = v.node(ctx.createGain());
-    end = Math.max(end, decayEnv(g.gain, t, num(M.level, 0.5, 0, 2) * Math.pow(2, tone * 0.3), num(M.attack, 0.0008), num(M.decay, 0.1) * dm));
-    node.connect(g); g.connect(sum);
-  }
-  const C = def.click;
-  if (C && num(C.level, 0) > 0) {
-    const ns = v.src(ctx.createBufferSource());
-    ns.buffer = getNoiseBuffer(ctx, 'white');
-    ns.loop = true;
-    const bp = v.node(ctx.createBiquadFilter());
-    bp.type = 'bandpass'; bp.frequency.value = clamp(num(C.freq, 3000) * bright, 100, nyq); bp.Q.value = 0.7;
-    const g = v.node(ctx.createGain());
-    end = Math.max(end, decayEnv(g.gain, t, num(C.level, 0.3, 0, 2), 0.0003, num(C.decay, 0.006)));
-    ns.connect(bp); bp.connect(g); g.connect(sum);
+    end = Math.max(end, decayEnv(g.gain, t, pre * num(M.level, 0.5, 0, 2) * Math.pow(2, tone * 0.3), num(M.attack, 0.0008), num(M.decay, 0.1) * dm));
+    node.connect(g); g.connect(entry);
   }
 
-  // post chain: lp -> hp -> drive -> crush -> out -> pan
-  let node = sum;
-  const lp = num(def.lp ?? fx.lp, 0);
-  if (lp > 0) {
-    const f = v.node(ctx.createBiquadFilter());
-    f.type = 'lowpass'; f.frequency.value = clamp(lp * Math.pow(2, tone * 1.2), 40, nyq); f.Q.value = -3;
-    node.connect(f); node = f;
-  }
-  const hp = num(def.hp, 0);
-  if (hp > 0) {
-    const f = v.node(ctx.createBiquadFilter());
-    f.type = 'highpass'; f.frequency.value = clamp(hp, 20, nyq);
-    node.connect(f); node = f;
-  }
-  const drive = clamp(num(def.drive, 0) + num(fx.drive, 0), 0, 1);
-  if (drive > 0.001) {
-    const pre = v.node(ctx.createGain()); pre.gain.value = 1 + drive * 2;
-    const ws = v.node(ctx.createWaveShaper()); ws.curve = getDriveCurve(drive);
-    const post = v.node(ctx.createGain()); post.gain.value = 1 / (1 + drive * 1.2);
-    node.connect(pre); pre.connect(ws); ws.connect(post); node = post;
-  }
-  const crush = num(def.crush ?? fx.crush, 0);
-  if (crush >= 1 && crush < 16) {
-    const ws = v.node(ctx.createWaveShaper()); ws.curve = getCrushCurve(crush);
-    node.connect(ws); node = ws;
-  }
-  const out = v.node(ctx.createGain());
-  out.gain.value = 0.8 * num(def.gain, 1, 0, 4) * num(o.gain, 1, 0, 4) * (0.12 + 0.88 * vel);
-  v.amp = out;
-  node.connect(out);
-  node = out;
-  const pan = num(o.pan, 0, -1, 1) + num(def.pan, 0, -1, 1);
-  if (Math.abs(pan) > 0.001) {
-    const pn = v.node(ctx.createStereoPanner()); pn.pan.value = clamp(pan, -1, 1);
-    node.connect(pn); node = pn;
-  }
-  node.connect(dest);
   v.choke = (tc, fade = 0.012) => {
     if (v.done || tc >= v.end) return;
     fadeOut(out.gain, tc, fade, out.gain.value);
     v.stopAt(tc + fade + 0.005);
   };
   v.startAll(t);
+  if (clickOnly) v.stopSource(clickOnly.ns, clickOnly.end);
   v.stopAt(end + 0.02);
   return v;
+}
+
+// Summed square/sine/triangle oscillators rendered once into a 1-second buffer. Frequencies are
+// rounded to whole Hz so every partial completes an integer number of cycles -> seamless loop.
+const metalCache = new WeakMap();
+function getMetalBuffer(ctx, freqs, wave = 'square') {
+  let m = metalCache.get(ctx);
+  if (!m) { m = new Map(); metalCache.set(ctx, m); }
+  const fr = freqs.map((f) => Math.max(1, Math.round(f)));
+  const key = wave + ':' + fr.join(',');
+  let buf = m.get(key);
+  if (buf) return buf;
+  const sr = ctx.sampleRate, len = Math.round(sr);
+  buf = ctx.createBuffer(1, len, sr);
+  const d = buf.getChannelData(0);
+  const amp = 1 / Math.sqrt(fr.length);
+  fr.forEach((f, k) => {
+    const ph0 = (k * 0.137) % 1; // decorrelate partial phases
+    for (let i = 0; i < len; i++) {
+      const ph = (ph0 + (f * i) / sr) % 1;
+      d[i] += amp * (wave === 'sine' ? Math.sin(2 * Math.PI * ph) : wave === 'triangle' ? 1 - 4 * Math.abs(ph - 0.5) : ph < 0.5 ? 1 : -1);
+    }
+  });
+  if (m.size > 200) m.clear();
+  m.set(key, buf);
+  return buf;
 }
 
 /** Play an AudioBuffer as a one-shot drum hit. */

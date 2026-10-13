@@ -19,7 +19,7 @@
 
 /* ---- strip ---- */
 .mx-strip {
-  width: var(--mx-w); flex: none; display: flex; flex-direction: column; min-height: 470px;
+  width: var(--mx-w); flex: none; display: flex; flex-direction: column; min-height: 330px;
   background: linear-gradient(180deg, var(--bg-3), var(--bg-2) 60%);
   border: 1px solid var(--line); border-radius: 7px; overflow: hidden; position: relative;
   transition: border-color .12s, box-shadow .12s;
@@ -46,8 +46,8 @@
 .narrow .mx-sec-label { padding: 3px 4px 1px; letter-spacing: .04em; }
 
 /* inserts */
-.mx-inserts { flex: none; border-bottom: 1px solid var(--line); }
-.mx-slot-list { display: flex; flex-direction: column; gap: 2px; padding: 0 4px 5px; height: 88px; overflow-y: auto; }
+.mx-inserts { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; border-bottom: 1px solid var(--line); overflow: hidden; }
+.mx-slot-list { display: flex; flex-direction: column; gap: 2px; padding: 0 4px 5px; flex: 0 1 88px; height: 88px; min-height: 24px; overflow-y: auto; }
 .mx-slot {
   display: flex; align-items: center; gap: 4px; height: 18px; min-height: 18px; padding: 0 4px;
   background: var(--bg); border: 1px solid var(--line); border-radius: 3px; font-size: 10.5px; cursor: pointer; color: var(--text);
@@ -79,7 +79,7 @@
 .toggle.arm.on .mx-arm-dot { background: #fff; }
 
 /* fader + meter */
-.mx-fader-area { flex: 1; min-height: 130px; display: flex; justify-content: center; gap: 3px; padding: 12px 4px 8px; }
+.mx-fader-area { flex: 1 0 110px; min-height: 110px; display: flex; justify-content: center; gap: 3px; padding: 12px 4px 8px; }
 .mx-scale { position: relative; width: 17px; flex: none; }
 .narrow .mx-scale { display: none; }
 .mx-tick { position: absolute; right: 0; transform: translateY(50%); font: 8px/1 var(--mono); color: var(--text-3); display: flex; align-items: center; gap: 1px; }
@@ -116,7 +116,7 @@
 .mx-loud-cell span { display: block; font-size: 8px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-3); }
 .mx-loud-val { font: 11px var(--mono); color: var(--text); }
 .mx-loud-val.hot { color: var(--warn); }
-.mx-master .mx-slot-list { height: 70px; }
+.mx-master .mx-slot-list { flex-basis: 70px; height: 70px; }
 
 /* add bus + empty */
 .mx-add-bus {
@@ -131,3 +131,9 @@
 }
 .mx-empty h3 { margin: 0; color: var(--text); font-size: 16px; }
 .mx-empty p { margin: 0; font-size: 12px; }
+
+/* narrow strips */
+.narrow .mx-slot-add span { display: none; }
+.narrow .mx-btns { gap: 2px; padding: 4px 2px 3px; }
+.narrow .mx-btn { min-width: 17px; padding: 0 2px; }
+.narrow .mx-head { padding: 7px 4px 4px; }

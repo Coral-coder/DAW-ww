@@ -239,7 +239,7 @@ export function createArrangeView(app) {
   const toolbar = h('div.view-toolbar.arr-toolbar',
     addTrackBtn, h('div.sep'), toolGroup, snapSel, h('div.sep'),
     zoomOutBtn, zoomInBtn, fitBtn, followBtn, h('div.sep'),
-    p2sBtn, markerBtn, loopBtn, moreBtn, h('div.spacer'), hint);
+    p2sBtn, markerBtn, loopBtn, moreBtn, hint);
 
   // ------------------------------------------------------------------ banner
   const bannerText = h('span.arr-banner-text');
@@ -568,6 +568,11 @@ export function createArrangeView(app) {
     const vx0 = Math.max(x, -4), vx1 = Math.min(x + w, W + 4);
     if (vx1 <= vx0) return;
     const muted = t.mute;
+    if (vx1 - vx0 < 12) { // fast path when zoomed far out: a solid sliver
+      ctx.fillStyle = rgba(rgb, muted ? 0.3 : selected ? 1 : 0.75);
+      ctx.fillRect(vx0, y, Math.max(1, vx1 - vx0 - 0.5), hh);
+      return;
+    }
     ctx.globalAlpha = muted ? 0.45 : 1;
     // body
     ctx.fillStyle = rgba(rgb, theme.dark ? 0.26 : 0.32);
@@ -770,7 +775,7 @@ export function createArrangeView(app) {
       const x0 = loop.start * ppb - sx, x1 = loop.end * ppb - sx;
       const y = RULER_H + MARK_H + 2;
       const lh = LOOP_H - 4;
-      ctx.fillStyle = loop.enabled ? rgba(hexToRgb(cssHex(theme.accent2)), 0.55) : rgba([128, 128, 140], 0.3);
+      ctx.fillStyle = loop.enabled ? rgba(hexToRgb(cssHex(theme.accent2)), 0.55) : rgba([128, 128, 140], 0.45);
       ctx.fillRect(x0, y, x1 - x0, lh);
       ctx.fillStyle = loop.enabled ? theme.accent2 : theme.text3;
       ctx.fillRect(x0, y - 1, 3, lh + 2);
@@ -1270,7 +1275,7 @@ export function createArrangeView(app) {
         '-',
         { label: 'New empty pattern', icon: 'plus', onClick: () => { const np = actions.newPattern(clip.trackId, { length: pat?.length }); if (np) setClipPattern(clip.id, np.id); } },
       ] } : null,
-      pat && Math.abs(clip.length - pat.length) > EPS ? { label: `Fit to pattern length (${+(pat.length / bpbNow()).toFixed(2)} bars)`, onClick: () => store.transact('Fit clip', (pp) => { const c = pp.clips.find((x) => x.id === clip.id); if (c) { c.length = pat.length; c.offset = 0; } }) } : null,
+      pat && Math.abs(clip.length - pat.length) > EPS ? { label: `Fit to pattern length (${+(pat.length / bpbNow()).toFixed(2)} bar${pat.length === bpbNow() ? '' : 's'})`, onClick: () => store.transact('Fit clip', (pp) => { const c = pp.clips.find((x) => x.id === clip.id); if (c) { c.length = pat.length; c.offset = 0; } }) } : null,
       { label: 'Color', submenu: colorItems((c) => store.transact('Clip color', (pp) => {
         const ids = new Set(n > 1 ? selIds() : [clip.id]);
         for (const cc of pp.clips) {

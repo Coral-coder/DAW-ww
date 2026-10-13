@@ -130,16 +130,16 @@ export function createCodeView(app) {
   const applyBtn = button('Apply', () => applyNow(), { icon: 'play', title: 'Evaluate the code and apply it to the track (Ctrl+Enter / Shift+Enter). Alt+Enter applies only the block under the cursor.', cls: 'code-apply' });
   const autoToggle = toggle({ label: 'Auto', value: autoApply, title: 'Auto-apply: re-evaluate 600 ms after you stop typing — only when the code has no errors', onChange: (v) => { autoApply = v; lsSet(LS_AUTO, v); if (v) scheduleAuto(); } });
   const dirtyEl = h('span.code-dirty', { title: 'Editor state' });
-  const examplesBtn = button('Examples', (e) => openExamples(e.currentTarget), { icon: 'sparkles', title: 'Load an example pattern (replace this track or open as a new track)' });
-  const refBtn = button('Reference', () => setRefOpen(!refOpen), { icon: 'help', title: 'Function reference: every supported function with examples (click to insert)' });
-  const importBtn = button('Import', (e) => openImportMenu(e.currentTarget), { icon: 'upload', title: 'Import a .strudel / .js / .txt file or paste code / a strudel.cc link (you can also drop files onto this view)' });
+  const examplesBtn = button('Examples', (e) => openExamples(e.currentTarget), { icon: 'sparkles', title: 'Load an example pattern (replace this track or open as a new track)', cls: 'code-compact' });
+  const refBtn = button('Reference', () => setRefOpen(!refOpen), { icon: 'help', title: 'Function reference: every supported function with examples (click to insert)', cls: 'code-compact' });
+  const importBtn = button('Import', (e) => openImportMenu(e.currentTarget), { icon: 'upload', title: 'Import a .strudel / .js / .txt file or paste code / a strudel.cc link (you can also drop files onto this view)', cls: 'code-compact' });
   importBtn.appendChild(icon('chevronDown', 12));
-  const exportBtn = button('Export', (e) => openExportMenu(e.currentTarget), { icon: 'download', title: 'Download, copy or export the whole project as code' });
+  const exportBtn = button('Export', (e) => openExportMenu(e.currentTarget), { icon: 'download', title: 'Download, copy or export the whole project as code', cls: 'code-compact' });
   exportBtn.appendChild(icon('chevronDown', 12));
   examplesBtn.appendChild(icon('chevronDown', 12));
   const cyclesSel = select({ options: [1, 2, 4, 8, 16].map((c) => ({ value: c, label: `${c} cycle${c > 1 ? 's' : ''}` })), value: renderCycles, title: 'How many cycles (bars) to render into patterns', onChange: (v) => { renderCycles = Number(v); } });
   const renderBtn = button('Render to tracks', () => { const t = currentTrack(); if (t) { if (isDirty(t)) applyNow(); actions.renderCodeToTracks(t.id, { cycles: renderCycles }); } }, { icon: 'layers', title: 'Expand this code into editable instrument/drum tracks with patterns (the code track gets muted)' });
-  const fromProjectBtn = button('From project', () => actions.exportCode(), { icon: 'code', title: 'Convert the project\'s tracks & patterns into Strudel code (open it as a new code track)' });
+  const fromProjectBtn = button('From project', () => actions.exportCode(), { icon: 'code', title: 'Convert the project\'s tracks & patterns into Strudel code (open it as a new code track)', cls: 'code-compact' });
   const tempoBtn = button('', () => adoptTempo(), { icon: 'metronome', title: 'This code sets its own tempo with setcps/setcpm — click to set the project BPM to match (1 cycle = 1 bar)', cls: 'code-tempo hidden' });
   const toolbar = h('div.view-toolbar.code-toolbar',
     playBtn, stopBtn, h('div.sep'), applyBtn, autoToggle, dirtyEl, h('div.sep'),
@@ -170,13 +170,13 @@ export function createCodeView(app) {
   const vizInfo = h('span.code-viz-info');
   const winSel = select({ options: [1, 2, 4, 8].map((c) => ({ value: c, label: `${c} cycle${c > 1 ? 's' : ''}` })), value: vizWindow, title: 'Visible window', onChange: (v) => { vizWindow = Number(v); lsSet(LS_WIN, vizWindow); lastQueryKey = ''; vizDirty = true; } });
   const vizResizer = h('div.code-viz-resizer', { title: 'Drag to resize' });
-  const vizEl = h('div.code-viz', { style: { height: lsGet(LS_VIZ_H, 190) + 'px' } }, vizResizer,
+  const vizEl = h('div.code-viz', { style: { flexBasis: lsGet(LS_VIZ_H, 190) + 'px' } }, vizResizer,
     h('div.code-viz-head', icon('grid', 13), h('b', 'Live pattern'), vizInfo, h('div.spacer'), h('span.muted', 'window'), winSel),
     h('div.code-viz-wrap', vizCanvas));
   vizResizer.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     const h0 = vizEl.offsetHeight;
-    startDrag(e, (_dx, dy) => { const nh = Math.max(80, Math.min(520, h0 - dy)); vizEl.style.height = nh + 'px'; vizDirty = true; }, () => lsSet(LS_VIZ_H, vizEl.offsetHeight));
+    startDrag(e, (_dx, dy) => { const nh = Math.max(70, Math.min(600, h0 - dy)); vizEl.style.flexBasis = nh + 'px'; vizDirty = true; }, () => lsSet(LS_VIZ_H, vizEl.offsetHeight));
   });
 
   const editorWrap = h('div.code-editor-wrap', errBar, editor.el, hint);
