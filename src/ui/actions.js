@@ -918,6 +918,7 @@ export function createActions(app) {
       '-',
       { label: 'Enable MIDI keyboard input', icon: 'piano', onClick: () => enableMidiInput() },
       { label: `Computer keyboard piano (\`)`, icon: 'keyboard', onClick: () => { app.keyboardPiano.enabled = !app.keyboardPiano.enabled; toast(`Keyboard piano ${app.keyboardPiano.enabled ? 'ON' : 'OFF'}`); } },
+      { label: 'Pocket layout (phone / touch)', icon: 'music', onClick: () => import('../mobile/mode.js').then((m) => m.switchLayout('pocket')) },
       { label: `Theme: ${ui.get('theme') === 'dark' ? 'switch to light' : 'switch to dark'}`, icon: 'sun', onClick: () => ui.set({ theme: ui.get('theme') === 'dark' ? 'light' : 'dark' }) },
       { label: 'Help & shortcuts', icon: 'help', shortcut: '?', onClick: () => showHelp() },
       { label: 'About / credits & source code', icon: 'code', onClick: () => showAbout() },
@@ -1247,7 +1248,7 @@ export function createActions(app) {
   }
 
   // ---------------------------------------------------------------- boot / autosave
-  async function boot() {
+  async function boot({ welcome = true } = {}) {
     let restored = false;
     try {
       const list = await listLocal();
@@ -1264,7 +1265,7 @@ export function createActions(app) {
       }
     } catch (e) { console.warn('autosave restore failed', e); }
     try { createAutosaver(store, { intervalMs: 4000 }); } catch (e) { console.warn('autosave unavailable', e); }
-    if (!restored && !new URLSearchParams(location.search).has('nowelcome')) showWelcome();
+    if (!restored && welcome && !new URLSearchParams(location.search).has('nowelcome')) showWelcome();
     ui.set({ booted: true }); // panels that remember per-project state (the guide) can now check which project is open
   }
 

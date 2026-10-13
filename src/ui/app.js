@@ -21,7 +21,11 @@ export const VIEWS = [
   { id: 'setlist', label: 'Setlist', icon: 'sparkles', key: '8', module: './views/setlist.js', factory: 'createSetlistView', help: 'Setlist: an endless DJ set — pick a genre and key, every layer loops and evolves phrase by phrase; energy arc, key moves, per-layer control.' },
 ];
 
-export async function createApp(rootEl) {
+/**
+ * The app core shared by the desktop layout and the Pocket (phone) layout: store, UI state, audio engine,
+ * rAF-batched render subscriptions, project normalizers and the action API.
+ */
+export function createCore() {
   const store = new Store();
   const ui = new UIState();
   const engine = new AudioEngine(store);
@@ -68,6 +72,12 @@ export async function createApp(rootEl) {
 
   app.actions = createActions(app);
   import('./plugins-dialog.js').then((m) => m.installPluginUi(app)).catch((e) => console.warn('[plugins] UI', e)); // SoundFont / Faust / WAM plugins
+  return app;
+}
+
+export async function createApp(rootEl) {
+  const app = createCore();
+  const { store, ui, engine } = app;
 
   // ---- layout ----
   const header = createHeader(app);
