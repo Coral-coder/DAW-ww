@@ -58,3 +58,37 @@ sustained note (harmonic-sum DTFT search + power-weighted centroid, octave-aware
 NaN, release clicks (2nd-difference spikes in the release window vs. the sustained part), voice
 cleanup, and renders generated songs for band-energy balance. The checks that don't need a
 browser are in `tests/sound-dsp.test.js`.
+
+## Realism pipeline (generated songs)
+
+Why generated songs sounded "MIDI": GM soundfonts with one velocity layer, every note at its exact grid length,
+no pedal / legato / slides / vibrato, static timbre, a one-size reverb and a peak limiter as the only mastering.
+
+* **Real instruments** — `src/gen/production.js` `realInstrument(def, role, genre)`: GM soundfont defs and synth
+  presets that imitate an acoustic instrument (`PRESET_GM`) stream multisampled libraries (Salamander, VSCO-2,
+  VCSL, tonejs-instruments) with MusyngKite → FluidR3 → synth-preset fallbacks — see docs/SAMPLES.md.
+  Electronic genres keep their synths (and synth e-pianos / brass). All sources are level-matched to FluidR3.
+* **Performance** — `src/gen/expression.js` `applyExpression(project, {genre, rng|seed})`: sustain pedal on keys
+  (held to the next chord change, lifted just before it, never across an unplayed half-bar), let-ring guitars,
+  voicing balance, short varied stabs in funk / house / reggae comping, legato with tiny overlaps on strings /
+  brass / winds / synth leads, bends / slides / scoops / fall-offs where idiomatic, delayed vibrato on held notes,
+  phrase dynamics (arc, downbeat accents, softer pickups and endings), 808 / upright slides, drum-fill crescendos
+  and flams. Note fields `glide, gt, bend, bendAt, vib, flam` → scheduler event `x` → `mixer.noteExtra()` →
+  trigger extras (synth: glide / bend / vibrato on every oscillator; sampled: detune automation; flam:
+  `Instrument.trigger` plays a grace stroke 16 ms early). Pitches are never changed; checked by the harmony
+  checker and the song-code round trip (`tests/expression.test.js`).
+* **Production** — `finishSong(song, {genre, seed})`: download ranges for sampled parts, expression, per-preset
+  insert FX (`presetFxChain`: chorus on pads, short ping-pong delay on plucks / mallets, saturation on basses and
+  808s, drive + chorus on synth leads, suitcase tremolo on e-pianos), layers (`addLayers`: pad + real string
+  ensemble −8 dB; synth lead + octave double −11 dB), reverb character per genre (`spaceFor`) and the master
+  (`createMasterChain` → `mastering` device; targets `masterChainFor`: EDM / rock −9.5, pop / hip-hop −10,
+  jazz / acoustic / lo-fi −14, ambient / cinematic −16 LUFS; ceiling −1 dBTP). `PRE_MASTER_LUFS` holds the measured
+  loudness of the generator's mix before mastering (re-measure when mix levels change).
+* **Reverb** — `reverb` effect param `character`: `auto` (by size / decay) | `room` | `chamber` | `hall` | `plate` |
+  `ambience` | `classic` (the v1 IR). `makeSpaceImpulse`: early-reflection taps (different per channel, smeared with
+  distance), a diffuse tail with a density build-up and per-band T60 (lows × 1.05–1.3, highs × 0.45–0.85 and
+  pulled down by damping), slightly different decay per side, tail width per character.
+* **Mastering** — `mastering` effect: low shelf, tilt (±, around 1 kHz), air shelf, glue compressor (the native
+  node's automatic make-up gain is cancelled), parallel soft saturation (unity small-signal gain), width of the
+  highs only (side + (w−1)·HP(side): w = 1 is transparent), limiter = native look-ahead compressor (ratio 20, make-up
+  cancelled) + 4×-oversampled soft clipper at the ceiling (true-peak safety). Native nodes only: works offline.

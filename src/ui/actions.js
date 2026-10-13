@@ -22,6 +22,9 @@ import { readStrudelFile } from '../io/strudel-file.js';
 import { saveLocal, listLocal, loadLocal, deleteLocal, createAutosaver } from '../io/autosave.js';
 import { codeToPatterns, patternsToCode } from '../code/convert.js';
 
+/** Where daW³'s complete source code lives (offered in the app — AGPL-3.0 §13). */
+export const SOURCE_URL = 'https://github.com/Coral-coder/daw3';
+
 const ROLE_COLORS = { drums: '#ff5f6d', bass: '#ffa94d', chords: '#4dabf7', pad: '#9775fa', lead: '#38d9a9', arp: '#3bc9db', fx: '#ced4da', perc: '#f783ac', code: '#ffd43b', audio: '#a9e34b' };
 
 export function createActions(app) {
@@ -538,6 +541,7 @@ export function createActions(app) {
   }
 
   // ---------------------------------------------------------------- export / import
+  let exportNoticeShown = false;
   async function exportWav({ stems = false } = {}) {
     await ensureAudio();
     const p = get();
@@ -554,7 +558,11 @@ export function createActions(app) {
     const m = modal({ title: stems ? 'Rendering stems…' : 'Rendering mixdown…', body: h('div.col', h('p', `Rendering ${Math.round(endBeat / bpb)} bars in ${songMode ? 'song' : 'pattern'} mode at ${p.bpm} BPM.`), prog) });
     prog.firstChild.style.width = '35%';
     try {
-      const result = await engine.renderOffline({ startBeat: 0, endBeat, stems, mode: songMode ? 'song' : 'pattern' });
+      const result = await engine.renderOffline({
+        startBeat: 0, endBeat, stems, mode: songMode ? 'song' : 'pattern',
+        // shown when Strudel-engine code tracks had to be exported with daW³ instruments
+        onNotice: (msg) => { if (!exportNoticeShown) toast(msg, { level: 'warn', timeout: 9000 }); exportNoticeShown = true; },
+      });
       prog.firstChild.style.width = '90%';
       const safe = (p.name || 'mix').replace(/[^\w\- ]+/g, '').trim() || 'mix';
       if (stems) {
@@ -908,6 +916,7 @@ export function createActions(app) {
       { label: `Computer keyboard piano (\`)`, icon: 'keyboard', onClick: () => { app.keyboardPiano.enabled = !app.keyboardPiano.enabled; toast(`Keyboard piano ${app.keyboardPiano.enabled ? 'ON' : 'OFF'}`); } },
       { label: `Theme: ${ui.get('theme') === 'dark' ? 'switch to light' : 'switch to dark'}`, icon: 'sun', onClick: () => ui.set({ theme: ui.get('theme') === 'dark' ? 'light' : 'dark' }) },
       { label: 'Help & shortcuts', icon: 'help', shortcut: '?', onClick: () => showHelp() },
+      { label: 'About / credits & source code', icon: 'code', onClick: () => showAbout() },
     ];
   }
 
@@ -1204,13 +1213,33 @@ export function createActions(app) {
         h('div', h('h4', 'Code'), h('ul',
           h('li', 'Code tracks run Strudel-compatible mini-notation: s("bd*4, ~ cp"), note("c3 e3 g3").s("sawtooth").'),
           h('li', 'Import .strudel files, play them alongside the rest of the song, then "Render to tracks" to edit them as patterns.'),
-          h('li', 'Export any project as Strudel code.'))),
+          h('li', 'Export any project as Strudel code.'),
+          h('li', 'Code runs on the real Strudel engine (strudel.cc, AGPL-3.0) — see About / credits.'))),
         h('div', h('h4', 'Save & share'), h('ul',
           h('li', 'Projects autosave in your browser. Download a .daW3 file (Ctrl+S) to keep or share — samples included.'),
           h('li', 'Export WAV mixdowns, stems, MIDI or Strudel code.')))),
       h('div.section-title', 'Shortcuts'),
-      h('table.shortcut-table', sc.map(([k, v]) => h('tr', h('td', h('kbd', k)), h('td', v)))));
+      h('table.shortcut-table', sc.map(([k, v]) => h('tr', h('td', h('kbd', k)), h('td', v)))),
+      h('p.muted', 'daW³ is free software (AGPL-3.0-or-later) built on Strudel. ',
+        h('a', { href: SOURCE_URL, target: '_blank', rel: 'noopener' }, 'Source code'), ' · ',
+        h('a', { href: '#', onclick: (e) => { e.preventDefault(); showAbout(); } }, 'About / credits')));
     modal({ title: 'daW³ — Help', body, width: 860, actions: [{ label: 'Close', primary: true }] });
+  }
+
+  // AGPL §13: everyone using daW³ over the network is offered its complete source code
+  function showAbout() {
+    const link = (href, text) => h('a', { href, target: '_blank', rel: 'noopener' }, text || href);
+    const body = h('div.about',
+      h('p', h('b', 'daW³'), ' — a browser DAW. Free software under the ',
+        link('https://www.gnu.org/licenses/agpl-3.0.html', 'GNU Affero General Public License v3.0 or later'), '.'),
+      h('p', h('b', 'Source code: '), link(SOURCE_URL), ' — you may use, study, change and share it under the same license.'),
+      h('h4', 'Built on Strudel'),
+      h('p', 'Code tracks run ', link('https://strudel.cc', 'Strudel'), ' — the JavaScript port of TidalCycles by Felix Roos, Alex McLean and the Strudel contributors (',
+        link('https://codeberg.org/uzu/strudel', 'codeberg.org/uzu/strudel'), ', AGPL-3.0-or-later). daW³ ships Strudel’s pattern engine, mini-notation, tonal functions, transpiler and its sound engine superdough unmodified (one documented node-pool patch), see ',
+        h('code', 'vendor/strudel/VERSION'), ' for the exact versions and licenses.'),
+      h('h4', 'Sounds'),
+      h('p', 'Samples are loaded at runtime from their public homes: Dirt-Samples (TidalCycles), tidal-drum-machines, VCSL (CC0), Salamander Grand Piano by Alexander Holm (CC-BY 3.0), dough-samples, the webaudiofont General MIDI soundfonts. See docs/SAMPLES.md.'));
+    modal({ title: 'About daW³', body, width: 640, actions: [{ label: 'Close', primary: true }] });
   }
 
   // ---------------------------------------------------------------- boot / autosave

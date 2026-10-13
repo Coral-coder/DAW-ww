@@ -27,10 +27,11 @@ test('locations survive fast, *, <>, stack and labels', () => {
   const fast = located('s("bd [sd hh]").fast(2)');
   assert.deepEqual(fast.map((x) => x[1]), ['bd', 'sd', 'hh', 'bd', 'sd', 'hh']);
   assert.deepEqual(fast.map((x) => x[2]), [3, 7, 10, 3, 7, 10]);
+  // (real Strudel also locates the `*2` factor — the first location is the atom itself)
   const alt = located('s("<bd sd>*2 hh")', 0, 2);
-  assert.deepEqual(alt.map((x) => x[1]), ['bd', 'sd', 'hh', 'bd', 'sd', 'hh']);
+  assert.deepEqual(alt.map((x) => x[1].split('|')[0]), ['bd', 'sd', 'hh', 'bd', 'sd', 'hh']);
   const st = located('stack(s("bd*2"), s("~ hh"))');
-  assert.deepEqual(st.map((x) => x[1]).sort(), ['bd', 'bd', 'hh']);
+  assert.deepEqual(st.map((x) => x[1].split('|')[0]).sort(), ['bd', 'bd', 'hh']);
   assert.ok(st.filter((x) => x[1] === 'hh').every((x) => x[2] === 22));
   const code = '// tempo\nsetcpm(30)\ndrums: s("bd sd")\nbass: note("c2 eb2").s("saw")';
   const evs = queryEvents(evaluate(code), 0, 1);

@@ -260,3 +260,55 @@ test('multisample helpers: velocity layers, nearest note, range selection, loops
   assert.equal(t.byteLength, 44 + 2000 * 4);
   assert.equal(t.getUint32(4, true), t.byteLength - 8);
 });
+
+// ------------------------------------------------------------------------------ production pass (src/gen/production.js)
+import { finishSong, realInstrument, presetFxChain, masterChainFor, spaceFor, addLayers, trackRange } from '../src/gen/production.js';
+import { EFFECT_DEFS } from '../src/audio/effect-defs.js';
+
+test('production: real instruments + finishSong keep every genre harmonically clean, ranges / fx / master valid', () => {
+  for (const genre of Object.keys(GENRES)) {
+    const s = generateSong({ genre, seed: 3, withHarmony: true });
+    for (const t of s.tracks) t.instrument = realInstrument(t.instrument, t.role, genre);
+    const rep = finishSong(s, { genre, seed: 3 });
+    const r = analyzeSong(s);
+    const why = `\n  ${r.issues.slice(0, 4).join('\n  ')}`;
+    assert.ok(ratio(r.notes) >= 0.95 && ratio(r.voicing) === 1 && ratio(r.overlap) === 1 && r.notes.clashSustained === 0, `${genre}${why}`);
+    for (const t of s.tracks) {
+      for (const f of t.fx) assert.ok(EFFECT_DEFS[f.type], `${genre} ${t.name}: fx ${f.type}`);
+      if (t.instrument?.params?.multisample) {
+        assert.ok(MS_SETS[t.instrument.params.multisample], `${genre} ${t.name}: set`);
+        assert.deepEqual(t.instrument.params.range, trackRange(s, t.id));
+        assert.ok(t.instrument.fallbackPreset !== undefined, `${genre} ${t.name}: fallback`);
+      }
+      if (t.layerOf) assert.ok(s.clips.some((c) => c.trackId === t.id), `${genre} ${t.name}: layer has clips`);
+    }
+    assert.equal(s.master.fx[0].type, 'mastering');
+    assert.ok(s.buses.some((b) => b.fx.some((f) => f.type === 'reverb' && f.params.character)), `${genre}: reverb character`);
+    assert.equal(rep.master, masterChainFor(genre).lufs);
+  }
+});
+
+test('production: realInstrument keeps synths where they belong, upgrades acoustic imitations', () => {
+  assert.equal(realInstrument({ type: 'synth', preset: 'saw-lead', params: {} }, 'lead', 'trance').preset, 'saw-lead');
+  const piano = realInstrument({ type: 'synth', preset: 'grand-piano', params: {} }, 'chords', 'pop');
+  assert.equal(piano.type, 'soundfont');
+  assert.equal(piano.params.multisample, 'salamander');
+  assert.equal(piano.fallbackPreset, 'grand-piano');
+  assert.equal(realInstrument({ type: 'fm', preset: 'electric-piano', params: {} }, 'chords', 'deep-house').preset, 'electric-piano', 'synth e-piano stays in house');
+  const sf = realInstrument({ type: 'soundfont', preset: null, params: { library: 'FluidR3_GM', instrument: 'acoustic_bass', release: 0.12 }, fallbackPreset: 'upright-bass' }, 'bass', 'jazz');
+  assert.deepEqual(sf.params, { library: 'MusyngKite', instrument: 'acoustic_bass', multisample: 'vsco-bass-pizz', release: 0.12 });
+  assert.equal(realInstrument({ type: 'synth', preset: 'grand-piano', params: {} }, 'chords', 'pop', { soundfonts: false }).preset, 'grand-piano');
+  assert.ok(presetFxChain('warm-pad').some(([t]) => t === 'chorus'));
+  assert.ok(presetFxChain('808-bass').some(([t]) => t === 'saturator'));
+  assert.ok(presetFxChain('pluck').some(([t]) => t === 'delay'));
+  assert.deepEqual(presetFxChain('nope'), []);
+  assert.equal(masterChainFor('trance').lufs, -9.5);
+  assert.equal(masterChainFor('jazz').lufs, -14);
+  assert.equal(masterChainFor('cinematic').lufs, -16);
+  assert.equal(spaceFor('jazz').character, 'chamber');
+  const s = generateSong({ genre: 'trance', seed: 2 });
+  const n = s.tracks.length;
+  const added = addLayers(s, { genre: 'trance' });
+  assert.equal(s.tracks.length, n + added.length);
+  assert.ok(added.some((t) => t.name === 'Lead Octave'));
+});

@@ -212,11 +212,18 @@ export function createCodeView(app) {
   const cyclesSel = select({ options: [1, 2, 4, 8, 16].map((c) => ({ value: c, label: `${c} cycle${c > 1 ? 's' : ''}` })), value: renderCycles, title: 'How many cycles (bars) to render into patterns', onChange: (v) => { renderCycles = Number(v); } });
   const renderBtn = button('Render to tracks', () => { const t = currentTrack(); if (t) { if (isDirty(t)) applyNow(); actions.renderCodeToTracks(t.id, { cycles: renderCycles }); } }, { icon: 'layers', title: 'Expand this code into editable instrument/drum tracks with patterns (the code track gets muted)' });
   const renderWrap = h('div.code-render', renderBtn, cyclesSel);
+  // sound engine of the code track shown: Strudel's own (superdough) or daW³'s instruments
+  const soundSel = select({
+    options: [{ value: 'strudel', label: 'Sound: Strudel' }, { value: 'daw3', label: 'Sound: daW³ instruments' }],
+    value: 'strudel', cls: 'code-sound',
+    title: 'Sound engine of this code track — Strudel: exactly as on strudel.cc (superdough: its synths, samples, soundfonts, effects); daW³ instruments: this DAW’s synths, drum kits and presets. Either way the sound runs through the track’s mixer channel, inserts and sends.',
+    onChange: (v) => { const t = currentTrack(); if (t) actions.updateTrack(t.id, (tt) => { tt.codeSound = v; }, 'Code sound engine'); },
+  });
   const tempoBtn = button('', () => adoptTempo(), { icon: 'metronome', title: 'This code sets its own tempo with setcps/setcpm — click to set the project BPM to match (1 cycle = 1 bar)', cls: 'code-tempo hidden' });
   const toolbar = h('div.view-toolbar.code-toolbar',
     playBtn, stopBtn, h('div.sep'), applyBtn, revertBtn, autoToggle, dirtyEl, h('div.sep'),
     examplesBtn, refBtn, h('div.sep'), importBtn, exportBtn, h('div.sep'),
-    renderWrap, tempoBtn);
+    renderWrap, soundSel, tempoBtn);
 
   // ------------------------------------------------------------ DOM: track list
   const songItem = h('div.code-item.code-song', { tabIndex: 0, title: 'The whole project as Strudel code — always in sync. Edit it and press Ctrl+Enter to apply your edits to the project.' });
@@ -328,6 +335,8 @@ export function createCodeView(app) {
     const t = currentTrack();
     for (const b of [renderBtn, autoToggle, cyclesSel]) b.disabled = !t;
     renderWrap.classList.toggle('hidden', isSong());
+    soundSel.classList.toggle('hidden', isSong() || !t);
+    if (t) soundSel.value = t.codeSound === 'daw3' ? 'daw3' : 'strudel';
     autoToggle.classList.toggle('hidden', isSong());
     hintBlock.classList.toggle('hidden', isSong());
     applyBtn.querySelector('span:not(.icon)').textContent = isSong() ? 'Apply to project' : 'Apply';
@@ -780,6 +789,34 @@ export function createCodeView(app) {
     return evs;
   }
 
+  // ------------------------------------------------------------ slider() widgets
+  // Strudel's slider(value, min, max, step) shows a live range control; dragging it changes the sound at
+  // once (no re-evaluation), releasing writes the new value into the code.
+  let widgetKey = '';
+  function syncWidgets() {
+    const t = isSong() ? null : currentTrack();
+    const code = t ? t.code || '' : '';
+    const res = t && !isDirty(t) ? evaluate(code) : null;
+    const list = res && !res.error ? (res.widgets || []).filter((w) => w.type === 'slider' && w.id) : [];
+    const key = t ? `${t.id}|${code}|${list.length}` : '';
+    if (key === widgetKey) return;
+    widgetKey = key;
+    editor.setWidgets(list.map((w) => ({
+      from: w.from, to: w.to, value: Number(w.value), min: w.min, max: w.max, step: w.step,
+      onInput: (v) => strudel.setSliderValue?.(w.id, v),
+      onChange: (v) => {
+        const cur = currentTrack();
+        if (!cur || cur.id !== t.id || (cur.code || '') !== code) return;
+        const dec = w.step != null ? Math.max(0, (String(w.step).split('.')[1] || '').length) : 3;
+        const text = String(+v.toFixed(dec));
+        const next = code.slice(0, w.from) + text + code.slice(w.to);
+        editor.setValue(next);
+        drafts.set(cur.id, next);
+        commit(next, { label: 'Move slider', coalesce: true });
+      },
+    })));
+  }
+
   let lastHlKey = '';
   let liveActive = []; // events active now (for the viz)
   function updateLive() {
@@ -1110,6 +1147,7 @@ export function createCodeView(app) {
     if (!visible) return;
     const playing = !!engine.isPlaying;
     try { updateLive(); } catch (e) { console.error('[code highlight]', e); }
+    try { syncWidgets(); } catch (e) { console.error('[code widgets]', e); }
     if (playing || vizDirty || wasPlaying) {
       vizDirty = false;
       try { drawViz(); } catch (e) { console.error('[code viz]', e); }
@@ -1122,6 +1160,8 @@ export function createCodeView(app) {
 
   // ------------------------------------------------------------ events
   let lastSel = ui.get('selectedTrackId');
+  // created by selecting a code track (e.g. an import switching to this view): open that track
+  if (codeTracks().some((t) => t.id === lastSel)) { entry = lastSel; trackId = lastSel; }
   app.subscribe((r) => {
     if ('theme' in r.ui) { colors = null; vizDirty = true; }
     if (r.project) scheduleSongRegen();
@@ -1139,6 +1179,18 @@ export function createCodeView(app) {
       render();
       vizDirty = true;
     }
+  });
+  // the real Strudel engine finished loading (or failed): everything evaluated so far is re-evaluated
+  strudel.onStrudelStatus?.(() => {
+    evalCache.clear();
+    trackMetaCache.clear();
+    lastGood.clear();
+    songMeta = null;
+    songViz = { key: '', events: [] };
+    lastQueryKey = '';
+    lastHlKey = '';
+    vizDirty = true;
+    if (visible) render();
   });
   store.on?.('load', () => { songDraft = null; songStale = false; songErr = null; entry = SONG; trackId = null; song = null; regenSong(); if (visible) render(); });
   engine.on?.('code-error', ({ trackId: id, error }) => {
