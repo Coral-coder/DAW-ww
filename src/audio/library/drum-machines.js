@@ -132,7 +132,7 @@ export function strudelBankUrls(machine, key) {
 
 // preferred default file per pad (substring of the file name) — "the classic sound" of the machine
 const DEFAULT_PICK = {
-  RolandTR808: { bd: 'BD2550', sd: 'SD2550', cr: 'CY5050', oh: 'OH25', lt: 'LT25', mt: 'MT25', ht: 'HT25', cp: 'CP' },
+  RolandTR808: { bd: 'BD2550', sd: 'SD2550', cr: 'CY5050', oh: 'OH25', lt: 'LT25', mt: 'MT25', ht: 'HT25', perc: 'MC25' },
   EmuSP12: { bd: 'Bassdrum-03', sd: 'Snaredrum-05' },
   AkaiMPC60: { bd: '0 Bassdrum' },
 };
@@ -140,32 +140,35 @@ const CONGA_RE = /conga|tumba|quinto|^[hml]c\d|bongo/i;
 const CLAVE_RE = /clave|^cl\.|^cl\b|wood ?block|woodblock|click/i;
 const base = (u) => decodeURIComponent(String(u).split('/').pop() || '');
 
-// fallback chains: [sourceKey, tune(semitones), filter(file)] — tried in order within the machine
+// fallback chains: [sourceKey, tune(semitones), filter(file), decay hint, weak]. Strong rules are tried
+// within the machine first; then the companions' primary sound; then weak rules; then companions' rules.
 const RULES = {
   kick: [['bd']],
   snare: [['sd']],
   clap: [['cp']],
   rim: [['rim']],
   hihat: [['hh']],
-  openhat: [['oh'], ['hh', 0, null, 3]], // 4th = decay multiplier hint (closed hat let ring)
+  openhat: [['oh'], ['hh', 0, null, 3]], // closed hat left ringing
   tomlow: [['lt'], ['mt', -3], ['ht', -7]],
   tommid: [['mt'], ['lt', 3], ['ht', -3]],
   tomhigh: [['ht'], ['mt', 3], ['lt', 7]],
   crash: [['cr'], ['rd']],
   ride: [['rd'], ['cr', 0, null, 0.6]],
   cowbell: [['cb']],
-  tambourine: [['tb'], ['sh']],
-  shaker: [['sh'], ['tb']],
-  conga: [['perc', 0, CONGA_RE], ['misc', 0, CONGA_RE], ['perc'], ['misc']],
-  clave: [['cl'], ['perc', 0, CLAVE_RE], ['misc', 0, CLAVE_RE], ['rim', 5]],
+  tambourine: [['tb'], ['sh', 0, null, 1, true]],
+  shaker: [['sh'], ['tb', 0, null, 1, true]],
+  conga: [['perc', 0, CONGA_RE], ['misc', 0, CONGA_RE], ['perc', 0, null, 1, true], ['misc', 0, null, 1, true]],
+  clave: [['cl'], ['perc', 0, CLAVE_RE], ['misc', 0, CLAVE_RE], ['rim', 5, null, 1, true]],
 };
 // machines used to fill pads a machine doesn't have (in order)
 const COMPANIONS = ['RolandTR808', 'LinnDrum', 'RolandTR707', 'RolandTR909'];
 
-function tdmVariants(machine, padKey) {
+function tdmVariants(machine, padKey, which = 'all') {
   const pads = MACHINE_FILES[machine];
   if (!pads) return null;
-  for (const [key, tune = 0, filter = null, decay = 1] of RULES[padKey] || []) {
+  const rules = RULES[padKey] || [];
+  const list = which === 'strong' ? rules.filter((r) => !r[4]) : which === 'weak' ? rules.filter((r) => r[4]) : which === 'primary' ? rules.slice(0, 1) : rules;
+  for (const [key, tune = 0, filter = null, decay = 1] of list) {
     let files = pads[key];
     if (!files?.length) continue;
     if (filter) {
@@ -234,15 +237,18 @@ export function resolvePadSamples(machineId) {
     for (const [pad, variants] of Object.entries(VCSL_KIT)) out[pad] = { source: 'machine', machine: id, key: pad, variants: variants.map((v) => ({ tune: 0, decay: 1, ...v })) };
   } else if (MACHINE_FILES[id]) {
     for (const pad of Object.keys(PAD_TO_STRUDEL)) {
-      let r = tdmVariants(id, pad);
+      let r = tdmVariants(id, pad, 'strong');
       let source = 'machine', from = id;
-      if (!r) {
+      const tryCompanions = (which) => {
         for (const c of COMPANIONS) {
-          if (c === id) continue;
-          r = tdmVariants(c, pad);
-          if (r) { source = 'companion'; from = c; break; }
+          if (c === id || r) continue;
+          r = tdmVariants(c, pad, which);
+          if (r) { source = 'companion'; from = c; }
         }
-      }
+      };
+      if (!r) tryCompanions('strong');
+      if (!r) { r = tdmVariants(id, pad, 'weak'); if (r) { source = 'machine'; from = id; } }
+      if (!r) tryCompanions('all');
       if (r) out[pad] = { source, machine: from, key: r.key, variants: r.variants };
     }
   }
@@ -340,7 +346,7 @@ export const SAMPLED_DRUM_EXTRA_PARAMS = [
 export const PAD_VARIANT_PARAM = numP('variant', 'Variation', 0, 24, 0, { step: 1, section: 'Pad', adv: true });
 
 /**
- * Params of the 'drumsampler' instrument type. `kitOptions` = [{value,label}] of synthesized kits
+ * Kit params of the 'drumsampler' instrument type. `kitOptions` = [{value,label}] of synthesized kits
  * (fallback when samples can't load) — passed in by defs.js to avoid an import cycle.
  */
 export function drumSamplerParams(kitOptions = [{ value: '909', label: '909' }]) {
@@ -351,9 +357,7 @@ export function drumSamplerParams(kitOptions = [{ value: '909', label: '909' }])
     numP('tone', 'Tone', -1, 1, 0),
     ...SAMPLED_DRUM_EXTRA_PARAMS,
     { key: 'kit', label: 'Fallback kit', type: 'enum', options: kitOptions, default: kitOptions.some((o) => o.value === '909') ? '909' : kitOptions[0].value, section: 'Kit', advanced: true },
-    numP('drive', 'Drive', 0, 1, 0, { section: 'Output' }),
-    numP('gain', 'Volume', 0, 2, 0.8, { section: 'Output' }),
-  ];
+  ]; // defs.js appends the shared Output section (drive / tone / volume)
 }
 
 // ---------------------------------------------------------------------------- preview grooves

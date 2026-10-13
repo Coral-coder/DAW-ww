@@ -9,6 +9,7 @@ import { resolveInstrumentDef, listPresets as _listPresets, PRESETS, PRESET_CATE
 import { INSTRUMENT_DEFS, getParamDefaults } from './defs.js';
 import { DRUM_KITS } from './kits.js';
 import { PluginInstrument, isPluginType } from './plugin-instrument.js';
+import { DrumSamplerInstrument, usesDrumSampler } from './library/drum-sampler.js';
 
 export { PRESETS, PRESET_CATEGORIES, INSTRUMENT_DEFS, getParamDefaults, DRUM_KITS };
 
@@ -18,9 +19,10 @@ export const INSTRUMENT_TYPES = [
   { type: 'organ', label: 'Drawbar Organ', description: '9 drawbars, percussion, key click, scanner vibrato, rotary speaker' },
   { type: 'drums', label: 'Drum Machine', description: '16 synthesized pads, 20 kits, per-pad tune/decay/tone or samples' },
   { type: 'sampler', label: 'Sampler', description: 'Pitched / sliced playback of a project sample with ADSR and filter' },
+  { type: 'drumsampler', label: 'Sampled Drum Machine', description: 'Real samples of 35 classic drum machines (TR-808/909, LinnDrum, SP-12, MPC60…) — synth kit fallback offline' },
 ];
 
-const ENGINES = { synth: SynthInstrument, fm: FMInstrument, organ: OrganInstrument, drums: DrumInstrument, sampler: SamplerInstrument };
+const ENGINES = { synth: SynthInstrument, fm: FMInstrument, organ: OrganInstrument, drums: DrumInstrument, sampler: SamplerInstrument, drumsampler: DrumSamplerInstrument };
 
 /** Merge defaults ← preset ← def.params (preset type wins on mismatch). -> { type, params } */
 export function resolveInstrument(def) { return resolveInstrumentDef(def); }
@@ -44,9 +46,12 @@ export class Instrument {
   update(instrumentDef) {
     const { type, params } = resolveInstrument(instrumentDef);
     this.def = instrumentDef;
-    if (!this.engine || this.type !== type) {
+    // 'drums' with params.machine plays real drum-machine samples (src/audio/library) — same engine as 'drumsampler'
+    const kind = usesDrumSampler(type, params) ? 'drumsampler' : type;
+    if (!this.engine || this.type !== type || this._kind !== kind) {
       const old = this.engine;
-      this.engine = isPluginType(type) ? new PluginInstrument(type, this.ctx, this.output, params, this.opts) : new ENGINES[type](this.ctx, this.output, params, this.opts);
+      this._kind = kind;
+      this.engine = isPluginType(type) ? new PluginInstrument(type, this.ctx, this.output, params, this.opts) : new ENGINES[kind](this.ctx, this.output, params, this.opts);
       if (old) { try { old.dispose(); } catch (e) { warn(e); } }
     } else {
       try { this.engine.setParams(params); } catch (e) { warn(e); }

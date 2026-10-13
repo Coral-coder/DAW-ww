@@ -288,20 +288,20 @@ export const PRESETS = {
     ...dx(2, { r: [96, 25, 25, 67], l: [99, 75, 0, 0], ol: 99, ratio: 1, det: 3, kvs: 2, rs: 3 }, true),
     ...dx(3, { r: [95, 29, 20, 50], l: [99, 95, 0, 0], ol: 82, ratio: 1, kvs: 6, rs: 3 }),
     ...dx(4, { r: [95, 20, 20, 50], l: [99, 95, 0, 0], ol: 99, ratio: 1, det: -3, kvs: 2, rs: 3 }, true),
-    keyScale: 0.6, vibDepth: 0.12, vibRate: 0.9, vibDelay: 0, toneCut: 2600, drive: 0.2, driveType: 'tube', gain: 0.9,
+    keyScale: 0.6, vibDepth: 0.07, vibRate: 0.9, vibDelay: 0, toneCut: 3200, drive: 0.2, driveType: 'tube', gain: 0.9,
   })),
 
   /* ------------------------------ PADS ------------------------------ */
   // PADsynth table (ZynAddSubFX) + a quiet detuned saw pair for analog movement
   'warm-pad': P('Warm Pad', 'Pad', ['pad', 'chords'], ['ambient', 'pop', 'lofi', 'house', 'rnb', 'cinematic', 'chillout'], synth({
     osc1Wave: 'pad', osc1Level: 0.9, osc2Wave: 'saw', osc2Level: 0.3, unison: 2, unisonDetune: 12, unisonSpread: 0.7,
-    filterType: 'lp24', cutoff: 1500, resonance: 0.12, ...fenv(1, 0.8, 1.5, 0.5, 1.2), ...env(0.8, 1, 0.85, 1.4),
+    modelTone: 0.2, filterType: 'lp24', cutoff: 2400, resonance: 0.1, keytrack: 0.4, ...fenv(1, 0.8, 1.5, 0.5, 1.2), ...env(0.8, 1, 0.85, 1.4),
     lfo1Target: 'filter', lfo1Rate: 0.25, lfo1Depth: 0.05, polyphony: 8, analog: 0.4, gain: 0.55,
   })),
   // string machine / ensemble: PADsynth "ensemble" table + PWM'd pulse (Juno-ish) + delayed vibrato
   'string-pad': P('String Pad', 'Pad', ['pad', 'chords'], ['cinematic', 'pop', 'ambient', 'trance', 'disco', 'ballad'], synth({
     osc1Wave: 'ensemble', osc1Level: 0.9, osc2Wave: 'pulse', osc2Width: 0.4, osc2Level: 0.35, osc3Wave: 'saw', osc3Level: 0.2, osc3Octave: 1,
-    unisonSpread: 0.9, filterType: 'lp24', cutoff: 3200, resonance: 0.05, ...fenv(0.5, 0.4, 1, 0.6, 0.8),
+    unisonSpread: 0.9, filterType: 'lp24', cutoff: 4500, resonance: 0.05, keytrack: 0.3, ...fenv(0.5, 0.4, 1, 0.6, 0.8),
     ...env(0.45, 0.5, 0.9, 0.9), ...vib(0.005, 5, 0.8), ...pwm(0.35, 0.45), polyphony: 8, analog: 0.3, gain: 0.45,
   })),
   // PADsynth "aah" vowel formants, a touch of delayed vibrato
@@ -318,7 +318,7 @@ export const PRESETS = {
   })),
   'dark-pad': P('Dark Pad', 'Pad', ['pad'], ['cinematic', 'techno', 'darksynth', 'ambient', 'trap', 'horror'], synth({
     osc1Wave: 'pad', osc1Level: 0.8, modelTone: -0.6, osc2Wave: 'square', osc2Level: 0.4, osc2Octave: -1, unisonSpread: 0.6,
-    filterType: 'lp24', cutoff: 600, resonance: 0.3, filterDrive: 0.2, ...fenv(1, 1.5, 2, 0.4, 1.5), ...env(1.2, 1, 0.9, 2),
+    filterType: 'lp24', cutoff: 900, resonance: 0.25, filterDrive: 0.2, ...fenv(1, 1.5, 2, 0.4, 1.5), ...env(1.2, 1, 0.9, 2),
     lfo1Target: 'filter', lfo1Rate: 0.08, lfo1Depth: 0.1, polyphony: 8, analog: 0.4, gain: 0.65,
   })),
   'glass-pad': P('Glass Pad', 'Pad', ['pad', 'chords'], ['ambient', 'pop', 'future-garage', 'chillout', 'cinematic'], synth({
@@ -327,38 +327,39 @@ export const PRESETS = {
     lfo1Target: 'oscmix', lfo1Rate: 0.3, lfo1Depth: 0.5, ...vib(0.004, 4.5, 0.5, 2), polyphony: 8, analog: 0.2, gain: 0.6,
   })),
   'supersaw-pad': P('Supersaw Pad', 'Pad', ['pad', 'chords'], ['trance', 'edm', 'future-bass', 'progressive-house', 'synthwave'], synth({
-    osc1Wave: 'supersaw', osc1Level: 0.8, superDetune: 0.7, superMix: 0.85, unisonSpread: 1, filterType: 'lp24', cutoff: 2500, resonance: 0.1,
+    osc1Wave: 'supersaw', osc1Level: 0.8, superDetune: 0.7, superMix: 0.85, unisonSpread: 1, filterType: 'lp24', cutoff: 4000, resonance: 0.1, keytrack: 0.3,
     ...fenv(0.6, 0.5, 1.2, 0.6, 1), ...env(0.6, 1, 0.9, 1.5), polyphony: 8, analog: 0.2, gain: 0.45,
   })),
   strings: P('Strings', 'Orchestral', ['pad', 'chords', 'lead'], ['cinematic', 'classical', 'pop', 'ballad', 'disco', 'rnb'], synth({
     osc1Wave: 'ensemble', osc1Level: 0.9, osc2Wave: 'saw', osc2Level: 0.35, unison: 3, unisonDetune: 14, unisonSpread: 0.8,
-    filterType: 'lp24', cutoff: 2600, resonance: 0.05, velToFilter: 0.5, ...fenv(0.6, 0.3, 0.6, 0.7, 0.5),
+    filterType: 'lp24', cutoff: 4200, resonance: 0.05, keytrack: 0.3, velToFilter: 0.5, ...fenv(0.6, 0.3, 0.6, 0.7, 0.5),
     ...env(0.25, 0.4, 0.9, 0.6), ...vib(0.006, 5.2, 0.5), polyphony: 10, analog: 0.3, gain: 0.48,
   })),
   'brass-section': P('Brass Section', 'Orchestral', ['chords', 'lead'], ['funk', 'soul', 'cinematic', 'disco', 'pop', 'jazz', 'latin'], synth({
     osc1Wave: 'saw', osc1Level: 0.8, osc1Fine: -4, osc2Wave: 'saw', osc2Level: 0.7, osc2Fine: 4, unison: 2, unisonDetune: 10, unisonSpread: 0.6,
-    filterType: 'lp24', cutoff: 600, resonance: 0.1, velToFilter: 0.6, filterDrive: 0.2, ...fenv(3.2, 0.08, 0.35, 0.5, 0.2),
+    filterType: 'lp24', cutoff: 850, resonance: 0.1, keytrack: 0.4, velToFilter: 0.6, filterDrive: 0.2, ...fenv(3.2, 0.08, 0.35, 0.5, 0.2),
     ...env(0.05, 0.3, 0.85, 0.2), ...vib(0.005, 5.2, 0.6), polyphony: 8, analog: 0.35, gain: 0.52,
   })),
   'synthwave-pad': P('Synthwave Pad', 'Pad', ['pad', 'chords'], ['synthwave', 'retrowave', 'outrun', '80s', 'pop'], synth({
     osc1Wave: 'saw', osc1Level: 0.7, osc1Fine: -6, osc2Wave: 'saw', osc2Level: 0.7, osc2Fine: 6, osc3Wave: 'pulse', osc3Width: 0.45, osc3Level: 0.25, osc3Octave: -1,
-    unison: 2, unisonDetune: 8, unisonSpread: 0.8, filterType: 'lp24', cutoff: 1800, resonance: 0.25, ...fenv(1.2, 0.5, 1.5, 0.5, 1),
+    unison: 2, unisonDetune: 8, unisonSpread: 0.8, filterType: 'lp24', cutoff: 2600, resonance: 0.2, keytrack: 0.3, ...fenv(1.2, 0.5, 1.5, 0.5, 1),
     ...env(0.4, 1, 0.85, 1.5), ...pwm(0.3, 0.35), lfo1Target: 'pitch', lfo1Rate: 0.3, lfo1Depth: 0.003, polyphony: 8, analog: 0.35, gain: 0.5,
   })),
 
   /* --------------------------- CHORDS / PLUCK ----------------------- */
   pluck: P('Pluck', 'Pluck', ['chords', 'arp', 'lead'], ['house', 'edm', 'future-bass', 'tropical-house', 'pop', 'trance'], synth({
-    osc1Wave: 'saw', osc1Level: 0.7, osc1Fine: -3, osc2Wave: 'square', osc2Level: 0.4, osc2Fine: 3, filterType: 'lp24', cutoff: 600, resonance: 0.3,
-    ...fenv(4, 0.001, 0.2, 0, 0.2), ...env(0.001, 0.4, 0, 0.3), polyphony: 8, analog: 0.2, gain: 0.7,
+    osc1Wave: 'saw', osc1Level: 0.7, osc1Fine: -2, osc2Wave: 'square', osc2Level: 0.4, osc2Fine: 2, unison: 2, unisonDetune: 8, unisonSpread: 0.6,
+    filterType: 'lp24', cutoff: 1000, resonance: 0.3, keytrack: 0.4,
+    ...fenv(3.5, 0.001, 0.2, 0, 0.2), ...env(0.001, 0.4, 0, 0.3), polyphony: 8, analog: 0.2, gain: 0.7,
   })),
   'house-stab': P('House Stab', 'Pluck', ['chords'], ['house', 'deep-house', 'garage', 'techno', 'disco'], synth({
     osc1Wave: 'saw', osc1Level: 0.7, osc1Fine: -5, osc2Wave: 'saw', osc2Level: 0.7, osc2Fine: 5, unison: 2, unisonDetune: 12, unisonSpread: 0.6,
-    filterType: 'lp24', cutoff: 900, resonance: 0.35, ...fenv(3, 0.001, 0.15, 0.1, 0.15), ...env(0.002, 0.25, 0.1, 0.15),
+    filterType: 'lp24', cutoff: 1400, resonance: 0.3, keytrack: 0.4, ...fenv(3, 0.001, 0.15, 0.1, 0.15), ...env(0.002, 0.25, 0.1, 0.15),
     polyphony: 8, analog: 0.2, gain: 0.6,
   })),
   'future-chords': P('Future Chords', 'Pluck', ['chords'], ['future-bass', 'edm', 'pop', 'kpop', 'melodic-dubstep'], synth({
     osc1Wave: 'supersaw', osc1Level: 0.8, superDetune: 0.5, superMix: 0.7, unisonSpread: 0.9, osc2Wave: 'square', osc2Level: 0.3, osc2Octave: -1,
-    filterType: 'lp24', cutoff: 1200, resonance: 0.25, ...fenv(2.5, 0.002, 0.35, 0.3, 0.3), ...env(0.003, 0.5, 0.6, 0.3),
+    filterType: 'lp24', cutoff: 2000, resonance: 0.2, keytrack: 0.3, ...fenv(2.5, 0.002, 0.35, 0.3, 0.3), ...env(0.003, 0.5, 0.6, 0.3),
     lfo1Target: 'pitch', lfo1Rate: 5.5, lfo1Depth: 0.005, lfo1Fade: 0.3, polyphony: 8, analog: 0.15, gain: 0.5,
   })),
   // Karplus-Strong steel string into a clean amp + cab
@@ -401,11 +402,12 @@ export const PRESETS = {
 
   /* ------------------------------ ARP -------------------------------- */
   'arp-pluck': P('Arp Pluck', 'Arp', ['arp'], ['trance', 'synthwave', 'edm', 'house', 'techno', 'pop'], synth({
-    osc1Wave: 'square', osc1Level: 0.6, osc1Fine: -4, osc2Wave: 'saw', osc2Level: 0.5, osc2Fine: 4, filterType: 'lp24', cutoff: 900, resonance: 0.35,
-    ...fenv(3, 0.001, 0.15, 0, 0.15), ...env(0.001, 0.25, 0, 0.15), polyphony: 8, analog: 0.15, gain: 0.7,
+    osc1Wave: 'square', osc1Level: 0.6, osc1Fine: -2, osc2Wave: 'saw', osc2Level: 0.55, osc2Fine: 2, unison: 2, unisonDetune: 9, unisonSpread: 0.6,
+    filterType: 'lp24', cutoff: 1500, resonance: 0.3, keytrack: 0.5, filterDrive: 0.15,
+    ...fenv(2.6, 0.001, 0.16, 0, 0.15), ...env(0.001, 0.28, 0, 0.18), polyphony: 8, analog: 0.15, gain: 0.7,
   })),
   'arp-saw': P('Arp Saw', 'Arp', ['arp'], ['synthwave', 'trance', 'electro', 'edm', 'techno'], synth({
-    osc1Wave: 'saw', osc1Level: 0.8, unison: 2, unisonDetune: 10, unisonSpread: 0.6, filterType: 'lp24', cutoff: 2500, resonance: 0.3,
+    osc1Wave: 'saw', osc1Level: 0.8, unison: 3, unisonDetune: 12, unisonSpread: 0.7, filterType: 'lp24', cutoff: 3200, resonance: 0.25, keytrack: 0.4,
     ...fenv(1.5, 0.001, 0.2, 0.3, 0.1), ...env(0.002, 0.2, 0.5, 0.1), polyphony: 8, analog: 0.2, gain: 0.6,
   })),
 
@@ -447,11 +449,39 @@ export const PRESETS = {
   })),
   // Juno-106 style strings: one PWM'd pulse per voice, slow attack, chorus-like analog drift
   'juno-strings': P('Juno Strings', 'Pad', ['pad', 'chords'], ['synthwave', '80s', 'house', 'pop', 'ambient', 'deep-house'], synth({
-    osc1Wave: 'pulse', osc1Width: 0.5, osc1Level: 0.8, osc2Wave: 'saw', osc2Level: 0.25, osc2Fine: 5, subLevel: 0.2, unisonSpread: 0.6,
+    osc1Wave: 'pulse', osc1Width: 0.5, osc1Level: 0.8, osc1Fine: -2, osc2Wave: 'saw', osc2Level: 0.25, osc2Fine: 3, subLevel: 0.2, unisonSpread: 0.6,
     filterType: 'lp24', cutoff: 3000, resonance: 0.1, keytrack: 0.5, fEnvAmount: 0, ...env(0.35, 1, 0.9, 0.8),
     ...pwm(0.55, 0.7, 1), ...vib(0.004, 5, 0.6, 2), polyphony: 8, analog: 0.5, gain: 0.55,
   })),
 };
+
+/* ------------------------------------------------------------------ */
+/* Mix trims: low cut for everything that isn't a bass (keeps the low end for kick & bass),     */
+/* tamed top end on bright stacks, and loudness normalisation (dB, measured with the QA harness: */
+/* K-weighted, gated loudness of a C2..C6 single-note phrase + chords; target -16 LUFS, pads -17.5) */
+/* ------------------------------------------------------------------ */
+const MIX = {
+  'arp-pluck': { lowCut: 150 }, 'arp-saw': { lowCut: 150 }, pluck: { lowCut: 140 }, 'house-stab': { lowCut: 150 },
+  'future-chords': { lowCut: 140, toneCut: 14000 }, 'warm-pad': { lowCut: 110 }, 'dark-pad': { lowCut: 90 }, 'ambient-pad': { lowCut: 120 },
+  'string-pad': { lowCut: 120 }, 'choir-pad': { lowCut: 140 }, 'glass-pad': { lowCut: 200 }, 'supersaw-pad': { lowCut: 150, toneCut: 13000 },
+  'synthwave-pad': { lowCut: 120 }, 'detuned-pad': { lowCut: 120 }, 'juno-strings': { lowCut: 110 }, strings: { lowCut: 110 },
+  'brass-section': { lowCut: 100 }, 'fm-brass': { lowCut: 100 }, 'electric-piano': { lowCut: 70 }, 'fm-epiano': { lowCut: 80 },
+  'lofi-keys': { lowCut: 90 }, 'grand-piano': { lowCut: 35 }, 'organ-drawbar': { lowCut: 60 }, 'organ-rock': { lowCut: 70 },
+  clav: { lowCut: 100 }, vibraphone: { lowCut: 120 }, marimba: { lowCut: 100 }, bell: { lowCut: 150 }, celesta: { lowCut: 150 },
+  'music-box': { lowCut: 180 }, harp: { lowCut: 70 }, koto: { lowCut: 120 }, 'steel-drum': { lowCut: 120 }, kalimba: { lowCut: 120 },
+  'guitar-clean': { lowCut: 90 }, 'guitar-dist': { lowCut: 90 }, 'power-chord': { lowCut: 80 }, 'guitar-lead': { lowCut: 110 },
+  'supersaw-lead': { lowCut: 150, toneCut: 14000 }, 'trance-lead': { lowCut: 150, toneCut: 14000 }, 'square-lead': { lowCut: 140 },
+  'saw-lead': { lowCut: 120 }, 'fm-bell-lead': { lowCut: 150 }, 'chip-lead': { lowCut: 150 }, 'acid-lead': { lowCut: 100 },
+  'sync-lead': { lowCut: 120 }, 'whistle-lead': { lowCut: 200 }, 'brass-lead': { lowCut: 110 }, flute: { lowCut: 160 },
+  hoover: { lowCut: 60 }, 'rave-stab': { lowCut: 120 }, riser: { lowCut: 150 }, 'noise-sweep': { lowCut: 150 }, laser: { lowCut: 120 },
+};
+/** Loudness trims in dB (generated by the QA harness, see docs/SOUND.md). */
+const LEVEL_DB = {};
+for (const [id, m] of Object.entries(MIX)) if (PRESETS[id]) Object.assign(PRESETS[id].instrument.params, m);
+for (const [id, db] of Object.entries(LEVEL_DB)) {
+  const pp = PRESETS[id]?.instrument.params;
+  if (pp) pp.gain = Math.round(Math.min(2, Math.max(0.02, (pp.gain ?? 0.8) * 10 ** (db / 20))) * 1000) / 1000;
+}
 
 /* ------------------------------------------------------------------ */
 /* Resolution                                                           */
