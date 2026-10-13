@@ -876,8 +876,8 @@ export function createArrangeView(app) {
     if (!lin) for (let x = 0; x <= W + 2; x += 2) xs.push([x, valueAt(pts, (x + sx) / ppb)]);
     else { xs.push([0, valueAt(pts, b0)]); xs.push([W + 2, valueAt(pts, (W + 2 + sx) / ppb)]); }
     for (const pt of pts) { const x = pt.beat * ppb - sx; if (x >= -2 && x <= W + 2) xs.push([x, pt.value, true]); }
-    xs.sort((m, n) => m[0] - n[0] || (m[2] ? 0 : n[2] ? 0 : 0));
-    // keep breakpoint order for vertical jumps (stable sort keeps insertion order for equal x)
+    // breakpoints sort before samples at the same x; equal breakpoints keep their order (vertical jumps)
+    xs.sort((m, n) => m[0] - n[0] || (n[2] ? 1 : 0) - (m[2] ? 1 : 0));
     ctx.beginPath();
     xs.forEach(([x, v], k) => { const yy = autoY(y, def, v); if (k) ctx.lineTo(x, yy); else ctx.moveTo(x, yy); });
     ctx.lineTo(W + 2, y + AUTO_H); ctx.lineTo(0, y + AUTO_H); ctx.closePath();
@@ -890,14 +890,17 @@ export function createArrangeView(app) {
     if (!on) ctx.setLineDash([5, 4]);
     ctx.stroke();
     ctx.setLineDash([]);
-    // points
+    // points (smaller dots when they are dense, e.g. LFO shapes)
+    let minGap = Infinity;
+    for (let k = 1; k < pts.length; k++) { const g = (pts[k].beat - pts[k - 1].beat) * ppb; if (g > 0.01 && g < minGap) minGap = g; }
+    const rDot = minGap < 7 ? 1.6 : minGap < 14 ? 2.5 : 3.5;
     pts.forEach((pt, k) => {
       const x = pt.beat * ppb - sx;
       if (x < -6 || x > W + 6) return;
       const yy = autoY(y, def, pt.value);
       const hot = autoHover && autoHover.laneId === lane.id && autoHover.idx === k;
       ctx.beginPath();
-      ctx.arc(x, yy, hot ? 5 : 3.5, 0, Math.PI * 2);
+      ctx.arc(x, yy, hot ? 5 : rDot, 0, Math.PI * 2);
       ctx.fillStyle = hot ? theme.sel : col;
       ctx.fill();
       ctx.lineWidth = 1.5;
@@ -1094,7 +1097,7 @@ export function createArrangeView(app) {
       const next = sortPoints([...pts0, np]);
       idx = next.indexOf(np);
       pts0.splice(0, pts0.length, ...next.map((x) => ({ ...x })));
-      tx((pp) => { const l = findLane(pp, t.id, laneId); if (l) { l.points = next.map((x) => ({ ...x })); l.enabled = l.enabled !== false; } });
+      tx((pp) => { const l = findLane(pp, t.id, laneId); if (l) l.points = next.map((x) => ({ ...x })); });
       app.setStatus?.(`${info.label}: ${fmtVal(def, value)} @ ${posLabel(beat)}`);
     }
     const o = pts0[idx];
@@ -1120,6 +1123,7 @@ export function createArrangeView(app) {
   }
 
   const autoTip = h('div.arr-auto-tip.hidden');
+  lanes.appendChild(autoTip);
   function showAutoTip(clientX, clientY, text) {
     const r = lanes.getBoundingClientRect();
     autoTip.textContent = text;
@@ -1158,7 +1162,10 @@ export function createArrangeView(app) {
         onT.setValue(lane.enabled !== false);
         const groups = targetGroups(t);
         const opts = [];
-        for (const g of groups) for (const it of g.items) opts.push({ value: it.target, label: it.label, group: g.name });
+        for (const g of groups) {
+          const pre = g.kind === 'mixer' ? '' : `${g.name.replace(/^(Instrument|FX \d+) · /, '')} · `;
+          for (const it of g.items) opts.push({ value: it.target, label: pre + it.label, group: g.name });
+        }
         if (!opts.some((o) => o.value === lane.target)) opts.unshift({ value: lane.target, label: targetInfo(t, lane.target).label });
         const key = opts.map((o) => o.value + o.label).join('|') + '#' + lane.target;
         if (key !== selKey) {
@@ -1328,9 +1335,10 @@ export function createArrangeView(app) {
         scroller.scrollLeft = Math.max(0, pos() * ppb - W * 0.08);
       }
     }
+    const L = rowsLayout();
+    const sy = scroller.scrollTop, H = scroller.clientHeight;
+    const first = rowAt(L, sy), last = rowAt(L, sy + H);
     if (engine.ctx && engine.getMeter) {
-      const first = Math.floor(scroller.scrollTop / laneH);
-      const last = Math.ceil((scroller.scrollTop + scroller.clientHeight) / laneH);
       p.tracks.forEach((t, i) => {
         if (i < first || i > last) return;
         const hd = headers.get(t.id);
@@ -1340,6 +1348,18 @@ export function createArrangeView(app) {
         if (m) hd.mtr.setLevels(m.l || 0, m.r ?? m.l ?? 0);
       });
     }
+    // live input level on armed audio tracks
+    const rec = actions.recorder;
+    if (rec?.inputOpen) {
+      const lvl = rec.getLevel();
+      const pct = Math.min(100, Math.round(Math.sqrt(Math.min(1, lvl)) * 100)) + '%';
+      for (const t of p.tracks) {
+        if (t.type !== 'audio' || !t.arm) continue;
+        const hd = headers.get(t.id);
+        if (hd) { hd.inFill.style.width = pct; hd.inFill.classList.toggle('clip', lvl >= 0.99); }
+      }
+    }
+    updateAutoValues(p, L, sy, H);
     rafLoop = requestAnimationFrame(frame);
   }
 
@@ -1360,31 +1380,35 @@ export function createArrangeView(app) {
     const upd = (fn, label, opts) => actions.updateTrack(id, fn, label, opts);
     const mute = toggle({ label: 'M', cls: 'mute', title: 'Mute this track', onChange: (v) => upd((t) => { t.mute = v; }, v ? 'Mute' : 'Unmute') });
     const solo = toggle({ label: 'S', cls: 'solo', title: 'Solo — only soloed tracks are heard', onChange: (v) => upd((t) => { t.solo = v; }, v ? 'Solo' : 'Unsolo') });
-    const arm = toggle({ label: '●', cls: 'arm', title: 'Arm for recording (notes you play are recorded into this track\'s active pattern)', onChange: (v) => upd((t) => { t.arm = v; }, v ? 'Arm' : 'Disarm') });
+    const arm = toggle({ label: '●', cls: 'arm', title: track.type === 'audio' ? 'Arm for audio recording: press Record (R) to capture your microphone / line-in onto this track' : 'Arm for recording (notes you play are recorded into this track\'s active pattern)', onChange: (v) => upd((t) => { t.arm = v; }, v ? 'Arm' : 'Disarm') });
+    const autoBtn = toggle({ label: 'A', cls: 'auto', title: 'Automation lanes: draw volume, pan, send, instrument and effect changes over time (song mode)', onChange: (v) => toggleAutoOpen(id, v) });
+    const inFill = h('div.arr-th-in-fill');
+    const inMeter = h('div.arr-th-in', { title: 'Input level (microphone / line-in) — this track is armed for audio recording' }, inFill);
     const vol = fader({ def: { key: 'volume', label: 'Volume', min: 0, max: 1.5, default: 0.8, step: 0.01 }, value: track.volume, vertical: false, length: 62, onChange: (v) => upd((t) => { t.volume = v; }, 'Volume', { coalesce: true }) });
     vol.classList.add('arr-th-vol');
     const mtr = meter({ height: 30 });
     mtr.classList.add('arr-th-meter');
-    const ctrls = h('div.arr-th-ctrls', mute, solo, arm, vol);
-    const el = h('div.arr-th', strip, h('div.arr-th-main', h('div.arr-th-top', ic, name), ctrls), mtr);
+    const ctrls = h('div.arr-th-ctrls', mute, solo, arm, autoBtn, vol);
+    const el = h('div.arr-th', strip, h('div.arr-th-main', h('div.arr-th-top', ic, name), ctrls, inMeter), mtr);
 
     strip.addEventListener('click', (e) => { e.stopPropagation(); contextMenu(e, [{ header: 'Track color' }, ...colorItems((c) => upd((t) => { t.color = c; }, 'Track color'))]); });
     name.addEventListener('dblclick', () => actions.renameTrack(id));
-    el.addEventListener('contextmenu', (e) => { e.preventDefault(); actions.selectTrack(id); contextMenu(e, actions.trackMenuItems(id)); });
+    el.addEventListener('contextmenu', (e) => { e.preventDefault(); actions.selectTrack(id); contextMenu(e, [...autoTrackMenuItems(id), '-', ...actions.trackMenuItems(id)]); });
     el.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || e.target.closest('button, .fader, input, select, .arr-th-strip')) return;
       const p = get();
       const i0 = p.tracks.findIndex((t) => t.id === id);
       const n = p.tracks.length;
+      const L = rowsLayout();
       let moved = false, target = i0;
       startDrag(e, (_dx, dy) => {
         if (!moved && Math.abs(dy) < 5) return;
         moved = true;
         el.classList.add('dragging');
         el.style.transform = `translateY(${dy}px)`;
-        target = clamp(Math.round((i0 * laneH + dy) / laneH), 0, n - 1);
+        target = clamp(rowAt(L, L.rows[i0].y + laneH / 2 + dy), 0, n - 1);
         reorderInd.classList.remove('hidden');
-        reorderInd.style.top = ((target > i0 ? target + 1 : target) * laneH - 1) + 'px';
+        reorderInd.style.top = ((target > i0 ? L.rows[target].y + L.rows[target].h : L.rows[target].y) - 1) + 'px';
       }, () => {
         el.classList.remove('dragging');
         el.style.transform = '';
@@ -1401,9 +1425,9 @@ export function createArrangeView(app) {
       });
     });
     return {
-      el, mtr,
-      update(t, i, selected) {
-        el.style.top = i * laneH + 'px';
+      el, mtr, inFill,
+      update(t, i, selected, y) {
+        el.style.top = y + 'px';
         el.style.height = laneH + 'px';
         el.style.setProperty('--tc', t.color);
         el.classList.toggle('selected', selected);
@@ -1416,6 +1440,12 @@ export function createArrangeView(app) {
         solo.setValue(!!t.solo);
         arm.setValue(!!t.arm);
         arm.classList.toggle('hidden', t.type === 'code');
+        const armedAudio = t.type === 'audio' && !!t.arm;
+        el.classList.toggle('rec-armed', armedAudio);
+        el.classList.toggle('recording', armedAudio && !!ui.get('audioRecording'));
+        autoBtn.setValue(autoOpen.has(t.id));
+        autoBtn.classList.toggle('has', (t.automation || []).some((l) => l.points?.length));
+        el.classList.toggle('auto-open', autoOpen.has(t.id));
         vol.setValue(t.volume ?? 0.8);
         mtr.style.height = Math.max(14, laneH - 16) + 'px';
       },
@@ -1428,13 +1458,16 @@ export function createArrangeView(app) {
     const seen = new Set();
     heads.classList.toggle('compact', laneH < 52);
     heads.classList.toggle('tiny', laneH < 36);
+    const L = rowsLayout();
+    for (const id of [...autoOpen]) if (!p.tracks.some((t) => t.id === id)) autoOpen.delete(id);
     p.tracks.forEach((t, i) => {
       seen.add(t.id);
       let hd = headers.get(t.id);
       if (!hd) { hd = makeHeader(t); headers.set(t.id, hd); headsInner.insertBefore(hd.el, addRow); }
-      hd.update(t, i, t.id === sel);
+      hd.update(t, i, t.id === sel, L.rows[i].y);
     });
     for (const [id, hd] of headers) if (!seen.has(id)) { hd.el.remove(); headers.delete(id); }
+    syncAutoHeaders(L);
   }
 
   // header column resize
@@ -1453,10 +1486,15 @@ export function createArrangeView(app) {
     const x = Math.max(0, clientX - r.left + scroller.scrollLeft);
     const y = clientY - r.top + scroller.scrollTop;
     const p = get();
-    const lane = Math.floor(y / laneH);
+    const L = rowsLayout();
+    const lane = rowAt(L, y);
     const track = lane >= 0 ? p.tracks[lane] || null : null;
     const beat = x / ppb;
-    let clip = null, edge = null;
+    let clip = null, edge = null, auto = null;
+    if (track && y >= L.rows[lane].y + laneH) {
+      auto = L.rows[lane].auto.find((a) => y >= a.y && y < a.y + AUTO_H) || null;
+      return { x, y, beat, lane, track, clip, edge, auto };
+    }
     if (track) {
       for (let i = p.clips.length - 1; i >= 0; i--) {
         const c = p.clips[i];
@@ -1471,7 +1509,7 @@ export function createArrangeView(app) {
         }
       }
     }
-    return { x, y, beat, lane, track, clip, edge };
+    return { x, y, beat, lane, track, clip, edge, auto };
   }
 
   const compatible = (clip, srcTrack, dst) => {
@@ -1762,6 +1800,12 @@ export function createArrangeView(app) {
       '-',
       { label: 'Loop the selection', icon: 'loop', disabled: !n, onClick: () => setLoop(Math.min(...cs.map((c) => c.start)), Math.max(...cs.map((c) => c.start + c.length))) },
       { label: 'Loop the whole song', icon: 'loop', disabled: !p.clips.length, onClick: () => setLoop(0, songLengthBeats(p)) },
+      { label: 'Automation', icon: 'sliders', submenu: [
+        { label: 'Show automation lanes on all tracks', onClick: () => { for (const t of p.tracks) autoOpen.add(t.id); savePrefs(); syncHeaders(); layout(); drawNow(); } },
+        { label: 'Show only tracks that have automation', onClick: () => { autoOpen.clear(); for (const t of p.tracks) if ((t.automation || []).some((l) => l.points?.length)) autoOpen.add(t.id); savePrefs(); syncHeaders(); layout(); drawNow(); } },
+        { label: 'Hide all automation lanes', onClick: () => { autoOpen.clear(); savePrefs(); syncHeaders(); layout(); drawNow(); } },
+      ] },
+      { label: `Count-in before audio recording (1 bar): ${ui.get('countIn') ? 'On' : 'Off'}`, icon: 'metronome', onClick: () => actions.setCountIn?.(!ui.get('countIn')) },
       { label: 'Track height', icon: 'sliders', submenu: [['Small', 34], ['Medium', 60], ['Large', 96], ['Huge', 150]].map(([l, v]) => ({ label: l, onClick: () => setLaneH(v) })) },
       { label: p.mode === 'song' ? 'Switch to Pattern mode' : 'Switch to Song mode', shortcut: 'P', onClick: () => actions.setMode(p.mode === 'song' ? 'pattern' : 'song') },
       '-',
@@ -1817,6 +1861,8 @@ export function createArrangeView(app) {
       { label: 'Move playhead here', icon: 'play', onClick: () => actions.setPosition(beat) },
       { label: 'Select all clips on this track', onClick: () => setSel(get().clips.filter((c) => c.trackId === t.id).map((c) => c.id)) },
       '-',
+      ...autoTrackMenuItems(t.id),
+      '-',
       ...actions.trackMenuItems(t.id),
     );
     return items;
@@ -1830,6 +1876,12 @@ export function createArrangeView(app) {
     if (e.clientX - r.left >= scroller.clientWidth || e.clientY - r.top >= scroller.clientHeight) return;
     const hit = hitTest(e.clientX, e.clientY);
     if (!hit.track) { if (!e.shiftKey) setSel([]); startRubber(e, hit); return; }
+    if (hit.auto) {
+      if (hit.track.id !== ui.get('selectedTrackId')) actions.selectTrack(hit.track.id);
+      if (hit.auto.lane) startAutoDrag(e, hit);
+      else menuAt({ getBoundingClientRect: () => ({ left: e.clientX, bottom: e.clientY }) }, addAutomationItems(hit.track.id));
+      return;
+    }
     if (hit.track.type === 'code' && !hit.clip) {
       startDrag(e, () => {}, (ev) => { if (Math.abs(ev.clientX - e.clientX) < 4 && Math.abs(ev.clientY - e.clientY) < 4) openCode(hit.track); });
       return;
@@ -1874,13 +1926,16 @@ export function createArrangeView(app) {
     const tx = dragTx(dup ? 'Copy clips' : 'Move clips');
     let moved = false, duplicated = false, lastDl = 0, changedTrack = false;
     const laneOk = (dl) => [...orig.values()].every((o) => compatible(o.clip, o.track, p.tracks[o.ti + dl]));
+    const L = rowsLayout();
+    const yStart = hitTest(e.clientX, e.clientY).y;
+    const anchorTi = tIdx.get(anchor.trackId);
     beginDrag();
     startDrag(e, (dx, dy, ev) => {
       if (!moved && Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
       moved = true;
       let delta = snapB(a0 + dx / ppb, ev) - a0;
       if (minStart + delta < 0) delta = -minStart;
-      let dl = Math.round(dy / laneH);
+      let dl = clamp(rowAt(L, yStart + dy), 0, p.tracks.length - 1) - anchorTi;
       if (dl !== 0 && !laneOk(dl)) dl = laneOk(lastDl) ? lastDl : 0;
       lastDl = dl;
       if (dl) changedTrack = true;
@@ -1954,7 +2009,8 @@ export function createArrangeView(app) {
       rubber.classList.remove('hidden');
       Object.assign(rubber.style, { left: (l - scroller.scrollLeft) + 'px', top: (t - scroller.scrollTop) + 'px', width: (r - l) + 'px', height: (b - t) + 'px' });
       const p = get();
-      const l0 = Math.floor(t / laneH), l1 = Math.floor(b / laneH);
+      const LR = rowsLayout();
+      const l0 = rowAt(LR, t), l1 = rowAt(LR, b);
       const tset = new Set(p.tracks.slice(Math.max(0, l0), l1 + 1).map((x) => x.id));
       const ba = l / ppb, bb = r / ppb;
       const found = p.clips.filter((c) => tset.has(c.trackId) && c.start < bb && c.start + c.length > ba).map((c) => c.id);
@@ -1993,6 +2049,12 @@ export function createArrangeView(app) {
   scroller.addEventListener('dblclick', (e) => {
     const hit = hitTest(e.clientX, e.clientY);
     if (!hit.track) { menuAt(addRow, actions.addTrackMenuItems()); return; }
+    if (hit.auto) {
+      if (!hit.auto.lane) return;
+      const pk = autoPick(hit);
+      if (pk.idx >= 0) deletePoint(hit.track.id, hit.auto.lane.id, pk.idx);
+      return;
+    }
     if (hit.clip) { openClipEditor(hit.clip); return; }
     if (tool !== 'pointer') return;
     if (hit.track.type === 'instrument') createClipAt(hit.track, hit.beat);
@@ -2002,6 +2064,13 @@ export function createArrangeView(app) {
   scroller.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const hit = hitTest(e.clientX, e.clientY);
+    if (hit.auto) {
+      if (!hit.auto.lane) { contextMenu(e, addAutomationItems(hit.track.id)); return; }
+      const pk = autoPick(hit);
+      if (pk.idx >= 0) { deletePoint(hit.track.id, hit.auto.lane.id, pk.idx); return; } // right-click a point deletes it
+      contextMenu(e, laneMenu(hit.track, hit.auto.lane));
+      return;
+    }
     if (hit.clip) {
       if (!selIds().includes(hit.clip.id)) setSel([hit.clip.id]);
       contextMenu(e, clipMenuItems(hit.clip));
@@ -2013,6 +2082,27 @@ export function createArrangeView(app) {
   scroller.addEventListener('pointermove', (e) => {
     if (dragging || e.buttons) return;
     const hit = hitTest(e.clientX, e.clientY);
+    if (hit.auto) {
+      hoverLine.classList.add('hidden');
+      if (!hit.auto.lane) { scroller.style.cursor = 'pointer'; hideAutoTip(); return; }
+      const pk = autoPick(hit);
+      const lane = hit.auto.lane;
+      const info = targetInfo(hit.track, lane.target);
+      const prev = autoHover;
+      autoHover = pk.idx >= 0 ? { laneId: lane.id, idx: pk.idx } : null;
+      if ((prev?.laneId !== autoHover?.laneId) || (prev?.idx !== autoHover?.idx)) invalidate();
+      scroller.style.cursor = pk.idx >= 0 ? 'grab' : e.altKey && pk.curveD < 8 ? 'ns-resize' : 'crosshair';
+      if (pk.idx >= 0) {
+        const pt = lane.points[pk.idx];
+        showAutoTip(e.clientX, e.clientY, `${info.label}: ${fmtVal(info.def, pt.value)} @ ${posLabel(pt.beat)}`);
+      } else {
+        const v = lane.points.length ? valueAt(lane.points, hit.beat) : info.staticValue;
+        showAutoTip(e.clientX, e.clientY, `${info.label}: ${fmtVal(info.def, v)} @ ${posLabel(hit.beat)} · click adds a point`);
+      }
+      return;
+    }
+    if (autoHover) { autoHover = null; invalidate(); }
+    hideAutoTip();
     let cur = '';
     if (tool === 'pointer') cur = hit.clip ? (hit.edge ? 'ew-resize' : 'grab') : hit.track?.type === 'code' ? 'pointer' : '';
     else if (tool === 'pencil') cur = hit.clip ? (hit.edge ? 'ew-resize' : 'grab') : hit.track?.type === 'instrument' ? 'copy' : '';
@@ -2023,11 +2113,11 @@ export function createArrangeView(app) {
       const b = snapB(hit.beat, e);
       const inside = b > hit.clip.start + EPS && b < hit.clip.start + hit.clip.length - EPS;
       hoverLine.classList.toggle('hidden', !inside);
-      hoverLine.style.transform = `translate(${b * ppb - scroller.scrollLeft}px, ${hit.lane * laneH - scroller.scrollTop}px)`;
+      hoverLine.style.transform = `translate(${b * ppb - scroller.scrollLeft}px, ${trackY(rowsLayout(), hit.lane) - scroller.scrollTop}px)`;
       hoverLine.style.height = laneH + 'px';
     } else hoverLine.classList.add('hidden');
   });
-  scroller.addEventListener('pointerleave', () => hoverLine.classList.add('hidden'));
+  scroller.addEventListener('pointerleave', () => { hoverLine.classList.add('hidden'); hideAutoTip(); if (autoHover && !dragging) { autoHover = null; invalidate(); } });
 
   // wheel: native vertical / shift-horizontal; Ctrl = zoom around cursor; Alt = track height
   scroller.addEventListener('wheel', (e) => {
@@ -2183,7 +2273,7 @@ export function createArrangeView(app) {
     const b = Math.max(0, snapB(hit.beat, null, Math.floor));
     const lane = hit.track ? hit.lane : get().tracks.length;
     dropInd.classList.remove('hidden');
-    Object.assign(dropInd.style, { transform: `translate(${b * ppb - scroller.scrollLeft}px, ${lane * laneH - scroller.scrollTop}px)`, height: laneH + 'px' });
+    Object.assign(dropInd.style, { transform: `translate(${b * ppb - scroller.scrollLeft}px, ${trackY(rowsLayout(), lane) - scroller.scrollTop}px)`, height: laneH + 'px' });
     dropInd.dataset.label = hit.track ? `${hit.track.name} · bar ${Math.floor(b / bpbNow()) + 1}` : 'New track';
   });
   body.addEventListener('dragleave', (e) => { if (!body.contains(e.relatedTarget)) dropInd.classList.add('hidden'); });
@@ -2287,7 +2377,7 @@ export function createArrangeView(app) {
     if (!visible) { stale = true; return; }
     if ('theme' in r.ui) readTheme();
     if (r.project) { syncHeaders(); syncToolbar(); layout(); }
-    else if ('selectedTrackId' in r.ui) syncHeaders();
+    else if ('selectedTrackId' in r.ui || 'audioRecording' in r.ui) syncHeaders();
     if ('followPlayhead' in r.ui) followBtn.setValue(ui.get('followPlayhead') !== false);
     if (r.project || 'selectedClipIds' in r.ui || 'selectedTrackId' in r.ui || 'theme' in r.ui) invalidate();
   });

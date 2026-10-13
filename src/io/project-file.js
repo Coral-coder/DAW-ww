@@ -29,7 +29,7 @@ export function parseProjectFile(input) {
   const warnings = [];
   if (data.format !== PROJECT_FORMAT) {
     const looksLikeProject = Array.isArray(data.tracks) || (data.patterns && typeof data.patterns === 'object') || typeof data.bpm === 'number';
-    if (!looksLikeProject) throw new Error('Not a HEROIC DAW project (missing format, tracks and patterns).');
+    if (!looksLikeProject) throw new Error('Not a daWWW project (missing format, tracks and patterns).');
     warnings.push(data.format ? `Unknown format "${data.format}" — loaded as best effort.` : 'File has no format marker — loaded as best effort.');
   }
   if (data.tracks !== undefined && !Array.isArray(data.tracks)) throw new Error('Invalid project: "tracks" must be an array.');

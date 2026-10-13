@@ -1,4 +1,4 @@
-# HEROIC DAW — Architecture & Module Contracts
+# daWWW — Architecture & Module Contracts
 
 Zero-dependency, browser-native DAW. Plain ES modules (no bundler, no npm runtime deps),
 served statically. Pure-logic modules (theory, generators, code engine, io) must also run

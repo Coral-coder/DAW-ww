@@ -89,7 +89,7 @@ export function exportMidi(project, { mode = project.mode === 'song' ? 'song' : 
   const bpb = beatsPerBar(project);
   const tempo = Math.round(60000000 / (project.bpm || 120));
   const conductor = [];
-  conductor.push({ tick: 0, order: 0, bytes: metaText(0x03, project.name || 'HEROIC DAW') });
+  conductor.push({ tick: 0, order: 0, bytes: metaText(0x03, project.name || 'daWWW') });
   conductor.push({ tick: 0, order: 1, bytes: [0xff, 0x51, 0x03, (tempo >> 16) & 0xff, (tempo >> 8) & 0xff, tempo & 0xff] });
   conductor.push({ tick: 0, order: 2, bytes: [0xff, 0x58, 0x04, num & 0xff, Math.round(Math.log2(den)) & 0xff, 24, 8] });
   if (mode === 'song') {

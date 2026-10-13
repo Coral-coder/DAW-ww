@@ -44,7 +44,7 @@ test('parseProjectFile validates and normalizes', () => {
   assert.throws(() => parseProjectFile('not json'), /Not a valid project file/);
   assert.throws(() => parseProjectFile(''), /empty/);
   assert.throws(() => parseProjectFile('[1,2]'), /JSON object/);
-  assert.throws(() => parseProjectFile('{"hello":1}'), /Not a HEROIC DAW project/);
+  assert.throws(() => parseProjectFile('{"hello":1}'), /Not a daWWW project/);
   assert.throws(() => parseProjectFile('{"format":"heroic-daw-project","tracks":5}'), /tracks/);
   const partial = parseProjectFile(JSON.stringify({ bpm: 90, tracks: [{ id: 't1', name: 'X', type: 'instrument' }], clips: [{ id: 'c', trackId: 'gone' }] }));
   assert.equal(partial.bpm, 90);

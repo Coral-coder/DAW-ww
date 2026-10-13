@@ -1,4 +1,4 @@
-// HEROIC DAW generators — pure, deterministic with `rng` from createRng(seed). Re-exports every generator module.
+// daWWW generators — pure, deterministic with `rng` from createRng(seed). Re-exports every generator module.
 export * from './genres.js';
 export * from './drums.js';
 export * from './harmony.js';
