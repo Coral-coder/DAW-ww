@@ -15,15 +15,18 @@ jobs:
           node-version: 22
       - run: npm test
       - run: npm install --no-audit --no-fund
-      # one architecture at a time: parallel dmg builds collide on the mounted volume (hdiutil detach "busy")
-      - name: Build Apple Silicon .dmg + .zip (ad-hoc signed, not notarized)
+      # electron-builder makes the .app + .zip; the .dmg is packed by hdiutil create -srcfolder (no attach/detach —
+      # electron-builder's dmg target fails on these runners with "hdiutil detach: resource busy")
+      - name: Build Apple Silicon app + .zip (ad-hoc signed, not notarized)
         run: npx electron-builder --mac --arm64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      - name: Build Intel .dmg + .zip
+      - name: Build Intel app + .zip
         run: npx electron-builder --mac --x64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Pack .dmg files
+        run: sh scripts/make-dmg.sh
       - uses: actions/upload-artifact@v4
         with:
           name: daW3-mac
