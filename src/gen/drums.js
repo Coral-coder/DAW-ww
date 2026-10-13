@@ -45,8 +45,8 @@ export const DRUM_STYLES = {
     'rim:0.4': '...x..x....x..x.', 'conga:0.6': '.......o.....o..', 'shaker:0.5': 'gxgxgxgxgxgxgxgx',
   }, { fill: 'build' }),
   techno: D('Techno', {
-    kick: 'X...X...X...X...', 'clap:0.55': '....x.......x...', openhat: '..x...x...x...x.', hihat: 'gxgxgxgxgxgxgxgx',
-    'ride:0.75': 'x.x.x.x.x.x.x.x.', 'rim:0.5': '...o......o..o..',
+    kick: 'X...X...X...X...', 'clap:0.55': '....x.......x...', openhat: '..x...x...x...x.', hihat: 'gxg.gxg.gxg.gxg.',
+    'rim:0.5': '...o......o..o..',
   }, { fill: 'build' }),
   minimal: D('Minimal', {
     kick: 'x...x...x...x...', 'rim:0.3': '..g..g...g..g...', hihat: '..o...o...o...o.', 'shaker:0.5': 'gg.gg.gggg.gg.g.',
@@ -54,15 +54,13 @@ export const DRUM_STYLES = {
   }, { fill: 'break' }),
   trance: D('Trance', {
     kick: 'X...X...X...X...', clap: '....X.......X...', openhat: '..X...X...X...X.', hihat: '.g.g.g.g.g.g.g.g',
-    'ride:0.7': 'x.x.x.x.x.x.x.x.',
   }, { fill: 'build' }),
   psytrance: D('Psytrance', {
-    kick: 'X...X...X...X...', 'clap:0.5': '....o.......o...', openhat: '..x...x...x...x.', hihat: 'gxg.gxg.gxg.gxg.',
-    'ride:0.7': '.g.g.g.g.g.g.g.g',
+    kick: 'X...X...X...X...', 'clap:0.5': '....o.......o...', openhat: '..x...x...x...x.', hihat: 'gx.xgx.xgx.xgx.x',
   }, { fill: 'build' }),
   progressive: D('Progressive House', {
     kick: 'X...X...X...X...', clap: '....X.......X...', openhat: '..x...x...x...x.', hihat: 'g.g.g.g.g.g.g.g.',
-    'ride:0.6': 'x.x.x.x.x.x.x.x.', 'shaker:0.5': 'gogxgogxgogxgogx',
+    'shaker:0.5': 'gogxgogxgogxgogx',
   }, { fill: 'build' }),
   eurobeat: D('Eurobeat', {
     kick: 'X...X...X...X...', snare: '....X.......X...', openhat: '..X...X...X...X.', hihat: 'gxg.gxg.gxg.gxg.',
@@ -70,7 +68,6 @@ export const DRUM_STYLES = {
   }, { fill: 'build' }),
   hardstyle: D('Hardstyle', {
     kick: 'X...X...X...X...', clap: '....X.......X...', openhat: '..x...x...x...x.', hihat: '.g.g.g.g.g.g.g.g',
-    'ride:0.7': 'x.x.x.x.x.x.x.x.',
   }, { fill: 'build' }),
   disco: D('Disco', {
     kick: 'x...x...x...x...', snare: '....X.......X...', openhat: '..X...X...X...X.', hihat: 'xg.gxg.gxg.gxg.g',
@@ -347,6 +344,11 @@ export function generateDrumPattern(opts = {}) {
     applyFill(type, bars - 1, add, remove, rng, density, bpb, styleId, stepDur);
   }
   if (opts.crash) add('crash', 0, 0.9, 1);
+
+  // An open hat is choked by a closed hat on the same step: drop the closed one so the open hat rings.
+  for (const n of [...hits.values()]) {
+    if (n.pitch === DRUM_PITCH.openhat) hits.delete(`${DRUM_PITCH.hihat}@${n.start}`);
+  }
 
   // humanize
   const out = [];
