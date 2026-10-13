@@ -31,7 +31,7 @@
 .br-item.sel { box-shadow: inset 2px 0 0 var(--accent); }
 .br-item[draggable="true"] { cursor: grab; }
 .br-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.br-meta { font-size: 10px; color: var(--text-3); font-family: var(--mono); white-space: nowrap; }
+.br-meta { font-size: 10px; color: var(--text-3); font-family: var(--mono); white-space: nowrap; max-width: 45%; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; }
 .br-actions { display: inline-flex; gap: 2px; }
 .br-act { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--text-3); cursor: pointer; padding: 0; opacity: 0; transition: opacity .1s; }
 .br-item:hover .br-act, .br-item.selected .br-act, .br-item:focus-within .br-act { opacity: 1; }
