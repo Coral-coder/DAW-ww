@@ -14,7 +14,7 @@ import { padPart } from './harmony.js';
 import { varyPart } from './monotony.js';
 import { voiceChord } from '../theory/index.js';
 import { progressionFromProject } from './analyze.js';
-import { sectionKind, planSections, planSectionHarmony, filterSweepPoints, AutomationBuilder } from './arrange.js';
+import { sectionKind, planSections, ARP_HOME, planSectionHarmony, filterSweepPoints, AutomationBuilder } from './arrange.js';
 import { resolveStructure } from './form.js';
 import { applyGroove, shapeDynamics, grooveFor } from './groove.js';
 import { instrumentForRole, strumFor } from './sound.js';
@@ -110,7 +110,7 @@ export function generateRoleNotes(role, opts) {
       return generateCounterMelody({ melody: opts.melody || [], progression, key: root, scale, rng, beatsPerBar: bpb, length, density: e });
     case 'arp': {
       const a = g.arp || {};
-      return arpFigures(progression, { mode: a.mode || 'up', rate: kind === 'build' ? 0.25 : a.rate || 0.25, beatsPerBar: bpb, length, lo: 60, hi: 96, gate: 0.6, rng, vel: 0.55 + e * 0.2 });
+      return arpFigures(progression, { mode: a.mode || 'up', rate: kind === 'build' ? 0.25 : ARP_HOME.has(g.id) ? a.rate || 0.25 : Math.max(a.rate || 0.25, 0.5), beatsPerBar: bpb, length, lo: 60, hi: 96, gate: 0.6, rng, vel: 0.55 + e * 0.2 });
     }
     case 'fx': {
       if (kind === 'build') return [createNote(72, 0, length, 0.8)];
@@ -280,8 +280,11 @@ export function generateSong(opts = {}) {
   // the form: the genre's standard structure, or one fitted to the requested length (short / extended / club / minutes)
   const structure = resolveStructure(g, { length: opts.length, targetMinutes: opts.targetMinutes, bpm });
   const used = new Set(structure.flatMap((s) => s.roles));
-  const roles = ROLES.filter((r) => used.has(r) && (r === 'drums' || g.presets?.[r]));
+  let roles = ROLES.filter((r) => used.has(r) && (r === 'drums' || g.presets?.[r]));
   const sections = planSections(g, { bpb, available: new Set(roles), structure, evolve: !['jazz', 'blues', 'latin'].includes(g.family) });
+  // orchestration may leave a part with nothing to play (e.g. the arp outside its genres): no empty track for it
+  const playing = new Set(sections.flatMap((s) => [...s.roles, ...(s.enter || [])]));
+  roles = roles.filter((r) => playing.has(r));
   // key change: the last chorus (and what follows) goes up a half / whole step in pop / gospel / rock / country songs
   const mainsOfChorus = sections.filter((s) => s.type === 'chorus');
   const lastMain = mainsOfChorus[mainsOfChorus.length - 1];

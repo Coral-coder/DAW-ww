@@ -37,7 +37,7 @@ import { applyGroove, shapeDynamics } from './groove.js';
 import { mixTrack } from './mix.js';
 import { faustFor } from './plugins.js';
 import { realInstrumentDef } from '../audio/library/instrument-map.js';
-import { AutomationBuilder } from './arrange.js';
+import { AutomationBuilder, ARP_HOME } from './arrange.js';
 
 const hash = (...xs) => xs.reduce((h, x) => (Math.imul(h ^ (typeof x === 'number' ? x : [...String(x)].reduce((a, c) => a * 31 + c.charCodeAt(0), 7)), 2654435761) >>> 0), 0x2545f491);
 const EPS = 1e-6;
@@ -140,6 +140,12 @@ export function planExtras(g, sections) {
     let layers = R.filter((r) => BASE_MELODIC.includes(r)).length + (s.enter || []).filter((r) => BASE_MELODIC.includes(r)).length;
     for (const role of list) {
       if (!wants(role, s, R, g, s === finalMain)) continue;
+      // one arpeggiated layer at a time: color / bells stay out where the arp (or the other one) already runs,
+      // and outside the arp genres they only season the last chorus
+      if (role === 'color' || role === 'bells') {
+        const taken = R.includes('arp') || (s.enter || []).includes('arp') || s.extra.includes('color') || s.extra.includes('bells');
+        if (taken || (!ARP_HOME.has(g.id) && s.kind === 'main' && s !== finalMain && g.family !== 'ambient')) continue;
+      }
       if (MELODIC_EXTRA.has(role)) { if (layers >= maxLayers(s)) continue; layers++; }
       s.extra.push(role);
       used.add(role);
@@ -415,6 +421,7 @@ const GUITAR_STYLE = { funk: 'offbeat', disco: 'offbeat', 'nu-disco': 'offbeat',
 function melodicPart(role, g, s, ctx) {
   const { bpb, rng, progression, root, scale, lead = [], len } = ctx;
   const e = s.energy;
+  const arpTaken = s.roles.includes('arp') || (s.enter || []).includes('arp') || (s.extra || []).some((r) => r === 'color' || r === 'bells');
   switch (role) {
     case 'counter': {
       const range = SLOW.has(g.id) ? [57, 76] : [55, 74];
@@ -422,7 +429,7 @@ function melodicPart(role, g, s, ctx) {
       return generateCounterMelody({ melody: lead, progression, key: root, scale, rng, beatsPerBar: bpb, length: len, density: s.kind === 'main' ? 0.45 + e * 0.35 : 0.3, range });
     }
     case 'strings': {
-      if (s.kind === 'build') return arpFigures(progression, { mode: 'updown', rate: 0.5, beatsPerBar: bpb, length: len, lo: 60, hi: 84, gate: 0.85, rng, vel: 0.45 + e * 0.2 });
+      if (s.kind === 'build' && !arpTaken) return arpFigures(progression, { mode: 'updown', rate: 0.5, beatsPerBar: bpb, length: len, lo: 60, hi: 84, gate: 0.85, rng, vel: 0.45 + e * 0.2 });
       return topVoices(padPart(progression, { range: [64, 88], rng, length: len, vel: 0.45 + e * 0.2, center: 74 }), 3);
     }
     case 'brass': {
@@ -434,8 +441,8 @@ function melodicPart(role, g, s, ctx) {
     }
     case 'guitar': {
       const st = GUITAR_STYLE[g.id];
-      if (g.id === 'afrobeat' || g.id === 'amapiano' || g.family === 'chill' || g.id === 'lofi-hip-hop' || st === 'arp') {
-        return arpFigures(progression, { mode: 'up', rate: st === 'arp' ? 0.5 : 0.25, beatsPerBar: bpb, length: len, lo: 59, hi: 81, gate: 0.5, rng, vel: 0.5 + e * 0.2 });
+      if (!arpTaken && (g.id === 'afrobeat' || g.id === 'amapiano' || g.family === 'chill' || g.id === 'lofi-hip-hop' || st === 'arp')) {
+        return arpFigures(progression, { mode: 'up', rate: 0.5, beatsPerBar: bpb, length: len, lo: 59, hi: 81, gate: 0.5, rng, vel: 0.5 + e * 0.2 });
       }
       const notes = progressionToNotes(progression, { style: st || 'strum', rng, beatsPerBar: bpb, length: len, vel: 0.55 + e * 0.2, motion: true, motionRange: [52, 79] });
       return topVoices(notes, 4);

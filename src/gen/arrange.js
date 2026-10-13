@@ -21,6 +21,9 @@ export function sectionType(name = '') {
 
 const MELODIC = ['bass', 'chords', 'pad', 'lead', 'arp'];
 
+/** Genres where a running arpeggio is the idiom (it may carry whole sections); elsewhere an arp is a seasoning. */
+export const ARP_HOME = new Set(['trance', 'psytrance', 'progressive-house', 'synthwave', 'outrun', 'eurobeat', 'chiptune', 'idm', 'future-bass', 'hardstyle', 'techno', 'minimal']);
+
 /**
  * Expand the genre structure into section instances with orchestration applied.
  * -> [{name, label, kind, type, bars, energy, roles:[...], occurrence, index, start (beats)}]
@@ -48,6 +51,15 @@ export function planSections(genre, { bpb = 4, available, structure, evolve = tr
   for (const s of out) {
     const has = (r) => s.roles.includes(r);
     const drop = (r) => { s.roles = s.roles.filter((x) => x !== r); };
+    // arp budget: outside its home genres the arp only lifts builds and the last chorus (and never fights a lead there);
+    // even at home it sits out intros, outros and the first verse
+    if (has('arp')) {
+      const home = ARP_HOME.has(genre.id);
+      const finalMain = s.kind === 'main' && s.occurrence === lastOfType[s.type];
+      const keep = home ? !['intro', 'outro'].includes(s.kind) && !(s.kind === 'verse' && s.occurrence === 1)
+        : s.kind === 'build' || (finalMain && !has('lead')) || (s.kind === 'break' && !has('lead') && !has('chords'));
+      if (!keep) drop('arp');
+    }
     if (s.kind === 'verse') {
       if (s.occurrence === 1) { if (has('pad') && has('chords')) drop('pad'); if (has('arp') && has('lead')) drop('arp'); }
       if (has('fx')) drop('fx');
@@ -65,7 +77,7 @@ export function planSections(genre, { bpb = 4, available, structure, evolve = tr
     for (const s of out) {
       if (s.bars < 16 || !(s.kind === 'verse' || s.kind === 'main') || (s.occurrence < 2 && s.bars < 32)) continue;
       if (s.roles.filter((r) => MELODIC.includes(r)).length >= 5) continue;
-      const role = ['arp', 'pad', 'chords'].find((r) => !s.roles.includes(r) && (!available || available.has(r)));
+      const role = (ARP_HOME.has(genre.id) ? ['arp', 'pad', 'chords'] : ['pad', 'chords']).find((r) => !s.roles.includes(r) && (!available || available.has(r)));
       if (role) s.enter = [role];
     }
   }
