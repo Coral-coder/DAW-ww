@@ -5,7 +5,7 @@
 // device panel and automation keep working. Device boxes are DOM (so they can host knobs),
 // cables are drawn in an SVG layer on top (pointer events only on the strokes).
 import { h, icon, clear, startDrag } from '../dom.js';
-import { knob, button, iconButton, contextMenu, trackSelect } from '../components.js';
+import { knob, button, iconButton, contextMenu, trackSelect, markAuto } from '../components.js';
 import { isTyping } from '../keyboard.js';
 import { createEffect } from '../../core/model.js';
 import { clamp } from '../../core/util.js';
@@ -687,6 +687,7 @@ export function createPatchView(app) {
         def: GAIN_DEF, value: c.gain, size: 26, label: false,
         onChange: (v) => editTrack('Cable level', (tt) => { const cc = tt.patch.cables.find((x) => x.id === c.id); if (cc) cc.gain = v; }, { coalesce: true }),
       });
+      markAuto(overlayKnob, t.id, `cable:${c.id}`); // automation recording / follow / right-click lane menu
       const del = iconButton('trash', () => { sel = { type: 'cable', id: c.id }; removeSelected(); }, 'Remove this cable (Del)', 'pb-pop-del');
       overlay.append(overlayKnob, del);
     } else overlayKnob?.setValue(c.gain);

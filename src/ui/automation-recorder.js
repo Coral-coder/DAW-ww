@@ -109,7 +109,7 @@ export function installAutomationRecorder(app) {
         let lane = o.automation.find((l) => l.target === r.target);
         if (!lane) { lane = createAutomationLane(r.target, []); o.automation.push(lane); }
         lane.points = mergeTake(lane.points, r.segments, {
-          staticValue: r.staticValue, stepped: !!r.def.stepped, eps: 0.004,
+          staticValue: r.staticValue, stepped: !!r.def.stepped, eps: 0.008,
           norm: (v) => toNorm(r.def, v),
         });
       }
@@ -265,9 +265,12 @@ export function installAutomationRecorder(app) {
   let laneIndex = new Map();
   let laneIndexOf = null;
   const infoCache = new Map();
+  let storeVersion = 0;
+  store.on('change', () => { storeVersion++; });
+  store.on('load', () => { storeVersion++; });
   function rebuildIndex(p) {
-    if (laneIndexOf === p && laneIndex) return;
-    laneIndexOf = p;
+    if (laneIndexOf === storeVersion && laneIndex) return;
+    laneIndexOf = storeVersion;
     laneIndex = new Map();
     infoCache.clear();
     const ids = [...p.tracks.map((t) => t.id), ...(p.buses || []).map((b) => b.id), 'master'];

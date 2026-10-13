@@ -145,8 +145,12 @@ export function generatePartNotes(role, opts = {}) {
       for (let off = 0; off < length; off += pat.length || length) for (const n of pat.notes) if (n.pitch === 36 && off + n.start < length) kickNotes.push(off + n.start);
     }
   }
-  const notes = generateRoleNotes(role, { genre: opts.genre, key: root, scale, progression, bars, beatsPerBar: bpb, energy: opts.energy ?? 0.85, kind: 'main', rng, kickNotes });
-  return notes.filter((n) => n.start < length);
+  const notes = generateRoleNotes(role, { genre: opts.genre, key: root, scale, progression, bars, beatsPerBar: bpb, energy: opts.energy ?? 0.85, kind: 'main', rng, kickNotes }).filter((n) => n.start < length);
+  // human feel (opts.groove === false keeps the grid): the genre's swing / micro-timing / accents
+  if (opts.groove === false || role === 'fx') return notes;
+  const g = getGenre(opts.genre);
+  const style = role === 'drums' ? DRUM_STYLES[resolveDrumStyle(g?.drumStyle || opts.genre)] : null;
+  return applyGroove(notes, { genre: opts.genre, role, bpm: opts.project?.bpm || g?.defaultBpm || 120, rng, length, tripletGrid: style?.grid === 12, energy: opts.energy ?? 0.85 });
 }
 
 // ---------------------------------------------------------------------------------------------------------------

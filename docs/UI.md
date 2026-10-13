@@ -25,6 +25,9 @@ app.toast(msg, {level:'info'|'success'|'warn'|'error'})
 app.setStatus(text)  status-bar message
 app.showView(id)
 app.emitLiveNote  (set by piano view if it wants to highlight keys) — optional hook
+app.automation   automation recorder (src/ui/automation-recorder.js): recording, armed, toggleArm(), setMode(m),
+                 recordingKeys(), liveSegments(owner, target), isWriting(owner, target), revealLane(owner, target),
+                 on('update'|'tick'|'state', fn). UI keys: autoArm, autoMode ('touch'|'latch'|'write')
 ```
 
 ## View / panel factory signature
@@ -40,6 +43,11 @@ export function createXView(app) { return { el, show?(), hide?() } }
 * Edits: always via `store.transact(label, fn)`; use `{coalesce:true}` while dragging and a final transact on release
   (or coalesce throughout — coalescing merges into one undo step).
 * Canvas drawing: use `fitCanvas(canvas)` from `src/ui/dom.js` for HiDPI; redraw on resize (ResizeObserver).
+* Automation: tag every control that edits an automatable setting with `markAuto(el, ownerId, target)`
+  (ownerId = track id | bus id | 'master'; `paramPanel({auto:{owner, prefix}})` tags its controls). Tagged controls
+  follow their lanes during song playback (via `el.autoSet(v)` or `el.setValue(v)`), get a dot marker and the
+  right-click "Show / Add / Clear automation lane" menu. Custom drag controls should call `touchStart(el)` /
+  `touchEnd(el)` so TOUCH-mode recording knows when the user lets go. Target metadata: `src/ui/automation-targets.js`.
 * Reuse components from `src/ui/components.js` (knob, fader, toggle, select, numberField, button, iconButton,
   paramPanel, meter, modal, toast, contextMenu, promptText, confirmDialog, tabs, fileInput) and `h`, `icon`,
   `startDrag`, `fitCanvas`, `cssVar` from `src/ui/dom.js`.

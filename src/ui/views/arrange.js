@@ -8,10 +8,10 @@ import { uid, clamp, deepClone } from '../../core/util.js';
 import {
   MIXER_TARGETS, parseTarget, createAutomationLane, valueAt, sortPoints, toNorm, fromNorm,
   replaceRange, rampPoints, lfoPoints,
+  automationOwner,
 } from '../../core/automation.js';
-import { INSTRUMENT_DEFS } from '../../audio/defs.js';
-import { EFFECT_DEFS, resolveEffectParams } from '../../audio/effect-defs.js';
-import { resolveInstrumentDef } from '../../audio/presets.js';
+import { splitKey } from '../../core/automation-record.js';
+import { targetGroups as autoTargetGroups, targetInfo as autoTargetInfo, ownerView, formatLaneValue } from '../automation-targets.js';
 import { isTyping } from '../keyboard.js';
 
 // ----------------------------------------------------------------------------- constants
@@ -20,6 +20,7 @@ const MARK_H = 18;
 const LOOP_H = 14;
 const TOP_H = RULER_H + MARK_H + LOOP_H;
 const ADD_ROW_H = 46;
+const OWNER_H = 28; // header row of a bus / master automation owner (below the tracks)
 const MIN_PPB = 1.2;
 const MAX_PPB = 480;
 const MIN_LANE = 26;
@@ -365,6 +366,24 @@ export function createArrangeView(app) {
     return Math.max(end + bpb * 32, (scroller.clientWidth || 800) / ppb + bpb * 4);
   }
   // Rows: every track lane (laneH) is followed by its automation lanes (AUTO_H each) when shown.
+  // Below the tracks (after the "add track" row): one row per return bus and the master, each with
+  // its own automation lanes (same lane UI / tools as track lanes).
+  /** Lanes shown for an owner: its lanes + virtual lanes for targets being recorded right now. */
+  function shownLanes(o) {
+    const lanes = [...(o.automation || [])];
+    for (const key of app.automation?.recordingKeys?.() || []) {
+      const { owner, target } = splitKey(key);
+      if (owner === o.id && !lanes.some((l) => l.target === target)) lanes.push({ id: `rec:${target}`, target, points: [], enabled: true, virtual: true });
+    }
+    return lanes;
+  }
+  function pushAuto(r, o, y) {
+    if (!autoOpen.has(o.id)) return y;
+    const lanes = shownLanes(o);
+    if (!lanes.length) { r.auto.push({ lane: null, idx: -1, y }); return y + AUTO_H; }
+    lanes.forEach((lane, idx) => { r.auto.push({ lane, idx, y }); y += AUTO_H; });
+    return y;
+  }
   function rowsLayout() {
     const p = get();
     const rows = [];
@@ -373,38 +392,46 @@ export function createArrangeView(app) {
       const t = p.tracks[i];
       const r = { t, i, y, auto: [] };
       y += laneH;
-      if (autoOpen.has(t.id)) {
-        const lanes = t.automation || [];
-        if (!lanes.length) { r.auto.push({ lane: null, idx: -1, y }); y += AUTO_H; }
-        else lanes.forEach((lane, idx) => { r.auto.push({ lane, idx, y }); y += AUTO_H; });
-      }
+      y = pushAuto(r, t, y);
       r.h = y - r.y;
       rows.push(r);
     }
-    return { rows, total: y };
+    const tracksEnd = y;
+    y += ADD_ROW_H;
+    const extra = [];
+    for (const id of [...(p.buses || []).map((b) => b.id), 'master']) {
+      const o = ownerView(p, id);
+      if (!o) continue;
+      const r = { t: o, i: -1, y, auto: [], extra: true };
+      y += OWNER_H;
+      y = pushAuto(r, o, y);
+      r.h = y - r.y;
+      extra.push(r);
+    }
+    return { rows, extra, tracksEnd, total: y };
   }
   /** Index of the row containing content-y (−1 above, rows.length below). */
   function rowAt(L, y) {
     if (y < 0) return -1;
-    if (y >= L.total) return L.rows.length;
+    if (y >= L.tracksEnd) return L.rows.length;
     let lo = 0, hi = L.rows.length - 1, ans = 0;
     while (lo <= hi) { const m = (lo + hi) >> 1; if (L.rows[m].y <= y) { ans = m; lo = m + 1; } else hi = m - 1; }
     return ans;
   }
-  const trackY = (L, i) => (i < L.rows.length ? L.rows[Math.max(0, i)].y : L.total);
+  const trackY = (L, i) => (i < L.rows.length ? L.rows[Math.max(0, i)].y : L.tracksEnd);
 
   function layout() {
     const p = get();
     const L = rowsLayout();
     body.style.setProperty('--arr-head-w', headW + 'px');
     spacer.style.width = Math.ceil(totalBeats() * ppb) + 'px';
-    spacer.style.height = (L.total + ADD_ROW_H + 24) + 'px';
+    spacer.style.height = (L.total + 24) + 'px';
     const w = scroller.clientWidth, hh = scroller.clientHeight;
     canvas.style.width = w + 'px';
     canvas.style.height = hh + 'px';
     topCanvas.style.width = w + 'px';
-    headsInner.style.height = (L.total + ADD_ROW_H + 24) + 'px';
-    addRow.style.top = L.total + 'px';
+    headsInner.style.height = (L.total + 24) + 'px';
+    addRow.style.top = L.tracksEnd + 'px';
     void p;
     addRow.style.height = ADD_ROW_H + 'px';
     syncScrollY();
@@ -566,8 +593,63 @@ export function createArrangeView(app) {
         const y = a.y - sy;
         if (y > H || y + AUTO_H < 0) continue;
         drawAutoLane(ctx, p, tracks[i], a, y, W, sx, b0, b1);
+        drawRecOverlay(ctx, tracks[i], a, y, W, sx);
       }
     }
+    // bus / master owner rows and their lanes
+    for (const r of L.extra) {
+      const y0 = r.y - sy;
+      if (y0 > H || y0 + r.h < 0) continue;
+      ctx.fillStyle = theme.laneA;
+      ctx.fillRect(0, y0, W, OWNER_H);
+      ctx.fillStyle = rgba(hexToRgb(r.t.color), 0.5);
+      ctx.fillRect(0, y0, W, 1);
+      ctx.fillStyle = theme.text3;
+      ctx.font = `10.5px ${theme.font}`;
+      ctx.textBaseline = 'middle';
+      if (!r.auto.length) ctx.fillText(`${r.t.kind === 'master' ? 'Master' : 'Return bus'} ${r.t.name} — click “A” on the left to show its automation lanes`, 10, y0 + OWNER_H / 2);
+      if (r.auto.length) { ctx.fillStyle = theme.autoBg; ctx.fillRect(0, y0 + OWNER_H, W, r.h - OWNER_H); }
+      ctx.fillStyle = theme.line;
+      ctx.fillRect(0, y0 + r.h - 1, W, 1);
+      for (const a of r.auto) {
+        const y = a.y - sy;
+        if (y > H || y + AUTO_H < 0) continue;
+        ctx.fillStyle = theme.autoLine;
+        ctx.fillRect(0, y, W, 1);
+        drawAutoLane(ctx, p, r.t, a, y, W, sx, b0, b1);
+        drawRecOverlay(ctx, r.t, a, y, W, sx);
+      }
+    }
+  }
+
+  /** Red overlay of what is being written into a lane right now (automation recording). */
+  function drawRecOverlay(ctx, t, a, y, W, sx) {
+    if (!a.lane || !app.automation?.recording) return;
+    const segs = app.automation.liveSegments(t.id, a.lane.target);
+    if (!segs.length) return;
+    const def = targetInfo(t, a.lane.target).def;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, y + 1, W, AUTO_H - 1);
+    ctx.clip();
+    for (const sg of segs) {
+      const x0 = sg.start * ppb - sx, x1 = Math.max(sg.start, sg.end) * ppb - sx;
+      if (x1 < -2 || x0 > W + 2) continue;
+      ctx.fillStyle = 'rgba(255,77,77,0.16)';
+      ctx.fillRect(x0, y + 1, Math.max(2, x1 - x0), AUTO_H - 2);
+      ctx.beginPath();
+      let last = null;
+      sg.points.forEach((pt, k) => {
+        const x = pt.beat * ppb - sx, yy = autoY(y, def, pt.value);
+        if (k) { ctx.lineTo(x, autoY(y, def, last.value)); ctx.lineTo(x, yy); } else ctx.moveTo(x, yy);
+        last = pt;
+      });
+      if (last) ctx.lineTo(x1, autoY(y, def, last.value));
+      ctx.strokeStyle = '#ff4d4d';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   function drawGrid(ctx, W, H, b0, b1, bpb, sx) {
@@ -763,59 +845,14 @@ export function createArrangeView(app) {
   }
 
   // ------------------------------------------------------------------ automation: targets
-  const numDefs = (defs) => (defs || []).filter((d) => d.type === 'number');
-  /** Grouped automation targets for a track: [{ name, kind, items:[{target, label, def, section}] }] */
-  function targetGroups(t) {
-    const p = get();
-    const groups = [];
-    const mixer = [
-      { target: 'volume', label: 'Volume', def: MIXER_TARGETS.volume },
-      { target: 'pan', label: 'Pan', def: MIXER_TARGETS.pan },
-      ...(p.buses || []).map((b) => ({ target: `send:${b.id}`, label: `Send → ${b.name}`, def: MIXER_TARGETS.send })),
-    ];
-    groups.push({ name: 'Mixer', kind: 'mixer', items: mixer });
-    if (t.type === 'instrument' && t.instrument) {
-      const { type } = resolveInstrumentDef(t.instrument);
-      const idef = INSTRUMENT_DEFS[type];
-      if (idef) groups.push({ name: `Instrument · ${idef.name}`, kind: 'inst', items: numDefs(idef.params).map((d) => ({ target: `inst:${d.key}`, label: d.label, def: d, section: d.section || 'Main' })) });
-    }
-    (t.fx || []).forEach((f, k) => {
-      const ed = EFFECT_DEFS[f.type];
-      if (!ed) return;
-      groups.push({ name: `FX ${k + 1} · ${ed.name}`, kind: 'fx', fxId: f.id, items: numDefs(ed.params).map((d) => ({ target: `fx:${f.id}:${d.key}`, label: d.label, def: d, section: d.section })) });
-    });
-    return groups;
-  }
+  // target metadata lives in src/ui/automation-targets.js (shared with the recorder / mixer / device panel)
+  /** Grouped automation targets of an owner (track or bus / master view): [{ name, kind, items }] */
+  const targetGroups = (t) => autoTargetGroups(get(), t.id);
+  /** { label, def, staticValue, missing } for a lane target on owner t. */
+  const targetInfo = (t, target) => autoTargetInfo(get(), t.id, target);
+  const ownerById = (id) => ownerView(get(), id);
 
-  /** { label, def, staticValue, missing } for a lane target on track t. */
-  function targetInfo(t, target) {
-    const p = get();
-    const tg = parseTarget(target);
-    const miss = (label) => ({ label, def: { min: 0, max: 1, curve: 'lin', step: 0.01 }, staticValue: 0, missing: true });
-    if (!tg) return miss(`Unknown target (${target})`);
-    if (tg.kind === 'volume') return { label: 'Volume', def: MIXER_TARGETS.volume, staticValue: t.volume ?? 0.8 };
-    if (tg.kind === 'pan') return { label: 'Pan', def: MIXER_TARGETS.pan, staticValue: t.pan || 0 };
-    if (tg.kind === 'send') {
-      const bus = (p.buses || []).find((b) => b.id === tg.busId);
-      if (!bus) return miss('Send → (deleted bus)');
-      return { label: `Send → ${bus.name}`, def: MIXER_TARGETS.send, staticValue: t.sends?.[tg.busId] || 0 };
-    }
-    if (tg.kind === 'inst') {
-      if (t.type !== 'instrument' || !t.instrument) return miss(`${tg.key} (no instrument)`);
-      const res = resolveInstrumentDef(t.instrument);
-      const d = INSTRUMENT_DEFS[res.type]?.params.find((x) => x.key === tg.key);
-      if (!d) return miss(`${tg.key} (not in ${res.type})`);
-      return { label: `${INSTRUMENT_DEFS[res.type].name}: ${d.label}`, def: d, staticValue: res.params[tg.key] ?? d.default };
-    }
-    const fx = (t.fx || []).find((f) => f.id === tg.fxId);
-    const ed = fx && EFFECT_DEFS[fx.type];
-    const d = ed?.params.find((x) => x.key === tg.key);
-    if (!d) return miss(`${tg.key} (effect removed)`);
-    const k = t.fx.indexOf(fx) + 1;
-    return { label: `FX ${k} ${ed.name}: ${d.label}`, def: d, staticValue: resolveEffectParams(fx)[tg.key] ?? d.default };
-  }
-
-  const fmtVal = (def, v) => formatValue({ ...def, type: 'number' }, v);
+  const fmtVal = (def, v) => formatLaneValue(def, v, formatValue);
   const quant = (def, v) => {
     const st = def.step > 0 ? def.step : 0;
     if (st) v = Math.round(v / st) * st;
@@ -915,13 +952,13 @@ export function createArrangeView(app) {
   }
 
   // ------------------------------------------------------------------ automation: editing
-  const findLane = (pp, trackId, laneId) => pp.tracks.find((x) => x.id === trackId)?.automation?.find((l) => l.id === laneId) || null;
+  const findLane = (pp, ownerId, laneId) => automationOwner(pp, ownerId)?.automation?.find((l) => l.id === laneId) || null;
   function editLane(trackId, laneId, label, fn, opts) {
     store.transact(label, (pp) => { const l = findLane(pp, trackId, laneId); if (l) fn(l, pp); }, opts);
   }
 
   function addLane(trackId, target, { points = [] } = {}) {
-    const t = trackById(trackId);
+    const t = ownerById(trackId);
     if (!t) return null;
     autoOpen.add(trackId);
     savePrefs();
@@ -933,23 +970,23 @@ export function createArrangeView(app) {
     }
     const lane = createAutomationLane(target, points);
     store.transact('Add automation lane', (pp) => {
-      const tt = pp.tracks.find((x) => x.id === trackId);
+      const tt = automationOwner(pp, trackId);
       if (tt) tt.automation = [...(tt.automation || []), lane];
     });
-    actions.selectTrack(trackId);
+    if (get().tracks.some((x) => x.id === trackId)) actions.selectTrack(trackId);
     if (get().mode !== 'song') app.setStatus?.('Automation plays in SONG mode (press P) — lanes are ignored in pattern mode.');
     return lane;
   }
 
   function deleteLane(trackId, laneId) {
     store.transact('Delete automation lane', (pp) => {
-      const tt = pp.tracks.find((x) => x.id === trackId);
+      const tt = automationOwner(pp, trackId);
       if (tt) tt.automation = (tt.automation || []).filter((l) => l.id !== laneId);
     });
   }
 
   function setLaneTarget(trackId, laneId, target) {
-    const t = trackById(trackId);
+    const t = ownerById(trackId);
     const lane = t?.automation?.find((l) => l.id === laneId);
     if (!lane || lane.target === target) return;
     if (t.automation.some((l) => l.target === target)) { toast('That parameter already has a lane on this track.', { level: 'warn' }); syncHeaders(); return; }
@@ -995,7 +1032,7 @@ export function createArrangeView(app) {
 
   /** "Add automation ▸" submenu: Mixer ▸ …, Instrument ▸ section ▸ …, Effects ▸ fx ▸ … */
   function addAutomationItems(trackId) {
-    const t = trackById(trackId);
+    const t = ownerById(trackId);
     if (!t) return [];
     const have = new Set((t.automation || []).map((l) => l.target));
     const item = (it) => ({ label: `${have.has(it.target) ? '● ' : ''}${it.label}`, onClick: () => addLane(trackId, it.target) });
@@ -1007,6 +1044,10 @@ export function createArrangeView(app) {
         const sections = new Map();
         for (const it of g.items) { if (!sections.has(it.section)) sections.set(it.section, []); sections.get(it.section).push(it); }
         out.push({ label: g.name.replace('Instrument · ', 'Instrument: '), icon: 'piano', submenu: sections.size > 1 ? [...sections].map(([sec, its]) => ({ label: sec, submenu: its.map(item) })) : g.items.map(item) });
+      } else if (g.kind === 'pads') {
+        const pads = new Map();
+        for (const it of g.items) { if (!pads.has(it.section)) pads.set(it.section, []); pads.get(it.section).push(it); }
+        out.push({ label: 'Drum pads', icon: 'drum', submenu: [...pads].map(([pad, its]) => ({ label: pad, submenu: its.map(item) })) });
       } else if (g.items.length) fxGroups.push({ label: g.name, submenu: g.items.map(item) });
     }
     if (fxGroups.length) out.push({ label: 'Effects', icon: 'wand', submenu: fxGroups });
@@ -1016,7 +1057,7 @@ export function createArrangeView(app) {
 
   function autoTrackMenuItems(trackId) {
     const open = autoOpen.has(trackId);
-    const n = trackById(trackId)?.automation?.length || 0;
+    const n = ownerById(trackId)?.automation?.length || 0;
     return [
       { label: 'Add automation', icon: 'sliders', submenu: addAutomationItems(trackId) },
       { label: `${open ? 'Hide' : 'Show'} automation lanes${n ? ` (${n})` : ''}`, onClick: () => toggleAutoOpen(trackId, !open) },
@@ -1141,16 +1182,23 @@ export function createArrangeView(app) {
       el.append(h('span.arr-ah-empty', 'Automation'), add, iconButton('x', () => toggleAutoOpen(trackId, false), 'Hide automation lanes', 'arr-mini'));
       return { el, update(r, a) { el.style.top = a.y + 'px'; el.style.height = AUTO_H + 'px'; el.style.setProperty('--tc', r.t.color); } };
     }
+    if (laneId.startsWith('rec:')) {
+      // a lane that only exists in the running recording pass (created in the project on stop)
+      const lbl = h('span.arr-ah-reclbl');
+      el.classList.add('rec');
+      el.append(h('div.arr-ah-row', h('span.auto-rec-dot'), lbl), h('div.arr-ah-row', h('span.arr-ah-val.live', 'recording…')));
+      return { el, update(r, a) { el.style.top = a.y + 'px'; el.style.height = AUTO_H + 'px'; el.style.setProperty('--tc', r.t.color); lbl.textContent = targetInfo(r.t, a.lane.target).label; } };
+    }
     let selKey = '';
     let sel = null;
     const selWrap = h('span.arr-ah-selwrap');
     const onT = toggle({ label: 'On', cls: 'arr-ah-on', title: 'Enable / bypass this automation lane', onChange: (v) => editLane(trackId, laneId, 'Toggle automation lane', (l) => { l.enabled = v; }) });
     const val = h('span.arr-ah-val', { title: 'Automated value at the playhead (song mode)' });
-    const more = iconButton('chevronDown', (e) => { const t = trackById(trackId); const l = t?.automation?.find((x) => x.id === laneId); if (l) menuAt(e.currentTarget, laneMenu(t, l)); }, 'Lane options: ramps, LFO shapes, clear, change parameter', 'arr-mini');
+    const more = iconButton('chevronDown', (e) => { const t = ownerById(trackId); const l = t?.automation?.find((x) => x.id === laneId); if (l) menuAt(e.currentTarget, laneMenu(t, l)); }, 'Lane options: ramps, LFO shapes, clear, change parameter', 'arr-mini');
     const del = iconButton('trash', () => deleteLane(trackId, laneId), 'Delete this automation lane', 'arr-mini');
     const add = iconButton('plus', (e) => menuAt(e.currentTarget, addAutomationItems(trackId)), 'Add another automation lane', 'arr-mini');
     el.append(h('div.arr-ah-row', selWrap), h('div.arr-ah-row', onT, val, h('span.spacer'), add, more, del));
-    el.addEventListener('contextmenu', (e) => { e.preventDefault(); const t = trackById(trackId); const l = t?.automation?.find((x) => x.id === laneId); if (l) contextMenu(e, laneMenu(t, l)); });
+    el.addEventListener('contextmenu', (e) => { e.preventDefault(); const t = ownerById(trackId); const l = t?.automation?.find((x) => x.id === laneId); if (l) contextMenu(e, laneMenu(t, l)); });
     return {
       el, val,
       update(r, a) {
@@ -1180,24 +1228,75 @@ export function createArrangeView(app) {
 
   function syncAutoHeaders(L) {
     const seen = new Set();
-    for (const r of L.rows) {
+    for (const r of [...L.rows, ...L.extra]) {
       for (const a of r.auto) {
         const key = `${r.t.id}|${a.lane ? a.lane.id : 'empty'}`;
         seen.add(key);
         let hd = autoHeads.get(key);
         if (!hd) { hd = makeAutoHeader(r.t.id, a.lane?.id || null); autoHeads.set(key, hd); headsInner.insertBefore(hd.el, addRow); }
         hd.update(r, a);
+        hd.el.classList.toggle('recording', !!(a.lane && app.automation?.isWriting?.(r.t.id, a.lane.target)));
       }
     }
     for (const [k, hd] of autoHeads) if (!seen.has(k)) { hd.el.remove(); autoHeads.delete(k); }
+    syncOwnerHeaders(L);
+  }
+
+  // headers of the bus / master owner rows (below the tracks)
+  const ownerHeads = new Map(); // ownerId -> { el, update }
+  function makeOwnerHeader(id) {
+    const name = h('span.arr-oh-name');
+    const kind = h('span.arr-oh-kind');
+    const autoBtn = toggle({ label: 'A', cls: 'auto', title: 'Automation lanes of this return bus / the master: volume, pan, mute and every effect parameter (song mode)', onChange: (v) => toggleAutoOpen(id, v) });
+    const add = iconButton('plus', (e) => menuAt(e.currentTarget, addAutomationItems(id)), 'Add an automation lane', 'arr-mini');
+    const el = h('div.arr-oh', h('span.arr-oh-strip'), kind, name, h('span.spacer'), autoBtn, add);
+    el.addEventListener('contextmenu', (e) => { e.preventDefault(); contextMenu(e, autoTrackMenuItems(id)); });
+    el.addEventListener('dblclick', () => toggleAutoOpen(id));
+    return {
+      el,
+      update(r) {
+        el.style.top = r.y + 'px';
+        el.style.height = OWNER_H + 'px';
+        el.style.setProperty('--tc', r.t.color);
+        if (name.textContent !== r.t.name) name.textContent = r.t.name;
+        kind.textContent = r.t.kind === 'master' ? 'MASTER' : 'BUS';
+        autoBtn.setValue(autoOpen.has(id));
+        autoBtn.classList.toggle('has', (r.t.automation || []).some((l) => l.points?.length));
+      },
+    };
+  }
+  function syncOwnerHeaders(L) {
+    const seen = new Set();
+    for (const r of L.extra) {
+      seen.add(r.t.id);
+      let hd = ownerHeads.get(r.t.id);
+      if (!hd) { hd = makeOwnerHeader(r.t.id); ownerHeads.set(r.t.id, hd); headsInner.appendChild(hd.el); }
+      hd.update(r);
+    }
+    for (const [k, hd] of ownerHeads) if (!seen.has(k)) { hd.el.remove(); ownerHeads.delete(k); }
+  }
+
+  /** Open an owner's lanes (adding the lane when missing is up to the caller) and scroll to it. */
+  function revealAutomation(ownerId, target) {
+    if (!automationOwner(get(), ownerId)) return;
+    autoOpen.add(ownerId);
+    savePrefs();
+    syncHeaders(); layout();
+    const L = rowsLayout();
+    const r = [...L.rows, ...L.extra].find((x) => x.t.id === ownerId);
+    const a = r?.auto.find((x) => x.lane?.target === target) || r?.auto[0];
+    if (a) scroller.scrollTop = Math.max(0, a.y - scroller.clientHeight / 2 + AUTO_H / 2);
+    else if (r) scroller.scrollTop = Math.max(0, r.y - 40);
+    if (r && r.t.id && get().tracks.some((t) => t.id === ownerId)) actions.selectTrack(ownerId);
+    drawNow();
   }
 
   function updateAutoValues(p, L, sy, H) {
     const b = pos();
-    for (const r of L.rows) {
+    for (const r of [...L.rows, ...L.extra]) {
       if (!r.auto.length || r.y + r.h < sy || r.y > sy + H) continue;
       for (const a of r.auto) {
-        if (!a.lane) continue;
+        if (!a.lane || a.lane.virtual) continue;
         const hd = autoHeads.get(`${r.t.id}|${a.lane.id}`);
         if (!hd?.val) continue;
         const info = targetInfo(r.t, a.lane.target);
@@ -1459,7 +1558,7 @@ export function createArrangeView(app) {
     heads.classList.toggle('compact', laneH < 52);
     heads.classList.toggle('tiny', laneH < 36);
     const L = rowsLayout();
-    for (const id of [...autoOpen]) if (!p.tracks.some((t) => t.id === id)) autoOpen.delete(id);
+    for (const id of [...autoOpen]) if (!automationOwner(p, id)) autoOpen.delete(id);
     p.tracks.forEach((t, i) => {
       seen.add(t.id);
       let hd = headers.get(t.id);
@@ -1488,8 +1587,14 @@ export function createArrangeView(app) {
     const p = get();
     const L = rowsLayout();
     const lane = rowAt(L, y);
-    const track = lane >= 0 ? p.tracks[lane] || null : null;
     const beat = x / ppb;
+    if (y >= L.tracksEnd) {
+      // bus / master rows: only their automation lanes are interactive
+      const r = L.extra.find((x) => y >= x.y && y < x.y + x.h);
+      const auto = r && y >= r.y + OWNER_H ? r.auto.find((a) => y >= a.y && y < a.y + AUTO_H) || null : null;
+      return { x, y, beat, lane, track: auto ? r.t : null, clip: null, edge: null, auto, ownerRow: r || null };
+    }
+    const track = lane >= 0 ? p.tracks[lane] || null : null;
     let clip = null, edge = null, auto = null;
     if (track && y >= L.rows[lane].y + laneH) {
       auto = L.rows[lane].auto.find((a) => y >= a.y && y < a.y + AUTO_H) || null;
@@ -1877,7 +1982,8 @@ export function createArrangeView(app) {
     const hit = hitTest(e.clientX, e.clientY);
     if (!hit.track) { if (!e.shiftKey) setSel([]); startRubber(e, hit); return; }
     if (hit.auto) {
-      if (hit.track.id !== ui.get('selectedTrackId')) actions.selectTrack(hit.track.id);
+      if (!hit.ownerRow && hit.track.id !== ui.get('selectedTrackId')) actions.selectTrack(hit.track.id);
+      if (hit.auto.lane?.virtual) return;
       if (hit.auto.lane) startAutoDrag(e, hit);
       else menuAt({ getBoundingClientRect: () => ({ left: e.clientX, bottom: e.clientY }) }, addAutomationItems(hit.track.id));
       return;
@@ -2048,9 +2154,10 @@ export function createArrangeView(app) {
 
   scroller.addEventListener('dblclick', (e) => {
     const hit = hitTest(e.clientX, e.clientY);
+    if (hit.ownerRow && !hit.auto) { toggleAutoOpen(hit.ownerRow.t.id); return; }
     if (!hit.track) { menuAt(addRow, actions.addTrackMenuItems()); return; }
     if (hit.auto) {
-      if (!hit.auto.lane) return;
+      if (!hit.auto.lane || hit.auto.lane.virtual) return;
       const pk = autoPick(hit);
       if (pk.idx >= 0) deletePoint(hit.track.id, hit.auto.lane.id, pk.idx);
       return;
@@ -2064,8 +2171,10 @@ export function createArrangeView(app) {
   scroller.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const hit = hitTest(e.clientX, e.clientY);
+    if (hit.ownerRow && !hit.auto) { contextMenu(e, autoTrackMenuItems(hit.ownerRow.t.id)); return; }
     if (hit.auto) {
       if (!hit.auto.lane) { contextMenu(e, addAutomationItems(hit.track.id)); return; }
+      if (hit.auto.lane.virtual) return;
       const pk = autoPick(hit);
       if (pk.idx >= 0) { deletePoint(hit.track.id, hit.auto.lane.id, pk.idx); return; } // right-click a point deletes it
       contextMenu(e, laneMenu(hit.track, hit.auto.lane));
@@ -2084,7 +2193,7 @@ export function createArrangeView(app) {
     const hit = hitTest(e.clientX, e.clientY);
     if (hit.auto) {
       hoverLine.classList.add('hidden');
-      if (!hit.auto.lane) { scroller.style.cursor = 'pointer'; hideAutoTip(); return; }
+      if (!hit.auto.lane || hit.auto.lane.virtual) { scroller.style.cursor = 'pointer'; hideAutoTip(); return; }
       const pk = autoPick(hit);
       const lane = hit.auto.lane;
       const info = targetInfo(hit.track, lane.target);
@@ -2270,6 +2379,7 @@ export function createArrangeView(app) {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     const hit = hitTest(e.clientX, e.clientY);
+    if (hit.ownerRow) hit.track = null;
     const b = Math.max(0, snapB(hit.beat, null, Math.floor));
     const lane = hit.track ? hit.lane : get().tracks.length;
     dropInd.classList.remove('hidden');
@@ -2283,7 +2393,7 @@ export function createArrangeView(app) {
     dropInd.classList.add('hidden');
     const hit = hitTest(e.clientX, e.clientY);
     const beat = Math.max(0, snapB(hit.beat, null, Math.floor));
-    const track = hit.track;
+    const track = hit.ownerRow ? null : hit.track;
     const dt = e.dataTransfer;
     const sid = dt.getData(DT_SAMPLE);
     if (sid) { await actions.placeSample(sid, { trackId: track?.type === 'audio' ? track.id : undefined, start: beat }); return; }
@@ -2382,6 +2492,16 @@ export function createArrangeView(app) {
     if (r.project || 'selectedClipIds' in r.ui || 'selectedTrackId' in r.ui || 'theme' in r.ui) invalidate();
   });
   engine.on?.('samples', () => { for (const [id, e] of peaks) if (e.status === 'error') peaks.delete(id); invalidate(); });
+  // automation recording: auto-expand the lanes being written and redraw the red recorded segments
+  let recSig = '';
+  app.automation?.on('update', () => {
+    const keys = app.automation.recordingKeys();
+    for (const k of keys) { const o = splitKey(k).owner; if (!autoOpen.has(o)) { autoOpen.add(o); savePrefs(); } }
+    const sig = keys.join(',') + (app.automation.recording ? '#' : '');
+    if (sig !== recSig) { recSig = sig; if (visible) { syncHeaders(); layout(); } else stale = true; }
+    if (visible) { syncHeaders(); invalidate(); }
+  });
+  app.automation?.on('tick', () => { if (visible) invalidate(); });
 
   const ro = new ResizeObserver(() => { if (visible) { layout(); drawNow(); } });
   ro.observe(lanes);
@@ -2404,6 +2524,6 @@ export function createArrangeView(app) {
       if (rafLoop) { cancelAnimationFrame(rafLoop); rafLoop = 0; }
     },
     // exposed for automation / other views
-    zoomToFit, scenesToArrangement: (o) => scenesToArrangement(app, o), getState: () => ({ ppb, laneH, headW, tool, snapMode, stale }),
+    revealAutomation, zoomToFit, scenesToArrangement: (o) => scenesToArrangement(app, o), getState: () => ({ ppb, laneH, headW, tool, snapMode, stale }),
   };
 }
