@@ -1,7 +1,7 @@
 // Arrangement planning (pure): section kinds and harmonic types, orchestration (who plays where — not everything
 // all the time), per-section progressions (verse / chorus / pre-chorus tension / bridge contrast) and automation.
 import { createRng } from '../core/util.js';
-import { getProgression, romanToChord, scalePitchClasses, chordPitchClasses, SCALES } from '../theory/index.js';
+import { getProgression, romanToChord, scalePitchClasses, chordPitchClasses, SCALES, heptatonicParent } from '../theory/index.js';
 import { createAutomationLane } from '../core/automation.js';
 import { pickGenreProgression } from './harmony.js';
 import { sectionKind } from './form.js';
@@ -101,6 +101,98 @@ function preRomans(scale) {
 
 const rotate = (arr, k) => arr.map((_, i) => arr[(i + k) % arr.length]);
 
+// ---- drone / vamp genres: section-level movement over the pedal ('T' = the tonic, i or I by the scale's 3rd).
+// Romans are one bar each (repeats = a longer chord); accidentals are relative to the major scale. Each section type
+// lists candidates; the ones that fit the song's scale best (fewest borrowed chords) are chosen from.
+const DRONE_PLANS = {
+  // psytrance: the rolling pedal on i, phrygian bII tension, bVI–bVII lifts in builds / peaks, a relative-major
+  // (bIII) shift in the breakdown with a modal-mixture IV
+  psy: {
+    intro: [['T', 'T', 'T', 'T', 'T', 'T', 'T', 'bII'], ['T', 'T', 'T', 'T', 'T', 'T', 'bvii', 'T']],
+    verse: [['T', 'T', 'T', 'T', 'T', 'T', 'bII', 'bII'], ['T', 'T', 'T', 'T', 'bVII', 'bVII', 'bII', 'T'], ['T', 'T', 'T', 'T', 'T', 'T', 'bVI', 'bVII'],
+      ['T', 'T', 'T', 'T', 'iv', 'iv', 'bII', 'T']],
+    build: [['bVI', 'bVI', 'bVII', 'bVII'], ['iv', 'iv', 'bVI', 'bVII'], ['bII', 'bII', 'bVII', 'bVII'], ['iv', 'iv', 'bII', 'bII']],
+    chorus: [['T', 'T', 'T', 'T', 'bVI', 'bVII', 'T', 'bII'], ['T', 'T', 'bII', 'T', 'T', 'T', 'bVI', 'bVII'], ['T', 'T', 'T', 'bII', 'bVI', 'bVI', 'bVII', 'bVII'],
+      ['T', 'T', 'T', 'T', 'iv', 'iv', 'bII', 'T']],
+    break: [['bVI', 'bVI', 'bIII', 'bIII', 'bVII', 'bVII', 'T', 'T'], ['iv', 'iv', 'bVI', 'bVI', 'bIII', 'bIII', 'bVII', 'bVII'],
+      ['bVI', 'bVI', 'bVII', 'bVII', 'IV', 'IV', 'T', 'T'], ['iv', 'iv', 'bII', 'bII', 'bvii', 'bvii', 'T', 'T']],
+    outro: [['T', 'T', 'T', 'T', 'T', 'T', 'bII', 'T'], ['T', 'T', 'T', 'T', 'T', 'T', 'bVII', 'T']],
+  },
+  // techno / minimal / tech house: long i with a whole-step (bVII) or iv shift; stabs move between them
+  techno: {
+    intro: [['T', 'T', 'T', 'T', 'T', 'T', 'T', 'bVII'], ['T', 'T', 'T', 'T', 'T', 'T', 'iv', 'T']],
+    verse: [['T', 'T', 'T', 'T', 'T', 'T', 'bVII', 'bVII'], ['T', 'T', 'T', 'T', 'bVI', 'bVI', 'bVII', 'bVII'], ['T', 'T', 'iv', 'iv', 'T', 'T', 'bVII', 'bVII'],
+      ['T', 'T', 'T', 'T', 'IV', 'IV', 'T', 'T']],
+    build: [['bVI', 'bVI', 'bVII', 'bVII'], ['iv', 'iv', 'bVII', 'bVII'], ['IV', 'IV', 'bVII', 'bVII']],
+    chorus: [['T', 'T', 'bVII', 'bVII', 'bVI', 'bVI', 'bVII', 'bVII'], ['T', 'T', 'T', 'T', 'bVI', 'bVII', 'T', 'T'], ['T', 'T', 'iv', 'iv', 'bVI', 'bVI', 'bVII', 'bVII'],
+      ['T', 'T', 'T', 'T', 'IV', 'IV', 'bVII', 'bVII']],
+    break: [['bVI', 'bVI', 'bIII', 'bIII', 'bVII', 'bVII', 'iv', 'iv'], ['bIII', 'bIII', 'bVII', 'bVII', 'bVI', 'bVI', 'bVII', 'bVII'],
+      ['IV', 'IV', 'bVII', 'bVII', 'T', 'T', 'IV', 'IV']],
+    outro: [['T', 'T', 'T', 'T', 'T', 'T', 'bVII', 'T'], ['T', 'T', 'T', 'T', 'T', 'T', 'iv', 'T']],
+  },
+  // ambient: slow (2-bar) drifts between I and its neighbours
+  ambient: {
+    intro: [['T', 'T', 'T', 'T', 'IV', 'IV', 'IV', 'IV'], ['T', 'T', 'T', 'T', 'II', 'II', 'II', 'II']],
+    break: [['vi', 'vi', 'IV', 'IV', 'T', 'T', 'V', 'V'], ['IV', 'IV', 'vi', 'vi', 'II', 'II', 'T', 'T'], ['bVI', 'bVI', 'bVII', 'bVII', 'T', 'T', 'T', 'T']],
+    outro: [['T', 'T', 'T', 'T', 'IV', 'IV', 'T', 'T']],
+  },
+};
+const DRONE_GENRES = { psytrance: 'psy', techno: 'techno', minimal: 'techno', 'tech-house': 'techno', ambient: 'ambient' };
+
+/** Contrasting (lift) progressions for vamp songs: the verse keeps the vamp, the chorus / bridge move. */
+const LIFTS = [
+  ['iv', 'iv', 'bVII', 'bVII'], ['bVI', 'bVII', 'T', 'T'], ['bIII', 'bIII', 'IV', 'IV'], ['bVI', 'bVI', 'bVII', 'bVII'], ['IV', 'IV', 'bVII', 'bVII'],
+  ['IV', 'IV', 'V', 'V'], ['vi', 'vi', 'IV', 'V'], ['IV', 'IV', 'T', 'T'], ['ii', 'ii', 'IV', 'IV'], ['bVII', 'bVII', 'IV', 'IV'], ['vi', 'vi', 'ii', 'V'],
+  ['bVI', 'bVI', 'iv', 'iv'], ['ii', 'ii', 'V', 'V'], ['iii', 'iii', 'vi', 'vi'],
+];
+
+const triadPcs = (c) => chordPitchClasses(c.root, c.type).slice(0, 3);
+const tonicRoman = (scale) => (scalePitchClasses(0, heptatonicParent(scale)).includes(3) && !scalePitchClasses(0, heptatonicParent(scale)).includes(4) ? 'i' : 'I');
+
+/** Resolve 'T' and (optionally) add the main progression's 7th colour to plain romans; null when a roman is invalid. */
+function resolvePlan(romans, root, scale, sevenths) {
+  const T = tonicRoman(scale);
+  const set = new Set(scalePitchClasses(root, heptatonicParent(scale)));
+  const out = romans.map((r) => {
+    const base = r === 'T' ? T : r;
+    if (!sevenths || /\d|sus|maj|°|ø|\+/.test(base)) return base;
+    for (const ext of ['7', 'maj7']) {
+      const c = romanToChord(base + ext, root, scale);
+      if (c && chordPitchClasses(c.root, c.type).every((pc) => set.has(pc))) return base + ext;
+    }
+    return base;
+  });
+  return out.every((r) => romanToChord(r, root, scale)) ? out : null;
+}
+
+/** How many distinct romans of a plan are borrowed (triad outside the scale) — lower fits better. */
+function borrowedCount(romans, root, scale) {
+  const set = new Set(scalePitchClasses(root, heptatonicParent(scale)));
+  return new Set(romans.filter((r) => { const c = romanToChord(r, root, scale); return !c || !triadPcs(c).every((pc) => set.has(pc)); })).size;
+}
+
+/** Pick one of the candidate plans that fits the scale best (ties broken by rng). */
+function pickPlan(cands, { root, scale, rng, sevenths = false, avoid = [] }) {
+  const resolved = cands.map((c) => resolvePlan(c, root, scale, sevenths)).filter(Boolean)
+    .filter((r) => !avoid.some((a) => a && a.join() === r.join()));
+  if (!resolved.length) return null;
+  const scored = resolved.map((r) => ({ r, s: borrowedCount(r, root, scale) }));
+  const best = Math.min(...scored.map((x) => x.s));
+  // allow one more borrowed chord than the best fit (the bII / bVII colours are the idiom), never more than two
+  const pool = scored.filter((x) => x.s <= Math.min(best + 1, Math.max(best, 2)));
+  return rng.pick(pool).r;
+}
+
+/** Distinct chord roots of a set of progression specs (ids / romans arrays). */
+export function planRoots(specs, root, scale) {
+  const roots = new Set();
+  for (const sp of specs) {
+    const p = sp && getProgression(sp);
+    for (const r of p?.romans || []) { const c = romanToChord(r, root, scale); if (c) roots.add(c.root); }
+  }
+  return roots;
+}
+
 /**
  * Choose the progression (romans / library id) for each section type.
  * -> {chorus, verse, pre, bridge, intro, outro, build, break} values: progression id | romans[] (null = chorus)
@@ -126,6 +218,54 @@ export function planSectionHarmony({ genre, root, scale, rng = createRng(1), mai
     }
     plan.intro = plan.verse || main;
     plan.outro = main;
+  }
+  const sevenths = !!mainRomans?.length && mainRomans.every((r) => /\d/.test(r.replace(/^[b#]*[ivIV]+/, '')));
+  const same = (a, b) => {
+    const ra = a && getProgression(a)?.romans, rb = b && getProgression(b)?.romans;
+    return !!ra && !!rb && [...new Set(ra)].sort().join() === [...new Set(rb)].sort().join();
+  };
+  // drone / vamp genres: the pedal stays, but every section type gets its own movement (and the drop / peak loop too)
+  // (a one-chord loop in a non-song form — e.g. glitch on the techno drone — gets the techno plan too)
+  const droneId = DRONE_GENRES[genre.id] || (!songForm && mainRomans && new Set(mainRomans).size === 1 ? 'techno' : null);
+  if (droneId) {
+    const fam = DRONE_PLANS[droneId];
+    for (const type of types) {
+      if (!fam[type]) continue;
+      const p = pickPlan(fam[type], { root, scale, rng });
+      if (p) plan[type] = p;
+    }
+    if (fam.chorus && plan.chorus !== main) plan.main = plan.chorus;
+  } else if (songForm && mainRomans && new Set(mainRomans).size <= 2 && (!plan.verse || same(plan.verse, main))) {
+    // a two-chord vamp: the verse grooves on it, the chorus lifts somewhere new, the bridge somewhere else again
+    const lift = pickPlan(LIFTS.filter((l) => l.some((r) => !mainRomans.includes(r))), { root, scale, rng, sevenths, avoid: [mainRomans] });
+    if (lift && planRoots([lift], root, scale).size >= 2) {
+      plan.verse = main;
+      plan.intro = main;
+      plan.chorus = lift;
+      plan.main = lift;
+      plan.outro = lift;
+      if (types.has('bridge')) plan.bridge = pickPlan(LIFTS, { root, scale, rng, sevenths, avoid: [mainRomans, lift] }) || plan.bridge;
+    }
+  }
+  // songs: the bridge never just repeats the chorus or the verse
+  if (songForm && types.has('bridge') && plan.bridge && (same(plan.bridge, plan.main || main) || same(plan.bridge, plan.verse))) {
+    const alt = pickPlan(LIFTS, { root, scale, rng, sevenths, avoid: [mainRomans, getProgression(plan.verse || main)?.romans] });
+    if (alt && !same(alt, plan.main || main) && !same(alt, plan.verse)) plan.bridge = alt;
+  }
+  // nothing sits on one chord for a whole song: at least two chord roots across the sections
+  const specs = () => [plan.main || main, ...[...types].map((t) => plan[t] || plan.main || main)];
+  if (planRoots(specs(), root, scale).size < 2) {
+    const fam = DRONE_PLANS.techno;
+    const targets = ['verse', 'break', 'build', 'bridge', 'pre'].filter((t) => types.has(t));
+    for (const type of targets) {
+      const p = pickPlan(songForm || !fam[type] ? LIFTS : fam[type], { root, scale, rng, sevenths, avoid: [mainRomans] });
+      if (p) plan[type] = p;
+    }
+    if (planRoots(specs(), root, scale).size < 2) {
+      // only one harmonic section type: the loop itself moves (8 bars: the vamp, then a lift)
+      const lift = pickPlan(fam.chorus, { root, scale, rng, sevenths });
+      if (lift) { plan.main = lift; plan.chorus = lift; }
+    }
   }
   return plan;
 }

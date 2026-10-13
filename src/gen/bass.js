@@ -23,6 +23,9 @@ export const BASS_STYLES = {
 
 const B = (t, d, iv = 0, v = 0.85, extra = {}) => ({ t, d, iv, v, ...extra });
 
+/** Pulsing template styles that get riff answers (octave / 5th / 7th on weak notes every other bar). */
+const TAIL_STYLES = new Set(['offbeat', 'rolling', 'hardstyle', 'synthwave', 'dembow', 'rock', 'pop', 'tech', 'house', 'deep', 'garage', 'boom-bap', 'afro', 'country']);
+
 // Bar templates: iv is a semitone offset from the chord root, or a token: 'oct', '5', '3', 'b7', 'next', 'appr'
 const TEMPLATES = {
   pop: [[B(0, 0.75), B(1.5, 0.5), B(2, 0.75), B(3, 0.5), B(3.5, 0.45, 'appr', 0.7)]],
@@ -200,11 +203,68 @@ export function generateBassline(opts = {}) {
     }
   };
 
+  // riff tokens -> pitch over chord c: R root, O octave, 5 / 3 / 7 chord-scale tones, 6 the key's 6th (else the 5th)
+  const riffPitch = (c, token) => {
+    const r = rootPitch(c);
+    let p;
+    switch (token) {
+      case 'O': p = r + 12; break;
+      case '5': p = r + tok(c, '5'); break;
+      case '3': p = r + tok(c, '3'); break;
+      case '7': p = r + tok(c, 'b7'); break;
+      case '6': { const six = [8, 9].find((i) => keySet.has(mod12(bassPc(c) + i))); p = r + (six ?? tok(c, '5')); break; }
+      default: p = r;
+    }
+    return grinds(mod12(p), c) ? r + (token === 'O' ? 12 : 0) : p;
+  };
+
   switch (style) {
     case 'root':
-    case 'drone':
-      for (const c of progression) push(rootPitch(c), c.startBeat, c.durBeats * 0.98, style === 'drone' ? 0.65 : 0.85);
+    case 'drone': {
+      // a root on the chord, moving to the 5th / octave in the second half of long chords (half-note "two feel"), so
+      // a static chord still has a line under it
+      progression.forEach((c, i) => {
+        const r = rootPitch(c);
+        const v = style === 'drone' ? 0.65 : 0.85;
+        const split = style === 'drone' ? (c.durBeats >= bpb * 2 ? c.durBeats - bpb : 0) : (c.durBeats >= bpb && bpb % 2 === 0 ? c.durBeats / 2 : 0);
+        if (!split) { push(r, c.startBeat, c.durBeats * 0.98, v); return; }
+        push(r, c.startBeat, split - 0.02, v);
+        const up = i % 3 === 1 ? r + 12 : r + tok(c, '5');
+        push(up, c.startBeat + split, (c.durBeats - split) * 0.98, v * 0.9);
+      });
       break;
+    }
+    case 'psy': {
+      // rolling K-B-B-B 16ths: the riff rides the root but answers every 1–2 bars (octave, b7, 5th, 6th) and fills
+      // into every 8th bar — call and response over the pedal
+      const TAIL1 = [['R', 'O', 'R'], ['O', 'R', 'O'], ['7', '5', 'R'], ['O', '7', '5'], ['R', '3', '5'], ['6', '5', 'R'], ['5', 'R', 'O'], ['R', 'R', 'O']];
+      const TAIL2 = [['O', 'R', 'R', '5', 'R', '7'], ['R', 'R', 'O', '7', '5', '6'], ['R', 'O', 'R', '5', 'O', 'R'], ['3', 'R', '5', 'R', 'O', '7'], ['R', '5', 'O', 'R', '7', 'O']];
+      const FILL = [['R', '3', '5', 'O', '7', 'O'], ['O', '7', '6', '5', '3', 'R'], ['5', 'O', 'R', 'O', '5', 'O'], ['O', 'O', '7', '7', '5', '5']];
+      const pick = (arr) => arr[rng.int(0, arr.length - 1)];
+      const phr = [0, 1].map(() => ({ t1: pick(TAIL1), t2: pick(TAIL2), fill: pick(FILL), gap: rng.chance(0.3) }));
+      const vels = [0.8, 0.65, 0.7];
+      for (let b = 0; b < bars; b++) {
+        const pb = b % 8;
+        const ph = phr[Math.floor(b / 8) % 2];
+        const slots = new Array(bpb * 3).fill('R');
+        const put = (cells) => cells.forEach((x, i) => { slots[slots.length - cells.length + i] = x; });
+        if (pb === 1 || pb === 5) put(ph.t2);
+        else if (pb === 3 || pb === 4) put(ph.t1);
+        else if (pb === 7 && bpb >= 2) put(ph.fill);
+        for (let k = 0; k < bpb; k++) {
+          if (pb === 7 && ph.gap && k === bpb - 1 && bars > 1) continue; // a breath before the next phrase
+          for (let j = 0; j < 3; j++) {
+            const t = b * bpb + k + 0.25 * (j + 1);
+            if (t >= length - 1e-6) continue;
+            const c = chordAt(t);
+            const first = t - c.startBeat < 0.3;
+            const token = first ? 'R' : slots[k * 3 + j];
+            push(riffPitch(c, token), t, 0.2, vels[j] * (token === 'R' ? 1 : 1.08) * (0.94 + rng() * 0.06));
+          }
+        }
+      }
+      break;
+    }
     case 'reese':
       for (const c of progression) {
         if (c.durBeats >= bpb * 2 && rng.chance(0.5)) {
@@ -360,6 +420,25 @@ export function generateBassline(opts = {}) {
       break;
     default:
       fromTemplate(TEMPLATES[style] ? style : 'pop');
+  }
+  // riff answers: in the template styles that pulse on one pitch, every 2nd bar answers with octave / 5th / 7th
+  // movement on its last weak notes and the 8th bar of a phrase turns around — the line moves, the groove stays
+  if (TAIL_STYLES.has(style)) {
+    const TAILS = [['O'], ['5', 'O'], ['O', '7'], ['O', '5'], ['7', 'O'], ['5'], ['O', 'O']];
+    const ta = TAILS[rng.int(0, TAILS.length - 1)], tb = TAILS[rng.int(0, TAILS.length - 1)];
+    const strongPos = bpb % 2 === 0 ? [0, bpb / 2] : [0];
+    for (let b = 0; b < bars; b++) {
+      if (b % 2 === 0 && b % 8 !== 6) continue;
+      const tail = b % 8 === 7 ? tb : b % 4 === 3 ? tb : ta;
+      const inBar = out.filter((n) => n.start >= b * bpb - 1e-6 && n.start < (b + 1) * bpb - 1e-6).sort((x, y) => x.start - y.start);
+      const weak = inBar.filter((n) => {
+        const pos = n.start - b * bpb;
+        const c = chordAt(n.start);
+        return !strongPos.some((sp) => Math.abs(pos - sp) < 0.05) && n.start - c.startBeat > 0.3 && n.pitch === rootPitch(c);
+      });
+      const take = weak.slice(-tail.length);
+      take.forEach((n, i) => { n.pitch = riffPitch(chordAt(n.start), tail[tail.length - take.length + i]); });
+    }
   }
   out.sort((a, b) => a.start - b.start || a.pitch - b.pitch);
   return out;

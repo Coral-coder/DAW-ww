@@ -3,7 +3,7 @@ import { createRng, clamp } from '../core/util.js';
 import {
   romanToChord, getProgression, findProgressions, suggestNextChords, isMinorScale,
   chordPitchClasses, chordName, resolveScaleId, mod12, parseKey, scalePitchClasses, SCALES,
-  chordVoicingPcs, voiceChord, keyPitchClasses,
+  chordVoicingPcs, voiceChord, keyPitchClasses, voicingProblem,
 } from '../theory/index.js';
 import { getGenre } from './genres.js';
 import { makeNote } from './note-util.js';
@@ -188,19 +188,25 @@ export const CHORD_RHYTHMS = {
     [H(0, 0.5, 1), H(1.5, 0.25, 0.75), H(2.25, 0.25, 0.7), H(3.5, 0.25, 0.8, { antic: true })],
     [H(0, 0.25, 1), H(1, 0.25, 0.6), H(1.75, 0.25, 0.8), H(2.5, 0.5, 0.75)],
   ],
-  offbeat: [[H(0.5, 0.3, 0.85), H(1.5, 0.3, 0.8), H(2.5, 0.3, 0.85), H(3.5, 0.3, 0.8)]],
+  offbeat: [
+    [H(0.5, 0.3, 0.85), H(1.5, 0.3, 0.8), H(2.5, 0.3, 0.85), H(3.5, 0.3, 0.8)],
+    [H(0.5, 0.3, 0.85), H(1.5, 0.3, 0.8), H(1.75, 0.2, 0.6), H(2.5, 0.3, 0.85), H(3.5, 0.3, 0.8)],
+  ],
   skank: [ // short, choked upstrokes
     [H(1, 0.25, 0.85), H(3, 0.25, 0.85)],
     [H(1, 0.25, 0.85), H(1.5, 0.25, 0.5), H(3, 0.25, 0.85), H(3.5, 0.25, 0.5)],
   ],
-  pulse8: [[0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5].map((t) => H(t, 0.45, t % 1 === 0 ? 0.85 : 0.65))],
+  pulse8: [
+    [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5].map((t) => H(t, 0.45, t % 1 === 0 ? 0.85 : 0.65)),
+    [0, 0.5, 1, 1.5, 2, 2.5, 3].map((t) => H(t, t === 3 ? 0.9 : 0.45, t % 1 === 0 ? 0.85 : 0.65)),
+  ],
   house: [
     [H(0, 0.3, 0.95), H(0.75, 0.3, 0.75), H(1.5, 0.3, 0.85), H(2.5, 0.3, 0.8), H(3, 0.3, 0.75)],
     [H(0.5, 0.3, 0.9), H(1.25, 0.3, 0.7), H(2, 0.3, 0.8), H(2.75, 0.3, 0.75), H(3.5, 0.3, 0.85, { antic: true })],
     [H(0.75, 0.3, 0.85), H(1.5, 0.3, 0.8), H(2.75, 0.3, 0.85), H(3.5, 0.3, 0.8)],
   ],
-  'trance-gate': [[0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5, 3.75]
-    .filter((_, i) => ![3, 7, 11, 14].includes(i)).map((t) => H(t, 0.2, t % 1 === 0 ? 0.9 : 0.6))],
+  'trance-gate': [[3, 7, 11, 14], [2, 5, 10, 13], [1, 5, 9, 11, 15]].map((rests) => [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5, 3.75]
+    .filter((_, i) => !rests.includes(i)).map((t) => H(t, 0.2, t % 1 === 0 ? 0.9 : 0.6))),
   future: [
     [H(0, 0.7, 1), H(0.75, 0.5, 0.75), H(1.5, 0.5, 0.8), H(2.5, 0.25, 0.7), H(3, 0.75, 0.85)],
     [H(0, 0.4, 1), H(0.5, 0.4, 0.7), H(1.5, 0.4, 0.8), H(2, 0.4, 0.7), H(2.75, 0.25, 0.65), H(3.5, 0.5, 0.8, { antic: true })],
@@ -252,9 +258,13 @@ export function progressionToNotes(progression, opts = {}) {
     if (n) out.push(n);
   };
   const chordAt = (t) => progression.find((c) => t >= c.startBeat - 1e-6 && t < c.startBeat + c.durBeats - 1e-6) || progression[progression.length - 1];
+  // motion: a chord that comes back (held over several bars, or the loop's next pass) is re-voiced along an inversion
+  // path, so the top voice sings a line instead of hammering one shape
+  const voicing = opts.motion ? motionVoicings(progression, { rng, range: opts.motionRange }) : null;
+  const notesOf = (c) => (voicing?.get(c) || c.notes);
 
   if (style === 'whole' || style === 'pad' || style === 'sustain' || !CHORD_RHYTHMS[style]) {
-    for (const c of progression) for (const n of c.notes) push(n, c.startBeat, c.durBeats * (opts.gate ?? 0.98), baseVel * 0.9);
+    for (const c of progression) for (const n of notesOf(c)) push(n, c.startBeat, c.durBeats * (opts.gate ?? 0.98), baseVel * 0.9);
     return out;
   }
   const variants = CHORD_RHYTHMS[style];
@@ -262,9 +272,14 @@ export function progressionToNotes(progression, opts = {}) {
   const v0 = rng.int(0, variants.length - 1);
   for (let b = 0; b < bars; b++) {
     // mostly keep one variant for consistency; occasionally switch on odd bars
-    const tpl = variants[b % 2 === 1 && variants.length > 1 && rng.chance(0.35) ? (v0 + 1) % variants.length : v0];
+    let vi = b % 2 === 1 && variants.length > 1 && rng.chance(0.35) ? (v0 + 1) % variants.length : v0;
+    // motion: the 4th bar of a phrase answers with another rhythm, the 8th breathes (rests on the last beat)
+    if (voicing && b % 4 === 3 && variants.length > 1) vi = (v0 + 1 + (b >> 3)) % variants.length;
+    const tpl = variants[vi];
+    const breath = voicing && b % 8 === 7 && bars > 4;
     for (const h of tpl) {
       if (h.t >= bpb) continue;
+      if (breath && h.t >= bpb - 1 && !h.antic) continue;
       const t = b * bpb + h.t;
       if (t >= length) continue;
       let chord = chordAt(t);
@@ -276,7 +291,7 @@ export function progressionToNotes(progression, opts = {}) {
       const chordEnd = chord.startBeat + chord.durBeats;
       const dur = h.antic ? h.d : Math.min(h.d, Math.max(0.1, chordEnd - t));
       const vel = baseVel * h.v * (0.92 + rng() * 0.08);
-      const notes = chord.notes.slice().sort((a, x) => a - x);
+      const notes = notesOf(chord).slice().sort((a, x) => a - x);
       if (typeof h.voice === 'number') {
         const idx = h.voice < 0 ? notes.length + h.voice : h.voice % notes.length;
         push(notes[clamp(idx, 0, notes.length - 1)], t, dur, vel);
@@ -298,10 +313,126 @@ export function progressionToNotes(progression, opts = {}) {
       const nxt = chordAt(b * bpb + bpb + 1e-3);
       const busy = out.some((n) => n.start < t + 0.25 - 1e-6 && n.start + n.dur > t + 1e-6);
       if (nxt && nxt !== cur && t + 0.25 < length && !busy) {
-        for (const p of nxt.notes) push(p - 1, t, 0.22, baseVel * 0.55);
+        for (const p of notesOf(nxt)) push(p - 1, t, 0.22, baseVel * 0.55);
       }
     }
   }
+  return out;
+}
+
+/**
+ * The voicing moved `k` inversions (k > 0: the lowest note goes up an octave, k < 0: the highest comes down), or null
+ * when it leaves `range` or breaks the low-interval limits (voicingProblem).
+ */
+export function invertVoicing(notes, k, range = [48, 86]) {
+  let v = [...new Set(notes)].sort((a, b) => a - b);
+  if (!v.length) return null;
+  for (let i = 0; i < Math.abs(k); i++) {
+    if (k > 0) { let up = v.shift() + 12; while (v.includes(up)) up += 12; v.push(up); }
+    else { let dn = v.pop() - 12; while (v.includes(dn)) dn -= 12; v.unshift(dn); }
+    v.sort((a, b) => a - b);
+  }
+  if (v[0] < range[0] || v[v.length - 1] > range[1] || voicingProblem(v)) return null;
+  return v;
+}
+
+/** Inversion paths (per return of the same chord) — a small arch, so the top voice moves and comes home. */
+const MOTION_PATHS = [[0, 1, 0, -1], [0, 1, 2, 1], [0, -1, 0, 1], [0, 1, 1, 0, -1, 0], [0, 0, 1, -1], [0, 2, 1, 0]];
+
+/** Map progression entry -> voicing: each return of a chord (same root / type) takes the next step of an inversion path. */
+export function motionVoicings(progression, { rng = createRng(1), range = [48, 86], path } = {}) {
+  const p = path || MOTION_PATHS[rng.int(0, MOTION_PATHS.length - 1)];
+  const seen = new Map();
+  const out = new Map();
+  for (const c of progression) {
+    if (!c.chord || c.chord.type === '5' || !c.notes?.length) { out.set(c, c.notes); continue; }
+    const key = `${c.chord.root}|${c.chord.type}`;
+    const k = seen.get(key) || 0;
+    seen.set(key, k + 1);
+    const step = p[k % p.length];
+    out.set(c, (step && (invertVoicing(c.notes, step, range) || invertVoicing(c.notes, -step, range))) || c.notes);
+  }
+  return out;
+}
+
+const PASS_PATH = [0, -1, 0, 1, 0, -1];
+const ARCH = [0, 1, 2, 1, 0, -1, -2, -1];
+
+/** Every clean voicing of the same notes (inversions ±2, with and without an open 2nd voice) inside range, by top note. */
+export function voicingStates(v, range) {
+  const seen = new Map();
+  for (let k = -2; k <= 2; k++) {
+    const inv = k ? invertVoicing(v, k, range) : v.slice().sort((a, b) => a - b);
+    if (!inv) continue;
+    const cands = [inv];
+    if (inv.length >= 4) {
+      const open = [inv[0], ...inv.slice(2), inv[1] + 12].sort((a, b) => a - b);
+      if (open[open.length - 1] <= range[1] && !voicingProblem(open)) cands.push(open);
+    }
+    for (const c of cands) seen.set(c.join(), c);
+  }
+  return [...seen.values()].sort((a, b) => a[a.length - 1] - b[b.length - 1] || a[0] - b[0]);
+}
+const sameChord = (a, b) => !!a?.chord && !!b?.chord && a.chord.root === b.chord.root && a.chord.type === b.chord.type;
+
+/**
+ * Pad part: sustained, voice-led voicings (4 voices, `range`), common tones tied across chords and repeats of the same
+ * chord re-voiced along a slow inversion path, so the inner voices move while the pad holds.
+ * opts: {range=[55,74], maxVoices=4, center=63, bpb, length, vel=0.6, rng} -> Note[]
+ */
+export function padPart(progression, opts = {}) {
+  const rng = opts.rng || createRng(opts.seed ?? 1);
+  const range = opts.range || [55, 74];
+  const length = opts.length ?? progression.reduce((m, c) => Math.max(m, c.startBeat + c.durBeats), 0);
+  const vel = (opts.vel ?? 0.6) * 0.9;
+  const center = opts.center ?? 63;
+  const archOff = rng.chance(0.5) ? 0 : 4;
+  const drift = [0, 1, 2, 1, 0, -1];
+  const out = [];
+  let prev = [];
+  let open = new Map();
+  let runStart = null;
+  let runIdx = 0;
+  const passes = new Map();
+  progression.forEach((c, i) => {
+    let v;
+    const repeat = i > 0 && sameChord(progression[i - 1], c);
+    if (repeat && runStart) {
+      // a held chord: walk through its voicings (inversions / open spacings) in an arch, so the top voice sings a
+      // slow line and inner voices move while the common tones stay tied
+      runIdx++;
+      const states = voicingStates(runStart, [range[0] - 2, range[1] + 2]);
+      const home = Math.max(0, states.findIndex((x) => x.join() === runStart.join()));
+      const idx = Math.max(0, Math.min(states.length - 1, home + ARCH[(runIdx + archOff) % ARCH.length]));
+      v = states[idx] || runStart;
+    } else {
+      v = c.chord?.type === '5' ? c.notes.map((n) => (n < 52 ? n + 12 : n))
+        : voiceChord(c.chord, { prev, range, maxVoices: opts.maxVoices || 4, context: c.notes, center: center + drift[i % drift.length] });
+      if (!v.length) v = c.notes;
+      // a chord that comes back on a later pass of the loop is voiced a step higher / lower (the pad's top line arcs)
+      const key = c.chord ? `${c.chord.root}|${c.chord.type}` : String(i);
+      const k = passes.get(key) || 0;
+      passes.set(key, k + 1);
+      const step = PASS_PATH[k % PASS_PATH.length];
+      if (step) v = invertVoicing(v, step, [range[0] - 2, range[1]]) || invertVoicing(v, -step, [range[0] - 2, range[1]]) || v;
+      runStart = v;
+      runIdx = 0;
+    }
+    const end = c.startBeat + c.durBeats;
+    const next = new Map();
+    for (const p of v) {
+      const held = open.get(p);
+      if (held && held.start + held.dur >= c.startBeat - 0.25) {
+        held.dur = Math.round((Math.min(length, end - 0.02 * c.durBeats) - held.start) * 10000) / 10000;
+        next.set(p, held);
+      } else {
+        const n = makeNote(p, c.startBeat, c.durBeats * 0.98, vel, length);
+        if (n) { out.push(n); next.set(p, n); }
+      }
+    }
+    open = next;
+    prev = v;
+  });
   return out;
 }
 
