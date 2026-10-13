@@ -172,3 +172,11 @@ select.dv-preset:focus { border: 0; outline: 1px solid var(--accent); }
 .dv-params .param-section:not([open]) > summary { writing-mode: vertical-rl; padding: 8px 5px; white-space: nowrap; flex: 1; }
 .dv-params .param-section:not([open]) > summary::before { transform: rotate(90deg); }
 .dv-params .param-section:not([open]):hover { border-color: var(--accent); }
+
+/* narrow device panel: shortcut buttons collapse to icons so the header doesn't scroll them out of view */
+.device-header { container-type: inline-size; }
+@container (max-width: 820px) {
+  .dv-header-row .btn.small > span:not(.icon) { display: none; }
+  .dv-header-row .btn.small { padding-left: 6px; padding-right: 6px; }
+  select.dv-preset { max-width: 160px; }
+}

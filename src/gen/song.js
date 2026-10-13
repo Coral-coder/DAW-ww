@@ -3,7 +3,7 @@
 import { createRng, uid, clamp } from '../core/util.js';
 import { PRESETS } from '../audio/presets.js';
 import { createTrack, createPattern, createClip, createScene, createNote, TRACK_COLORS } from '../core/model.js';
-import { parsePitchClass, resolveScaleId, mod12, getProgression } from '../theory/index.js';
+import { parsePitchClass, resolveScaleId, mod12, getProgression, pitchClassName, keyPrefersFlats } from '../theory/index.js';
 import { GENRES, getGenre, ROLES } from './genres.js';
 import { generateDrumPattern } from './drums.js';
 import { generateProgression, progressionToNotes, pickGenreProgression, progressionBars, resolveKey } from './harmony.js';
@@ -207,7 +207,10 @@ export function generateSong(opts = {}) {
           genre: g.id, key: root, scale, progression: role === 'drums' ? undefined : progression, bars: role === 'drums' ? drumBars : loopBars,
           beatsPerBar: bpb, energy: section.energy, kind, rng: secRng, kickNotes: role === 'bass' ? kick : undefined,
         });
-        pat = createPattern(track.id, { name: `${ROLE_INFO[role].name} – ${section.name}`, length: bars * bpb, notes: notes.filter((n) => n.start < bars * bpb), color: track.color });
+        let pname = `${ROLE_INFO[role].name} – ${section.name}`;
+        // the same section can recur at another energy (A / B / A'): keep pattern names unique per track
+        for (let k = 2; Object.values(patterns).some((x) => x.trackId === track.id && x.name === pname); k++) pname = `${ROLE_INFO[role].name} – ${section.name} ${k}`;
+        pat = createPattern(track.id, { name: pname, length: bars * bpb, notes: notes.filter((n) => n.start < bars * bpb), color: track.color });
         patterns[pat.id] = pat;
         cache.set(key, pat);
       }
@@ -231,7 +234,7 @@ export function generateSong(opts = {}) {
     const top = sectionPatterns.filter((s) => s.slots[t.id]).sort((a, b) => b.section.energy - a.section.energy)[0];
     t.activePatternId = top ? top.slots[t.id] : null;
   }
-  const keyName = `${['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'][root]}`;
+  const keyName = pitchClassName(root, keyPrefersFlats(root, scale));
   return {
     name: opts.name || `${g.name} in ${keyName}`,
     bpm,

@@ -428,13 +428,14 @@ export function createActions(app) {
     engine.noteOff(held.trackId, pitch);
     app.emitLiveNote?.(pitch, false);
     if (ui.get('recording') && engine.isPlaying) {
-      const pat = ensurePattern(held.trackId);
-      if (!pat) return;
-      const snap = 0.25;
       const p = get();
-      let localStart;
-      if (p.mode === 'song') localStart = held.startBeat % pat.length;
-      else localStart = held.startBeat % pat.length;
+      const snap = 0.25;
+      // In song mode, record into the pattern of the clip under the playhead (respecting clip start/offset).
+      const clip = p.mode === 'song' ? p.clips.find((cl) => cl.trackId === held.trackId && cl.type !== 'audio' && p.patterns[cl.patternId] && held.startBeat >= cl.start && held.startBeat < cl.start + cl.length) : null;
+      const pat = clip ? p.patterns[clip.patternId] : ensurePattern(held.trackId);
+      if (!pat) return;
+      const rel = clip ? held.startBeat - clip.start + (clip.offset || 0) : held.startBeat;
+      const localStart = ((rel % pat.length) + pat.length) % pat.length;
       let start = Math.round(localStart / snap) * snap;
       if (start >= pat.length) start -= pat.length;
       const dur = Math.max(snap, Math.round((engine.getPosition() - held.startBeat) / snap) * snap);

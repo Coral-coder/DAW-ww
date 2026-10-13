@@ -230,6 +230,8 @@ export function createDevicePanel(app) {
     const t = tgt.track;
     return JSON.stringify([
       tgt.kind, tgt.id, tgt.name, tgt.color, fxSig(tgt.fx),
+      // effects with a track picker must rebuild when tracks are added / renamed
+      tgt.fx.some((f) => EFFECT_DEFS?.[f.type]?.params?.some((d) => d.type === 'track')) ? p.tracks.map((t) => `${t.id}:${t.name}`).join(',') : '',
       t ? [t.type, t.instrument?.type, t.instrument?.preset] : null,
       [...collapsed].join(','),
       ui.get('deviceOpen'),
@@ -1210,7 +1212,12 @@ export function createDevicePanel(app) {
     }
     shell.body.appendChild(h('div.dv-fx-desc', { title: def.description || '' }, def.description || ''));
     const values = resolveEffectParams ? resolveEffectParams(fx) : { ...fx.params };
-    const pb = paramsBlock(def.params, values, 'fx:' + fx.type, (k, v) => editTarget(tgt, `${name}: ${def.params.find((d) => d.key === k)?.label || k}`, (o) => {
+    // 'track' params (sidechain key etc.) become a picker of the project's other tracks
+    const defs = def.params.map((d) => (d.type !== 'track' ? d : {
+      ...d, type: 'enum',
+      options: [{ value: '', label: '— None —' }, ...ctx.p.tracks.filter((t) => t.id !== tgt.id).map((t) => ({ value: t.id, label: t.name }))],
+    }));
+    const pb = paramsBlock(defs, values, 'fx:' + fx.type, (k, v) => editTarget(tgt, `${name}: ${def.params.find((d) => d.key === k)?.label || k}`, (o) => {
       const f = o.fx.find((x) => x.id === fx.id);
       if (f) { f.params = f.params || {}; f.params[k] = v; }
     }, { coalesce: true }));

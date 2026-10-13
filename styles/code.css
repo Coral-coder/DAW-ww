@@ -117,7 +117,7 @@
 .code-empty .empty-state p { margin: 0; line-height: 1.5; }
 .code-empty code { font-family: var(--mono); background: var(--bg-3); padding: 1px 5px; border-radius: 3px; color: var(--text); }
 .code-empty-examples { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; width: 100%; }
-.code-ex-card { text-align: left; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg-2); cursor: pointer; display: flex; flex-direction: column; gap: 2px; }
+.code-ex-card { text-align: left; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg-2); color: var(--text); cursor: pointer; display: flex; flex-direction: column; gap: 2px; }
 .code-ex-card:hover { border-color: var(--accent); background: var(--bg-3); }
 .code-ex-card span { font-size: 11px; color: var(--text-3); }
 

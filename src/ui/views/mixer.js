@@ -340,7 +340,7 @@ export function createMixerView(app) {
       }, () => { fad.classList.remove('active'); onChange(v, { final: true }); });
     });
     fad.addEventListener('dblclick', () => commit(0.8, true));
-    fad.addEventListener('wheel', (e) => { e.preventDefault(); commit(posToVol(volToPos(v) - Math.sign(e.deltaY) * (e.shiftKey ? 0.004 : 0.02)), true); }, { passive: false });
+    fad.addEventListener('wheel', (e) => { e.preventDefault(); commit(posToVol(volToPos(v) - Math.sign(e.deltaY) * (e.shiftKey ? 0.004 : 0.02)), false); }, { passive: false });
     readout.addEventListener('click', async () => {
       const s = await promptText('Set level (dB)', v > 0 ? gainToDb(v).toFixed(1) : '-inf');
       if (s == null) return;
@@ -387,7 +387,7 @@ export function createMixerView(app) {
       for (const b of p.buses) {
         const k = knob({
           def: SEND_DEF(b), value: t.sends?.[b.id] || 0, size: prefs.narrow ? 22 : 24, label: b.name, showValue: false,
-          onChange: (v, { final }) => { if (final && same(trackOf(t.id)?.sends?.[b.id] || 0, v)) return; editTrack(t.id, `Send ${b.name}`, (tt) => { if (v <= 0.001) delete tt.sends[b.id]; else tt.sends[b.id] = v; }, true); },
+          onChange: (v, { final }) => { if (final && same(trackOf(t.id)?.sends?.[b.id] || 0, v)) return; editTrack(t.id, `Send ${b.name}`, (tt) => { if (v <= 0.001) delete tt.sends[b.id]; else tt.sends[b.id] = v; }, !final); },
         });
         k.classList.add('mx-send-knob');
         sends.set(b.id, k);
@@ -396,7 +396,7 @@ export function createMixerView(app) {
       sendsSec = h('div.mx-sends', h('div.mx-sec-label', { title: 'Post-fader sends to the return buses' }, 'Sends'), grid);
     }
 
-    const pan = panSection(t.pan, (v, { final }) => { if (final && same(trackOf(t.id)?.pan, v)) return; editTrack(t.id, `Pan ${t.name}`, (tt) => { tt.pan = v; }, true); });
+    const pan = panSection(t.pan, (v, { final }) => { if (final && same(trackOf(t.id)?.pan, v)) return; editTrack(t.id, `Pan ${t.name}`, (tt) => { tt.pan = v; }, !final); });
     const mute = h('button.toggle.mute.mx-btn', { type: 'button', title: 'Mute (silence this track)' }, 'M');
     const solo = h('button.toggle.solo.mx-btn', { type: 'button', title: 'Solo (hear only soloed tracks) — Ctrl/Cmd-click for exclusive solo' }, 'S');
     const arm = t.type !== 'code' ? h('button.toggle.arm.mx-btn', { type: 'button', title: 'Record arm' }, h('span.mx-arm-dot')) : null;
@@ -412,7 +412,7 @@ export function createMixerView(app) {
     });
     arm?.addEventListener('click', () => editTrack(t.id, 'Arm', (tt) => { tt.arm = !tt.arm; }));
 
-    const fad = faderSection({ value: t.volume, color: t.color, title: `${t.name} volume`, onChange: (v, { final }) => { if (final && same(trackOf(t.id)?.volume, v)) return; editTrack(t.id, `Volume ${t.name}`, (tt) => { tt.volume = v; }, true); } });
+    const fad = faderSection({ value: t.volume, color: t.color, title: `${t.name} volume`, onChange: (v, { final }) => { if (final && same(trackOf(t.id)?.volume, v)) return; editTrack(t.id, `Volume ${t.name}`, (tt) => { tt.volume = v; }, !final); } });
 
     const el = h('div.mx-strip.mx-track', { dataset: { id: t.id }, style: { '--strip-color': t.color } },
       head, inserts, sendsSec, pan.el,
@@ -447,10 +447,10 @@ export function createMixerView(app) {
     head.appendChild(del);
 
     const inserts = insertsSection('bus', b.id, b.fx || [], get);
-    const pan = panSection(b.pan, (v, { final }) => { if (final && same(busOf(b.id)?.pan, v)) return; editBus(b.id, `Pan ${b.name}`, (bb) => { bb.pan = v; }, true); });
+    const pan = panSection(b.pan, (v, { final }) => { if (final && same(busOf(b.id)?.pan, v)) return; editBus(b.id, `Pan ${b.name}`, (bb) => { bb.pan = v; }, !final); });
     const mute = h('button.toggle.mute.mx-btn', { type: 'button', title: 'Mute this return' }, 'M');
     mute.addEventListener('click', () => editBus(b.id, 'Mute bus', (bb) => { bb.mute = !bb.mute; }));
-    const fad = faderSection({ value: b.volume, title: `${b.name} return level`, onChange: (v, { final }) => { if (final && same(busOf(b.id)?.volume, v)) return; editBus(b.id, `Volume ${b.name}`, (bb) => { bb.volume = v; }, true); } });
+    const fad = faderSection({ value: b.volume, title: `${b.name} return level`, onChange: (v, { final }) => { if (final && same(busOf(b.id)?.volume, v)) return; editBus(b.id, `Volume ${b.name}`, (bb) => { bb.volume = v; }, !final); } });
 
     // spacer keeps faders aligned with track strips that have sends
     const el = h('div.mx-strip.mx-bus', { dataset: { id: b.id } },
@@ -501,7 +501,7 @@ export function createMixerView(app) {
       h('div.mx-loud-cell', { title: 'Short-term RMS level (≈ loudness). Most mixes sit around −14…−8 dB RMS.' }, h('span', 'RMS'), rmsEl),
       h('div.mx-loud-cell', { title: 'Momentary peak level (dBFS)' }, h('span', 'Peak'), pkEl),
       h('div.mx-loud-cell', { title: 'Left/right balance of the output' }, h('span', 'Bal'), balEl));
-    const fad = faderSection({ value: p.master.volume, big: true, title: 'Master volume', onChange: (v, { final }) => { if (final && same(store.get().master.volume, v)) return; editMaster('Master volume', (m) => { m.volume = v; }, true); } });
+    const fad = faderSection({ value: p.master.volume, big: true, title: 'Master volume', onChange: (v, { final }) => { if (final && same(store.get().master.volume, v)) return; editMaster('Master volume', (m) => { m.volume = v; }, !final); } });
     const el = h('div.mx-strip.mx-master', head, inserts, h('div.mx-analysis', spec, loud), fad.area, h('div.mx-foot', fad.readout, fad.peakEl));
     return { kind: 'master', id: 'master', el, setVolume: fad.setVolume, meterState: fad.meterState, reset: fad.reset, spec, rmsEl, pkEl, balEl, rms: -90 };
   }

@@ -1,7 +1,7 @@
 // Effect implementations — native Web Audio nodes only (no AudioWorklet).
 //
 //   createEffect(ctx, effectDef, { getBpm, getBeatAt }) ->
-//     { type, input, output, update(def), setBypass(bool), setTempo(bpm), sync(time?), dispose(), getReduction?() }
+//     { type, input, output, keyInput|null, update(def), setBypass(bool), setTempo(bpm), sync(time?), dispose(), getReduction?() }
 //
 // Every effect is wrapped in a "shell":  input ─┬─ thru (bypass path) ───────────────┬─ output
 //                                               └─ fxIn ─┬─ dry ─────────┬─ fxOut ──┘
@@ -420,6 +420,60 @@ const BUILDERS = {
         }
         setP(env.frequency, clamp(1 / (2 * Math.PI * p.release * 0.5), 2, 200), ctx, im);
         setP(smooth.frequency, clamp(1 / (2 * Math.PI * p.attack), 5, 2000), ctx, im);
+      },
+    };
+  },
+
+  ducker(ctx, sh) {
+    // Keyed ducking. KEY (another track, fed by the mixer into `keyInput`, or a patch cable
+    // into port 1) → mono → |x| → detector low-pass → threshold curve (0..1 duck amount)
+    // → fast (attack) and slow (release) low-passes → max(fast, slow) = (f+s+|f−s|)/2
+    // → clamp 0..1 → × −amount → added to the VCA gain (intrinsic 1): gain = 1 − amount·env.
+    // max() of the two followers gives a fast attack and a slow release from linear filters.
+    const keyIn = ctx.createGain();
+    keyIn.channelCount = 1; keyIn.channelCountMode = 'explicit'; keyIn.channelInterpretation = 'speakers';
+    const absCurve = makeCurve((x) => Math.abs(x), 4097);
+    const rect = ctx.createWaveShaper(); rect.curve = absCurve;
+    const det = ctx.createBiquadFilter(); det.type = 'lowpass'; det.Q.value = -3;
+    const thr = ctx.createWaveShaper();
+    const fast = ctx.createBiquadFilter(); fast.type = 'lowpass'; fast.Q.value = -3;
+    const slowIn = ctx.createGain(); slowIn.gain.value = 2; // boosted so the slow follower "holds" after the hit
+    const slow = ctx.createBiquadFilter(); slow.type = 'lowpass'; slow.Q.value = -3;
+    const maxSum = ctx.createGain(); maxSum.gain.value = 0.5;
+    const diff = ctx.createGain();
+    const neg = ctx.createGain(); neg.gain.value = -1;
+    const diffAbs = ctx.createWaveShaper(); diffAbs.curve = makeCurve((x) => Math.abs(x), 4097);
+    const lim = ctx.createWaveShaper(); lim.curve = makeCurve((x) => clamp(x, 0, 1), 4097);
+    const amt = ctx.createGain(); amt.gain.value = 0;
+    const vca = ctx.createGain(); vca.gain.value = 1;
+    keyIn.connect(rect); rect.connect(det); det.connect(thr);
+    thr.connect(fast); thr.connect(slowIn); slowIn.connect(slow);
+    fast.connect(maxSum); slow.connect(maxSum);
+    fast.connect(diff); slow.connect(neg); neg.connect(diff); diff.connect(diffAbs); diffAbs.connect(maxSum);
+    maxSum.connect(lim); lim.connect(amt); amt.connect(vca.gain);
+    sh.fxIn.connect(vca); vca.connect(sh.wet);
+    let thrKey = null;
+    return {
+      keyInput: keyIn,
+      apply(p, im) {
+        if (thrKey !== p.threshold) {
+          thrKey = p.threshold;
+          // detector output ≈ mean |x| (≈ −4 dB below the peak of a tone) → compensate, 6 dB knee
+          thr.curve = makeCurve((x) => {
+            if (x <= 0) return 0;
+            const db = 20 * Math.log10(x) + 4;
+            const t = clamp((db - p.threshold) / 6, 0, 1);
+            return t * t * (3 - 2 * t);
+          }, 4097);
+        }
+        const att = Math.max(0.0005, p.attack);
+        setP(det.frequency, clamp(2 / (2 * Math.PI * att), 20, 400), ctx, im);
+        setP(fast.frequency, clamp(1 / (2 * Math.PI * att), 4, 400), ctx, im);
+        setP(slow.frequency, clamp(1 / (2 * Math.PI * Math.max(0.01, p.release) * 0.5), 0.3, 100), ctx, im);
+        setP(amt.gain, -clamp(p.amount, 0, 1), ctx, im);
+      },
+      dispose() {
+        for (const n of [keyIn, rect, det, thr, fast, slowIn, slow, maxSum, diff, neg, diffAbs, lim, amt, vca]) { try { n.disconnect(); } catch { /* */ } }
       },
     };
   },
@@ -956,6 +1010,8 @@ export function createEffect(ctx, effectDef, opts = {}) {
     setTempo(bpm) { try { impl.setTempo?.(bpm); } catch (e) { console.warn('[fx] setTempo', e); } },
     sync(time) { try { impl.sync?.(time); } catch (e) { console.warn('[fx] sync', e); } },
     getReduction: impl.getReduction ? () => impl.getReduction() : undefined,
+    /** Sidechain key input (ducker only): connect the key signal here. */
+    keyInput: impl.keyInput || null,
     dispose() {
       if (disposed) return;
       disposed = true;

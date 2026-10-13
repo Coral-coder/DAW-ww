@@ -1,8 +1,15 @@
 // Channel strips and the mix graph. Context-agnostic: the realtime engine and the offline
 // renderer both build their graph through MixGraph so they sound identical.
 //
-// Track strip:  instrument/code/audio-clips -> input -> [insert fx...] -> pan -> volume -> mute
-//                 -> master input, -> post-fader sends -> bus inputs, -> stereo meter
+// Track strip:  instrument/code/audio-clips -> input -> [insert fx... | plugboard patch] -> post
+//                 -> pan -> volume -> mute -> master input, -> post-fader sends -> bus inputs, -> meter
+//               `post` (after the inserts, before pan/fader/mute) is the sidechain key tap that feeds
+//               ducker effects keyed by this track (pre-fader: the key follows the track's
+//               processed signal regardless of its fader; a muted track plays no events, so it
+//               does not duck anything).
+// Plugboard:    when track.patch.enabled, the insert section is built from the patch graph
+//               (src/core/patch.js): effect instances wired by cables (one GainNode per cable),
+//               split/mix junctions as unity GainNodes, 'in' = input, 'out' = post.
 // Bus strip:    input -> fx -> pan -> volume -> mute -> master input
 // Master:       input -> fx -> volume -> analyser -> destination  (metronome joins after master fx)
 import { createEffect } from './effects.js';
@@ -14,6 +21,7 @@ import { activeLanes, parseTarget, segmentsInWindow, valueAt, controlOverrides }
 import { INSTRUMENT_DEFS } from './defs.js';
 import { EFFECT_DEFS } from './effect-defs.js';
 import { resolveInstrument } from './instruments.js';
+import { sanitizePatch, patchStructureKey, topoOrder, resolveKeyLinks, PATCH_IN, PATCH_OUT } from '../core/patch.js';
 
 const TC = 0.012;
 
@@ -61,6 +69,7 @@ export class ChannelStrip {
     this.env = opts.env;
     this.onError = opts.onError || ((e) => console.error(e));
     this.input = ctx.createGain();
+    this.post = ctx.createGain(); // end of the insert section (sidechain key tap)
     this.panner = ctx.createStereoPanner();
     this.volume = ctx.createGain();
     this.muteGain = ctx.createGain();
@@ -68,9 +77,12 @@ export class ChannelStrip {
     this.panner.connect(this.volume);
     this.volume.connect(this.muteGain);
     if (opts.destination) this.muteGain.connect(opts.destination);
-    this.input.connect(this.panner);
+    this.input.connect(this.post);
+    this.post.connect(this.panner);
     this.effects = []; // [{ id, type, fx }]
     this.fxKey = '';
+    this.patchNodes = []; // split/mix junction GainNodes of the current patch
+    this.cables = new Map(); // cableId -> GainNode (plugboard mode)
     this.sends = new Map(); // busId -> GainNode
     this.vals = {};
     this.sendVals = {}; // static send amounts (restored when send automation ends)
@@ -90,14 +102,27 @@ export class ChannelStrip {
     }
   }
 
-  /** Diff the insert chain: rebuild only when ids/order/types change, else update params. */
-  setFx(list = []) {
-    const key = list.map((f) => `${f.id}:${f.type}`).join('|');
+  /**
+   * Diff the insert section: rebuild only when ids/order/types (or, with a plugboard patch, the
+   * patch structure: nodes / cables / enabled) change, else update params and cable gains.
+   * patch: track.patch (optional) — used when patch.enabled.
+   */
+  setFx(list = [], patch = null) {
+    const sp = patch && patch.enabled ? sanitizePatch(patch, list) : null;
+    const key = list.map((f) => `${f.id}:${f.type}`).join('|') + (sp ? '#' + patchStructureKey(sp) : '');
     if (key !== this.fxKey) {
       this.fxKey = key;
       const old = new Map(this.effects.map((e) => [e.id, e]));
+      let defs = list;
+      if (sp) {
+        // only effects placed on the board exist in the audio graph; order = patch topology
+        const placed = new Map(sp.nodes.filter((n) => n.kind === 'fx').map((n) => [n.fxId, n]));
+        const order = topoOrder(sp).map((id) => sp.nodes.find((n) => n.id === id)?.fxId).filter(Boolean);
+        const byId = new Map(list.map((f) => [f.id, f]));
+        defs = order.filter((id) => placed.has(id) && byId.has(id)).map((id) => byId.get(id));
+      }
       const next = [];
-      for (const def of list) {
+      for (const def of defs) {
         let e = old.get(def.id);
         if (e && e.type === def.type) {
           old.delete(def.id);
@@ -112,18 +137,63 @@ export class ChannelStrip {
         next.push(e);
       }
       for (const e of old.values()) e.fx.dispose();
-      // rewire input -> fx... -> panner
+      // tear down the previous wiring (post keeps its own outputs: panner + key taps)
       try { this.input.disconnect(); } catch { /* */ }
       for (const e of next) { try { e.fx.output.disconnect(); } catch { /* */ } }
-      let prev = this.input;
-      for (const e of next) { prev.connect(e.fx.input); prev = e.fx.output; }
-      prev.connect(this.panner);
+      for (const g of [...this.patchNodes, ...this.cables.values()]) { try { g.disconnect(); } catch { /* */ } }
+      this.patchNodes = [];
+      this.cables = new Map();
+      if (!sp) {
+        let prev = this.input;
+        for (const e of next) { prev.connect(e.fx.input); prev = e.fx.output; }
+        prev.connect(this.post);
+      } else {
+        this._wirePatch(sp, next);
+      }
       this.effects = next;
+    }
+    if (sp) {
+      for (const c of sp.cables) {
+        const g = this.cables.get(c.id);
+        if (g && g._v !== c.gain) { g._v = c.gain; smooth(g.gain, c.gain, this.ctx, false); }
+      }
     }
     const byId = new Map(list.map((f) => [f.id, f]));
     this.fxDefs = byId;
     for (const e of this.effects) {
       try { e.fx.update(withParams(byId.get(e.id), this.fxOv.get(e.id))); } catch (err) { this.onError(err); }
+    }
+  }
+
+  /** Build the plugboard graph (sp = sanitizePatch result, effects = instances on the board). */
+  _wirePatch(sp, effects) {
+    const fxOf = new Map(effects.map((e) => [e.id, e.fx]));
+    const outs = new Map([[PATCH_IN, this.input]]);
+    const ins = new Map([[PATCH_OUT + ':0', this.post]]);
+    for (const n of sp.nodes) {
+      if (n.kind === 'fx') {
+        const fx = fxOf.get(n.fxId);
+        if (!fx) continue;
+        outs.set(n.id, fx.output);
+        ins.set(n.id + ':0', fx.input);
+        if (fx.keyInput) ins.set(n.id + ':1', fx.keyInput);
+      } else {
+        const g = this.ctx.createGain();
+        this.patchNodes.push(g);
+        outs.set(n.id, g);
+        ins.set(n.id + ':0', g);
+      }
+    }
+    for (const c of sp.cables) {
+      const src = outs.get(c.from.node);
+      const dst = ins.get(`${c.to.node}:${c.to.port}`);
+      if (!src || !dst) continue;
+      const g = this.ctx.createGain();
+      g.gain.value = c.gain;
+      g._v = c.gain;
+      src.connect(g);
+      g.connect(dst);
+      this.cables.set(c.id, g);
     }
   }
 
@@ -261,7 +331,7 @@ export class ChannelStrip {
   dispose() {
     for (const e of this.effects) e.fx.dispose();
     this.effects = [];
-    for (const n of [this.input, this.panner, this.volume, this.muteGain, this.splitter, ...this.sends.values()]) {
+    for (const n of [this.input, this.post, this.panner, this.volume, this.muteGain, this.splitter, ...this.sends.values(), ...this.patchNodes, ...this.cables.values()]) {
       try { n?.disconnect(); } catch { /* */ }
     }
     this.sends.clear();
@@ -331,13 +401,45 @@ export class MixGraph {
         this.tracks.set(track.id, e);
       }
       if (e.type !== track.type) { this._disposeSources(e); e.type = track.type; }
-      e.strip.setFx(track.fx || []);
+      e.strip.setFx(track.fx || [], track.patch);
       e.strip.setMix({ volume: track.volume ?? 0.8, pan: track.pan || 0, muted: !isTrackAudible(project, track) }, im);
       e.strip.setSends(track.sends || {}, this.buses, im);
       this._syncSource(e, track);
     }
     for (const [id, e] of this.tracks) {
       if (!trackIds.has(id)) { this._disposeSources(e); e.strip.dispose(); this.tracks.delete(id); }
+    }
+    this._syncKeys(project);
+  }
+
+  /**
+   * Sidechain keys: connect each ducker's key input to its source track's `post` tap
+   * (see resolveKeyLinks: self-keying, missing tracks and track↔track loops are skipped).
+   */
+  _syncKeys(project) {
+    const links = resolveKeyLinks(project);
+    const want = new Map(); // fxId -> { keyIn, src }
+    if (links.size) {
+      for (const s of this._strips()) {
+        for (const e of s.effects) {
+          const srcId = links.get(e.id);
+          const keyIn = e.fx.keyInput;
+          if (!srcId || !keyIn) continue;
+          const src = this.tracks.get(srcId)?.strip;
+          if (src && src !== s) want.set(e.id, { keyIn, src: src.post });
+        }
+      }
+    }
+    this.keyLinks ||= new Map();
+    for (const [id, l] of this.keyLinks) {
+      const w = want.get(id);
+      if (w && w.keyIn === l.keyIn && w.src === l.src) continue;
+      try { l.src.disconnect(l.keyIn); } catch { /* already gone */ }
+      this.keyLinks.delete(id);
+    }
+    for (const [id, w] of want) {
+      if (this.keyLinks.has(id)) continue;
+      try { w.src.connect(w.keyIn); this.keyLinks.set(id, w); } catch (err) { this.onError(err); }
     }
   }
 
