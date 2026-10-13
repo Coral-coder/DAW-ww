@@ -3,6 +3,23 @@ import { clamp } from '../core/util.js';
 import { BaseInstrument, Voice, envNote, getReversedBuffer, num } from './synth.js';
 
 export class SamplerInstrument extends BaseInstrument {
+  /** Live edits reach sounding voices: filter cutoff / resonance and tuning (pitched mode). */
+  onParams() {
+    const p = this.params, t = this.ctx.currentTime;
+    const fineSemis = num(p.tune, 0, -48, 48) + num(p.fine, 0, -100, 100) / 100;
+    const root = num(p.rootNote, 60, 0, 127);
+    for (const v of this.voices || []) {
+      if (v.done) continue;
+      if (v.filter) {
+        v.filter.frequency.setTargetAtTime(clamp(num(v.cutoffOverride ?? p.cutoff, 20000, 20, 20000), 20, this.ctx.sampleRate / 2 - 100), t, 0.02);
+        v.filter.Q.setTargetAtTime(-3 + num(p.resonance, 0, 0, 1) * 24, t, 0.02);
+      }
+      if (v.src0) {
+        const rate = v.slices ? Math.pow(2, fineSemis / 12) : Math.pow(2, (v.pitch - root + fineSemis) / 12);
+        v.src0.playbackRate.setTargetAtTime(clamp(rate, 0.01, 32), t, 0.02);
+      }
+    }
+  }
   constructor(ctx, output, params, opts) {
     super(ctx, output, params, opts);
     this.type = 'sampler';
@@ -62,14 +79,15 @@ export class SamplerInstrument extends BaseInstrument {
       src.loopEnd = reverse ? segStart + (1 - ls) * segLen : b;
     }
     let node = src;
+    v.src0 = src; v.slices = slices > 0; v.cutoffOverride = extra.cutoff;
+    // the filter is always in the voice so cutoff / resonance can be turned while the note sounds
     const cutoff = num(extra.cutoff ?? p.cutoff, 20000, 20, 20000);
-    if (cutoff < 19000 || num(p.resonance, 0) > 0.05) {
-      const f = v.node(ctx.createBiquadFilter());
-      f.type = 'lowpass';
-      f.frequency.value = clamp(cutoff, 20, ctx.sampleRate / 2 - 100);
-      f.Q.value = -3 + num(p.resonance, 0, 0, 1) * 24;
-      node.connect(f); node = f;
-    }
+    const f = v.node(ctx.createBiquadFilter());
+    f.type = 'lowpass';
+    f.frequency.value = clamp(cutoff, 20, ctx.sampleRate / 2 - 100);
+    f.Q.value = -3 + num(p.resonance, 0, 0, 1) * 24;
+    node.connect(f); node = f;
+    v.filter = f;
     const amp = v.node(ctx.createGain());
     amp.gain.value = 0;
     node.connect(amp); node = amp;

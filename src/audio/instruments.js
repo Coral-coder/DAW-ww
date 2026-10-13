@@ -37,6 +37,12 @@ export function resolveInstrument(def) { return resolveInstrumentDef(def); }
 /** listPresets({category, role, genre, type}) -> [{id, name, category, roles, genres, instrument}] */
 export function listPresets(filter) { return _listPresets(filter); }
 
+/** What identifies a plugin's source (code / url / soundfont instrument), without its live control values. */
+function pluginSourceKey(type, params = {}) {
+  const { values, gain, ...rest } = params || {};
+  return `${type}:${JSON.stringify(rest)}`;
+}
+
 function warn(e) { if (typeof console !== 'undefined') console.warn('[instrument]', e); }
 
 export class Instrument {
@@ -56,7 +62,8 @@ export class Instrument {
     // 'drums' with params.machine plays real drum-machine samples (src/audio/library) — same engine as 'drumsampler'
     const kind = usesDrumSampler(type, params) ? 'drumsampler' : type;
     // A plugin that failed to load and was replaced by its fallback synth: rebuild only if the plugin settings change.
-    const pluginKeyJson = isPluginType(type) ? JSON.stringify(params) : null;
+    // (only the plugin's source counts — turning its knobs must not tear down the stand-in synth and re-download)
+    const pluginKeyJson = isPluginType(type) ? pluginSourceKey(type, params) : null;
     const retryPlugin = this.fallbackActive && pluginKeyJson !== this._pluginParamsJson;
     if (this.fallbackActive && !retryPlugin && this.type === type) { this.def = instrumentDef; return; }
     if (!this.engine || this.type !== type || this._kind !== kind || retryPlugin) {

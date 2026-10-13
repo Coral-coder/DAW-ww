@@ -67,6 +67,38 @@ export class FMInstrument extends BaseInstrument {
     this.type = 'fm';
   }
 
+  /**
+   * Live edits reach sounding voices: operator ratio / fine / level, feedback and transpose. Levels are applied as a
+   * trim relative to the level the note started with (its envelope keeps running); an algorithm change only affects
+   * new notes (it rewires the operators).
+   */
+  onParams() {
+    const p = this.params, t = this.ctx.currentTime, nyq = this.ctx.sampleRate / 2;
+    for (const v of this.voices || []) {
+      if (v.done || !v.ops) continue;
+      const f0 = midiToFreq(v.pitch + num(p.transpose, 0, -48, 48));
+      for (let i = 1; i <= 4; i++) {
+        const op = v.ops[i];
+        if (!op) continue;
+        const ratio = num(p[`op${i}Ratio`], 1, 0, 32);
+        const freq = clamp((ratio <= 0 ? 1 : f0 * ratio) * Math.pow(2, num(p[`op${i}Fine`], 0, -100, 100) / 1200), 0.01, nyq);
+        op.osc.frequency.setTargetAtTime(freq, t, 0.02);
+        const level = clamp(num(p[`op${i}Level`], i === 4 ? 1 : 0.5), 0, 1);
+        // carriers: linear in level; modulators: index ∝ level² × frequency
+        const trim = op.carrier ? (op.level0 > 1e-4 ? level / op.level0 : 1)
+          : (op.level0 > 1e-4 ? (level * level) / (op.level0 * op.level0) : 1) * (op.freq > 0 ? freq / op.freq : 1);
+        op.trim.gain.setTargetAtTime(clamp(trim, 0, 64), t, 0.02);
+      }
+      if (v.fg && v.ops[1]) {
+        const fb = num(p.feedback, 0, 0, 1);
+        const r1 = num(p.op1Ratio, 1, 0, 32);
+        const f1 = clamp((r1 <= 0 ? 1 : f0 * r1) * Math.pow(2, num(p.op1Fine, 0, -100, 100) / 1200), 0.01, nyq);
+        v.fbo.frequency.setTargetAtTime(f1, t, 0.02);
+        v.fg.gain.setTargetAtTime(fb * fb * 2.2 * f1, t, 0.02);
+      }
+    }
+  }
+
   _createVoice(t, pitch, vel, tOff, extra) {
     const ctx = this.ctx, p = this.params;
     const v = new Voice(ctx);
@@ -94,7 +126,11 @@ export class FMInstrument extends BaseInstrument {
       const g = v.node(ctx.createGain());
       g.gain.value = 0;
       osc.connect(g);
-      ops[i] = { osc, g, freq };
+      // trim after the envelope: live level / ratio edits scale a sounding note without touching its envelope
+      const trim = v.node(ctx.createGain());
+      trim.gain.value = 1;
+      g.connect(trim);
+      ops[i] = { osc, g, trim, freq };
     }
     const carriers = new Set(algo.carriers);
     const cNorm = 1 / Math.max(1, Math.sqrt(algo.carriers.length) * 1.1);
@@ -116,19 +152,20 @@ export class FMInstrument extends BaseInstrument {
       let peak;
       if (carriers.has(i)) {
         peak = level * velScale * cNorm;
-        op.g.connect(out);
+        op.trim.connect(out);
       } else {
         peak = level * level * MAX_INDEX * op.freq * velScale * levelScale; // Hz deviation
         // A modulator that is itself modulated (stack / feedback) has a DC component in FM (unlike
         // the DX7's phase modulation) which would shift the carrier's pitch -> block DC first.
-        let mo = op.g;
+        let mo = op.trim;
         if (algo.mods.some(([, dst]) => dst === i) || (i === 1 && num(p.feedback, 0, 0, 1) > 0.001)) {
           mo = v.node(ctx.createBiquadFilter());
           mo.type = 'highpass'; mo.frequency.value = Math.min(8, op.freq / 4); mo.Q.value = 0.5;
-          op.g.connect(mo);
+          op.trim.connect(mo);
         }
         for (const [src, dst] of algo.mods) if (src === i) mo.connect(ops[dst].osc.frequency);
       }
+      op.carrier = carriers.has(i); op.level0 = level; op.ratio0 = num(p[`op${i}Ratio`], 1, 0, 32);
       if (peak <= 1e-7 && carriers.has(i)) continue;
       const st = fmEnv(op.g.gain, t, tOff, env, peak);
       st.peak0 = peak; st.sus0 = peak * env.s;
@@ -146,7 +183,9 @@ export class FMInstrument extends BaseInstrument {
       const fg = v.node(ctx.createGain());
       fg.gain.value = fb * fb * 2.2 * ops[1].freq;
       fbo.connect(fg); fg.connect(ops[1].osc.frequency);
+      v.fbo = fbo; v.fg = fg; v.fb0 = fb;
     }
+    v.ops = ops; v.algoId = algo.id; v.f0 = f0;
     // vibrato
     const vd = num(p.vibDepth, 0, 0, 1);
     if (vd > 0.0001) {
