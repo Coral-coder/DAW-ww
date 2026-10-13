@@ -10,3 +10,7 @@ export * from './fit.js';
 export * from './song.js';
 export * from './assistant.js';
 export { generateBassline as generateBass } from './bass.js';
+export * from './groove.js';
+export * from './arrange.js';
+export * from './mix.js';
+export * from './sound.js';

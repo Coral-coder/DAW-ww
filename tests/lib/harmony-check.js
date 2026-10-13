@@ -72,8 +72,15 @@ const notesOf = (pat) => (pat?.notes || []).filter((n) => n.dur > 0);
  */
 export function analyzeSong(song) {
   const ex = genreExceptions(song.genre, song.key.scale);
-  const harmony = song.harmony;
-  const len = song.harmonyLength;
+  // per-pattern harmony (songs whose sections use different progressions export patternHarmony {patId: {harmony, length}});
+  // every rule below is unchanged — each pattern is judged against the chords it was written over
+  let harmony = song.harmony;
+  let len = song.harmonyLength;
+  const useHarmonyOf = (pat) => {
+    const ph = song.patternHarmony?.[pat.id];
+    harmony = ph ? ph.harmony : song.harmony;
+    len = ph ? ph.length : song.harmonyLength;
+  };
   const bpb = song.timeSig ? song.timeSig[0] * (4 / song.timeSig[1]) : 4;
   const keyPcs = new Set(scalePitchClasses(song.key.root, song.key.scale));
   // blues-type scales: the key's "parent" notes are fine too
@@ -91,6 +98,7 @@ export function analyzeSong(song) {
   //     (root/3rd/5th/7th/6th or the slash bass). Short weak-beat notes are approach / passing tones, but they
   //     must not grind a minor 2nd against the chord (except a walking jazz line).
   for (const pat of byRole.bass || []) {
+      useHarmonyOf(pat);
     const ns = notesOf(pat).slice().sort((a, b) => a.start - b.start || a.pitch - b.pitch);
     const strong = bpb % 2 === 0 ? [0, bpb / 2] : [0];
     const seenChord = new Set();
@@ -121,6 +129,7 @@ export function analyzeSong(song) {
   // (b) upper parts against the chord(s) they sound over
   for (const role of ['chords', 'pad', 'lead', 'arp']) {
     for (const pat of byRole[role] || []) {
+      useHarmonyOf(pat);
       for (const n of notesOf(pat)) {
         const pc = m12(n.pitch);
         const onBeat = Math.abs(n.start - Math.round(n.start)) < 0.02;
@@ -161,6 +170,7 @@ export function analyzeSong(song) {
   // (c) voicings + (d) overlaps in the chord / pad tracks
   for (const role of ['chords', 'pad']) {
     for (const pat of byRole[role] || []) {
+      useHarmonyOf(pat);
       const ns = notesOf(pat);
       const onsets = [...new Set(ns.map((n) => Math.round(n.start * 100) / 100))];
       for (const t of onsets) {

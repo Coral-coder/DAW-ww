@@ -268,3 +268,214 @@ export function generateCounterMelody(opts = {}) {
   fitNotesToHarmony(out, progression, { key: { root, scale }, range: [lo, hi] });
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Songwriting: motif-based melodies (used by generateSong)
+// ---------------------------------------------------------------------------
+
+/**
+ * A motif "idea": a 1-bar rhythm (always leaving breathing room at the end of the bar) and a scale-step contour.
+ * makeMotif({hook, density, bpb, rng, grid}) -> {rhythm:[{t,d}], steps:[int], hook}
+ *  hook: chorus / drop hook — fewer, longer notes, a syncopated push and more repetition.
+ */
+export function makeMotif(opts = {}) {
+  const rng = opts.rng || createRng(1);
+  const bpb = opts.bpb || 4;
+  const hook = !!opts.hook;
+  const density = clamp(opts.density ?? 0.6, 0, 1);
+  const grid = opts.grid || (density > 0.75 && !hook ? 0.25 : 0.5);
+  const usable = bpb - (hook ? 1 : 1.5); // rest at the end of the bar: a human melody breathes
+  const slots = [];
+  for (let t = 0; t <= usable + 1e-6; t += grid) slots.push(Math.round(t * 1000) / 1000);
+  let n = hook ? rng.int(3, 4) : Math.round(3 + density * 3 + (rng() - 0.5) * 1.5);
+  n = clamp(n, 2, slots.length);
+  const weight = (t) => (t === 0 ? (hook ? 1.5 : 2) : t % 1 === 0 ? 1.6 : t % 0.5 === 0 ? (hook ? 1.6 : 1.1) : 0.6);
+  const chosen = new Set([hook && rng.chance(0.35) ? 0.5 : 0]);
+  let guard = 0;
+  while (chosen.size < n && guard++ < 100) chosen.add(rng.weighted(slots, slots.map(weight)));
+  const ts = [...chosen].sort((a, b) => a - b);
+  const rhythm = ts.map((t, i) => {
+    const next = i + 1 < ts.length ? ts[i + 1] : Math.min(bpb, t + (hook ? 2 : 1.25));
+    const gap = next - t;
+    return { t, d: Math.max(0.2, i + 1 < ts.length ? gap * (hook ? 0.95 : 0.85) : gap * 0.9) };
+  });
+  // contour: mostly steps, an occasional leap that is recovered by step in the other direction
+  const steps = [0];
+  let dir = rng.chance(0.55) ? 1 : -1;
+  for (let i = 1; i < rhythm.length; i++) {
+    const prev = steps[i - 1] - (steps[i - 2] ?? steps[i - 1]);
+    let s;
+    if (Math.abs(prev) >= 3) s = -Math.sign(prev); // gap fill
+    else if (rng.chance(hook ? 0.18 : 0.22)) s = dir * rng.int(2, 4);
+    else if (hook && rng.chance(0.3)) s = 0; // repeated notes make hooks
+    else s = dir * (rng.chance(0.7) ? 1 : 2);
+    if (rng.chance(0.25)) dir = -dir;
+    steps.push(steps[i - 1] + s);
+  }
+  return { rhythm, steps, hook, bpb };
+}
+
+/** Variation operators on a motif (pure; return a new motif). */
+export function varyMotif(m, kind, rng = createRng(1)) {
+  const bpb = m.bpb || 4;
+  const r = m.rhythm.map((h) => ({ ...h }));
+  const s = m.steps.slice();
+  switch (kind) {
+    case 'displace': { // rhythmic displacement by an 8th
+      const out = r.map((h) => ({ t: h.t + 0.5, d: h.d })).filter((h) => h.t < bpb - 0.75);
+      return { ...m, rhythm: out.length ? out : r, steps: s.slice(0, out.length || r.length) };
+    }
+    case 'tail': { // new ending: invert the last interval
+      if (s.length > 2) s[s.length - 1] = s[s.length - 2] - (s[s.length - 1] - s[s.length - 2]) + (rng.chance(0.5) ? 1 : -1);
+      return { ...m, rhythm: r, steps: s };
+    }
+    case 'fragment': { // first half twice
+      const half = Math.max(1, Math.ceil(r.length / 2));
+      const span = r[half - 1].t + r[half - 1].d;
+      const off = Math.max(1, Math.ceil(span * 2) / 2);
+      const rr = [...r.slice(0, half), ...r.slice(0, half).map((h) => ({ t: h.t + off, d: h.d }))].filter((h) => h.t < bpb - 0.5);
+      const ss = [...s.slice(0, half), ...s.slice(0, half).map((x) => x + (rng.chance(0.5) ? 1 : -1))].slice(0, rr.length);
+      return { ...m, rhythm: rr, steps: ss };
+    }
+    case 'augment': { // breakdown: fewer, longer notes
+      const keep = r.filter((_, i) => i % 2 === 0);
+      const rr = keep.map((h, i) => ({ t: h.t, d: Math.max(h.d, (keep[i + 1]?.t ?? bpb) - h.t - 0.25) }));
+      return { ...m, rhythm: rr, steps: s.filter((_, i) => i % 2 === 0) };
+    }
+    case 'ornament': { // a 16th-note neighbour before the last note
+      if (r.length < 2) return m;
+      const last = r[r.length - 1];
+      if (last.t < 0.5 || r.some((h) => Math.abs(h.t - (last.t - 0.25)) < 1e-6)) return m;
+      const rr = [...r.slice(0, -1), { t: last.t - 0.25, d: 0.22 }, last];
+      const ss = [...s.slice(0, -1), s[s.length - 1] + 1, s[s.length - 1]];
+      return { ...m, rhythm: rr, steps: ss };
+    }
+    default: return m;
+  }
+}
+
+/** Bar plans for an 8-bar period (antecedent = question, consequent = answer). */
+const PLANS = {
+  verse: ['M', 'S', 'V', 'Q', 'M', 'S', 'V2', 'A'],
+  hook: ['M', 'M', 'S', 'Q', 'M', 'M', 'V', 'A'],
+  short: ['M', 'S', 'V', 'A'],
+  sparse: ['M', 'R', 'S', 'Q', 'M', 'R', 'V', 'A'],
+};
+
+/**
+ * writeMelody({progression, key, scale, motif, plan ('verse'|'hook'|'sparse'), range:[lo,hi], center, length, bpb, rng,
+ *   variation (0..1: how much the second period differs), resolveEnd (true)}) -> Note[]
+ * A period: motif (M) -> sequence fitted to the next chord (S) -> variation (V) -> question / answer cadence (Q / A);
+ * R = rest bar. Strong-beat long notes land on chord tones; the answer resolves to the tonic.
+ */
+export function writeMelody(opts = {}) {
+  const rng = opts.rng || createRng(1);
+  const { root, scale } = resolveKey(opts);
+  const bpb = opts.bpb || opts.beatsPerBar || 4;
+  const progression = opts.progression || [];
+  const progLen = progression.reduce((m, c) => Math.max(m, c.startBeat + c.durBeats), 0);
+  const length = opts.length ?? (progLen || 8 * bpb);
+  const [lo, hi] = opts.range || [64, 86];
+  const center = opts.center ?? Math.round((lo + hi) / 2);
+  const pool = scaleNotesInRange(root, scale, lo, hi);
+  if (!pool.length || !progression.length) return [];
+  const motif = opts.motif || makeMotif({ rng, bpb });
+  const bars = Math.ceil(length / bpb);
+  const plan = PLANS[opts.plan] || PLANS.verse;
+  const period = bars >= 8 ? plan : plan.length === 4 ? plan : PLANS.short;
+  const chordAt = (t) => {
+    const tt = progLen ? ((t % progLen) + progLen) % progLen : t;
+    return progression.find((c) => tt >= c.startBeat - 1e-6 && tt < c.startBeat + c.durBeats - 1e-6) || progression[progression.length - 1];
+  };
+  const tonesAt = (t) => {
+    const c = chordAt(t);
+    const pcs = chordPitchClasses(c.chord.root, c.chord.type);
+    const out = [];
+    for (let m = lo; m <= hi; m++) if (pcs.includes(mod12(m))) out.push(m);
+    return out.length ? out : pool;
+  };
+  const idxOf = (p) => { let b = 0; for (let i = 0; i < pool.length; i++) if (Math.abs(pool[i] - p) < Math.abs(pool[b] - p)) b = i; return b; };
+  const out = [];
+  let prevEnd = center;
+  const tonic = mod12(root);
+  const varKinds = ['displace', 'tail', 'fragment', 'ornament'];
+  const v1 = rng.pick(varKinds);
+  const v2 = rng.pick(varKinds.filter((k) => k !== v1));
+
+  const emit = (m, base, anchor) => {
+    let idx = idxOf(anchor);
+    const ps = [];
+    m.rhythm.forEach((h, i) => {
+      const step = (m.steps[i] ?? 0) - (m.steps[i - 1] ?? 0);
+      idx = i === 0 ? idx : idx + step;
+      if (idx < 0 || idx >= pool.length) idx = clamp(idx - 2 * step, 0, pool.length - 1); // bounce off the range edge
+      let p = pool[idx];
+      const t = base + h.t;
+      if (h.t % 1 === 0 && h.d >= 0.45) { p = nearest(tonesAt(t), p); idx = idxOf(p); }
+      ps.push(p);
+      if (t < length - 1e-6) {
+        const n = makeNote(p, t, Math.min(h.d, length - t), (h.t === 0 ? 0.86 : h.t % 1 === 0 ? 0.8 : 0.72) * (0.94 + rng() * 0.08), length);
+        if (n) out.push(n);
+      }
+    });
+    if (ps.length) prevEnd = ps[ps.length - 1];
+    return ps;
+  };
+  let lastAnchorIdx = null;
+  for (let bar = 0; bar < bars; bar++) {
+    const slot = period[bar % period.length];
+    const base = bar * bpb;
+    const secondHalf = Math.floor(bar / period.length) % 2 === 1;
+    // anchor: the chord tone nearest the register centre (sequence = same shape re-anchored on each chord)
+    const tones = tonesAt(base + 0.01);
+    let target = slot === 'M' ? center + (secondHalf && opts.variation > 0.5 ? 2 : 0) : (prevEnd + center) / 2;
+    if (slot === 'S' && lastAnchorIdx != null) target = pool[clamp(lastAnchorIdx + (rng.chance(0.5) ? 1 : 2), 0, pool.length - 1)];
+    const anchor = nearest(tones, target);
+    if (slot === 'R') continue;
+    if (slot === 'Q' || slot === 'A') {
+      // cadence: 1–2 notes, then a held tone (question: 3rd/5th/2nd degree - open; answer: the tonic when it fits)
+      const final = slot === 'A' && bar === bars - 1 || (slot === 'A' && (opts.resolveEnd ?? true));
+      const lead = motif.rhythm.length > 2 && rng.chance(0.6);
+      let t0 = 0;
+      if (lead) {
+        const p0 = pool[clamp(idxOf(prevEnd) + (rng.chance(0.5) ? 1 : -1), 0, pool.length - 1)];
+        const n0 = makeNote(p0, base, 0.45, 0.74, length);
+        if (n0) out.push(n0);
+        t0 = 0.5;
+      }
+      const at = base + t0 + 0.01;
+      const ts = tonesAt(at);
+      let cands = ts;
+      if (slot === 'A' && final) {
+        const tonics = ts.filter((p) => mod12(p) === tonic);
+        if (tonics.length) cands = tonics;
+      } else {
+        const c = chordAt(at);
+        const open = ts.filter((p) => mod12(p) !== tonic && mod12(p) !== mod12(c.chord.root));
+        if (open.length) cands = open;
+      }
+      const p = nearest(cands, prevEnd);
+      const c = chordAt(at);
+      const chordEnd = Math.floor(at / (progLen || Infinity)) * progLen + c.startBeat + c.durBeats;
+      const d = Math.min(bpb - t0 - 0.5, Math.max(1, chordEnd - (base + t0) - 0.05));
+      const n = makeNote(p, base + t0, d, slot === 'A' ? 0.8 : 0.76, length);
+      if (n) out.push(n);
+      prevEnd = p;
+      continue;
+    }
+    let m = motif;
+    if (slot === 'V') m = varyMotif(motif, secondHalf ? v2 : v1, rng);
+    if (slot === 'V2') m = varyMotif(motif, v2, rng);
+    if (secondHalf && slot === 'M' && opts.variation > 0.7) m = varyMotif(motif, 'ornament', rng);
+    emit(m, base, anchor);
+    lastAnchorIdx = idxOf(anchor);
+  }
+  fitNotesToHarmony(out, progression, { key: { root, scale }, blues: /blues/.test(scale) || opts.blues, range: [lo, hi] });
+  // no overlaps inside the line (mono leads glide otherwise)
+  out.sort((a, b) => a.start - b.start);
+  for (let i = 0; i + 1 < out.length; i++) {
+    const maxD = out[i + 1].start - out[i].start - 0.02;
+    if (out[i].dur > maxD) out[i].dur = Math.max(0.05, Math.round(maxD * 10000) / 10000);
+  }
+  return out;
+}

@@ -327,10 +327,12 @@ export const DRUM_KITS = {
 };
 
 /**
- * Per-pad level trims (dB) so every kit has the same mix balance: kick ≈ -12 LUFS (max momentary,
+ * Per-pad level trims (dB) so every kit has the same mix balance: kick ≈ -12 LUFS before KIT_LEVEL_DB (max momentary,
  * vel 0.8), snare/clap 1.5-3 dB under it, toms -15, hats -20..-24, percussion -17..-25. Measured
  * with the QA harness (docs/SOUND.md) and applied to per-kit copies of the shared recipes.
  */
+/** Overall kit level (dB) so drums sit with the normalised instrument presets. */
+const KIT_LEVEL_DB = -3;
 const PAD_TRIM_DB = {
   "808": { kick: 1.9, snare: 9.1, clap: 13.4, rim: 7.9, hihat: 13.3, openhat: 8.1, tomlow: 2.6, tommid: 2.5, tomhigh: 2.4, crash: 2.3, ride: 1, cowbell: -2, tambourine: -1.4, shaker: 2.1, conga: 3.5, clave: 6.1 },
   "909": { kick: 3.2, snare: 6.1, clap: 10.7, rim: 7.9, hihat: 6.4, openhat: 2.5, tomlow: 4.5, tommid: 4.3, tomhigh: 4.2, crash: 0.7, ride: -0.7, cowbell: -2, tambourine: -1.4, shaker: 2.1, conga: 3.5, clave: 6.1 },
@@ -357,7 +359,7 @@ for (const [id, k] of Object.entries(DRUM_KITS)) {
   const tr = PAD_TRIM_DB[id] || {};
   const voices = {};
   for (const [pad, v] of Object.entries(k.voices)) {
-    voices[pad] = tr[pad] ? { ...v, gain: Math.round((v.gain ?? 1) * 10 ** (tr[pad] / 20) * 1000) / 1000 } : v;
+    voices[pad] = { ...v, gain: Math.round((v.gain ?? 1) * 10 ** (((tr[pad] || 0) + KIT_LEVEL_DB) / 20) * 1000) / 1000 };
   }
   k.voices = voices;
 }
