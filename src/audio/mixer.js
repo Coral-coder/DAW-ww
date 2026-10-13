@@ -10,12 +10,45 @@ import { createInstrument } from './instruments.js';
 import * as codeInstrumentModule from './code-instrument.js';
 import { scheduleClick } from './metronome.js';
 import { isTrackAudible } from './scheduler.js';
+import { activeLanes, parseTarget, segmentsInWindow, valueAt, controlOverrides } from '../core/automation.js';
+import { INSTRUMENT_DEFS } from './defs.js';
+import { EFFECT_DEFS } from './effect-defs.js';
+import { resolveInstrument } from './instruments.js';
 
 const TC = 0.012;
 
 function smooth(param, value, ctx, immediate) {
   if (!isFinite(value)) return;
   if (immediate) { param.cancelScheduledValues(0); param.value = value; } else param.setTargetAtTime(value, ctx.currentTime, TC);
+}
+
+/** Hand an automated AudioParam back to its static value (click-free). */
+function release(param, value, ctx) {
+  if (!isFinite(value)) return;
+  const t = ctx.currentTime;
+  if (typeof param.cancelAndHoldAtTime === 'function') { try { param.cancelAndHoldAtTime(t); } catch { param.cancelScheduledValues(t); } }
+  else param.cancelScheduledValues(t);
+  param.setTargetAtTime(value, t, TC);
+}
+
+/** def with automation param overrides merged in (def unchanged when ov is empty). */
+function withParams(def, ov) {
+  if (!def || !ov) return def;
+  return { ...def, params: { ...(def.params || {}), ...ov } };
+}
+
+/** Did an override map change enough to be worth an update()? (tiny relative epsilon) */
+function changed(a, b, defs) {
+  if (!a || !b) return a !== b;
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const k of keys) {
+    const x = a[k], y = b[k];
+    if (x === undefined || y === undefined) return true;
+    const d = defs?.find((p) => p.key === k);
+    const range = d && isFinite(d.max - d.min) ? Math.abs(d.max - d.min) : Math.max(1, Math.abs(x), Math.abs(y));
+    if (Math.abs(x - y) > range * 1e-4) return true;
+  }
+  return false;
 }
 
 export class ChannelStrip {
@@ -40,6 +73,10 @@ export class ChannelStrip {
     this.fxKey = '';
     this.sends = new Map(); // busId -> GainNode
     this.vals = {};
+    this.sendVals = {}; // static send amounts (restored when send automation ends)
+    this.fxDefs = new Map(); // fxId -> last static Effect def
+    this.fxOv = new Map(); // fxId -> {key: value} automation overrides
+    this.auto = { volume: false, pan: false, sends: new Set() }; // AudioParams currently driven by automation
     this.peak = { l: 0, r: 0 };
     if (opts.meter !== false) {
       this.splitter = ctx.createChannelSplitter(2);
@@ -84,23 +121,104 @@ export class ChannelStrip {
       this.effects = next;
     }
     const byId = new Map(list.map((f) => [f.id, f]));
+    this.fxDefs = byId;
     for (const e of this.effects) {
-      try { e.fx.update(byId.get(e.id)); } catch (err) { this.onError(err); }
+      try { e.fx.update(withParams(byId.get(e.id), this.fxOv.get(e.id))); } catch (err) { this.onError(err); }
     }
+  }
+
+  /** Automation overrides for insert fx: map {fxId: {key: value}} | null (null = back to static). */
+  setFxOverrides(map, immediate = false) {
+    for (const e of this.effects) {
+      const ov = map?.[e.id] || null;
+      const cur = this.fxOv.get(e.id) || null;
+      if (!changed(cur, ov, EFFECT_DEFS[e.type]?.params)) continue;
+      if (ov) this.fxOv.set(e.id, ov); else this.fxOv.delete(e.id);
+      const def = this.fxDefs.get(e.id);
+      if (!def) continue;
+      try { e.fx.update(withParams(def, ov), immediate); } catch (err) { this.onError(err); }
+    }
+    for (const id of [...this.fxOv.keys()]) if (!this.effects.some((e) => e.id === id)) this.fxOv.delete(id);
+  }
+
+  /**
+   * Schedule mixer automation (volume / pan / sends) for the beat window [b0, b1) that sounds
+   * from ctx time t0. lanes: { volume?, pan?, sends?: {busId: lane} } (lane = AutomationLane).
+   * jump: 'seek' (discontinuity: cancel what was scheduled ahead) | 'wrap' (loop wrap) | null.
+   */
+  automate(lanes, b0, b1, t0, spb, jump, busStrips) {
+    const ramp = (param, lane, active, clampFn) => {
+      const v0 = clampFn(valueAt(lane.points, b0));
+      if (!active || jump === 'seek') {
+        if (typeof param.cancelAndHoldAtTime === 'function') { try { param.cancelAndHoldAtTime(t0); } catch { param.cancelScheduledValues(t0); } }
+        else param.cancelScheduledValues(t0);
+        param.setValueAtTime(v0, t0);
+      } else if (jump === 'wrap') {
+        param.setValueAtTime(v0, t0);
+      }
+      for (const seg of segmentsInWindow(lane.points, b0, b1)) {
+        param.linearRampToValueAtTime(clampFn(seg.value), t0 + (seg.beat - b0) * spb);
+      }
+    };
+    const vol = (x) => Math.max(0, Math.min(4, x));
+    const pan = (x) => Math.max(-1, Math.min(1, x));
+    const amt = (x) => Math.max(0, Math.min(1, x));
+    if (lanes.volume) { ramp(this.volume.gain, lanes.volume, this.auto.volume, vol); this.auto.volume = true; }
+    else if (this.auto.volume) { this.auto.volume = false; release(this.volume.gain, this.vals.volume ?? 0.8, this.ctx); }
+    if (lanes.pan) { ramp(this.panner.pan, lanes.pan, this.auto.pan, pan); this.auto.pan = true; }
+    else if (this.auto.pan) { this.auto.pan = false; release(this.panner.pan, pan(this.vals.pan ?? 0), this.ctx); }
+    const sends = lanes.sends || {};
+    for (const [busId, lane] of Object.entries(sends)) {
+      const g = this._ensureSend(busId, busStrips);
+      if (!g) continue;
+      ramp(g.gain, lane, this.auto.sends.has(busId), amt);
+      this.auto.sends.add(busId);
+    }
+    for (const busId of [...this.auto.sends]) {
+      if (sends[busId]) continue;
+      this.auto.sends.delete(busId);
+      const g = this.sends.get(busId);
+      const stat = this.sendVals[busId] || 0;
+      if (g) {
+        release(g.gain, Math.min(1, stat), this.ctx);
+        if (!(stat > 0)) this.setSends(this.sendVals, busStrips);
+      }
+    }
+  }
+
+  /** Stop all automation on this strip: restore the static values. */
+  endAutomation(busStrips) {
+    if (this.auto.volume || this.auto.pan || this.auto.sends.size) this.automate({}, 0, 0, 0, 0, null, busStrips);
+    if (this.fxOv.size) this.setFxOverrides(null);
+  }
+
+  _ensureSend(busId, busStrips) {
+    const bus = busStrips?.get(busId);
+    if (!bus) return null;
+    let g = this.sends.get(busId);
+    if (!g) {
+      g = this.ctx.createGain();
+      g.gain.value = 0;
+      this.muteGain.connect(g);
+      g.connect(bus.input);
+      this.sends.set(busId, g);
+    }
+    return g;
   }
 
   /** volume (linear), pan (-1..1), muted (bool). */
   setMix({ volume = 0.8, pan = 0, muted = false }, immediate = false) {
     const v = this.vals;
-    if (v.volume !== volume) { v.volume = volume; smooth(this.volume.gain, volume, this.ctx, immediate); }
-    if (v.pan !== pan) { v.pan = pan; smooth(this.panner.pan, Math.max(-1, Math.min(1, pan)), this.ctx, immediate); }
+    if (v.volume !== volume) { v.volume = volume; if (!this.auto.volume) smooth(this.volume.gain, volume, this.ctx, immediate); }
+    if (v.pan !== pan) { v.pan = pan; if (!this.auto.pan) smooth(this.panner.pan, Math.max(-1, Math.min(1, pan)), this.ctx, immediate); }
     if (v.muted !== muted) { v.muted = muted; smooth(this.muteGain.gain, muted ? 0 : 1, this.ctx, immediate); }
   }
 
   /** sends: {busId: 0..1}; busStrips: Map(busId -> ChannelStrip). Post-fader, post-mute. */
   setSends(sends = {}, busStrips, immediate = false) {
+    this.sendVals = { ...sends };
     for (const [busId, g] of this.sends) {
-      if (!busStrips.has(busId) || !(sends[busId] > 0)) {
+      if (!busStrips.has(busId) || (!(sends[busId] > 0) && !this.auto.sends.has(busId))) {
         try { g.disconnect(); this.muteGain.disconnect(g); } catch { /* */ }
         this.sends.delete(busId);
       }
@@ -116,7 +234,7 @@ export class ChannelStrip {
         g.connect(bus.input);
         this.sends.set(busId, g);
       }
-      smooth(g.gain, Math.min(1, amt), this.ctx, immediate);
+      if (!this.auto.sends.has(busId)) smooth(g.gain, Math.min(1, amt), this.ctx, immediate);
     }
   }
 
@@ -234,6 +352,7 @@ export class MixGraph {
           });
           e.instType = def.type;
           e.instJson = JSON.stringify(def);
+          e.instOv = null;
         } catch (err) {
           e.instrument = null;
           e.instType = null;
@@ -243,7 +362,7 @@ export class MixGraph {
         const json = JSON.stringify(def);
         if (json !== e.instJson) {
           e.instJson = json;
-          try { e.instrument.update(def); } catch (err) { this.onError(err); }
+          try { e.instrument.update(withParams(def, e.instOv)); } catch (err) { this.onError(err); }
         }
       }
     } else if (track.type === 'code') {
@@ -271,6 +390,66 @@ export class MixGraph {
     }
     e.instType = null;
     e.instJson = null;
+  }
+
+  // ---------------------------------------------------------------- automation
+  /** Mixer lanes of an automation owner (track or master) grouped by target. */
+  static mixerLanes(owner, allowSends = true) {
+    const out = {};
+    for (const l of activeLanes(owner)) {
+      const t = parseTarget(l.target);
+      if (t.kind === 'volume') out.volume ||= l;
+      else if (t.kind === 'pan') out.pan ||= l;
+      else if (t.kind === 'send' && allowSends) { out.sends ||= {}; out.sends[t.busId] ||= l; }
+    }
+    return out;
+  }
+
+  /**
+   * Schedule volume/pan/send automation (AudioParam ramps) for the beat window [b0, b1) that
+   * starts sounding at ctx time t0. jump: 'seek' | 'wrap' | null (see ChannelStrip.automate).
+   */
+  automateMixer(project, b0, b1, t0, spb, jump) {
+    if (!(b1 > b0)) return;
+    try { this.master.automate(MixGraph.mixerLanes(project.master, false), b0, b1, t0, spb, jump, this.buses); } catch (err) { this.onError(err); }
+    for (const track of project.tracks) {
+      const e = this.tracks.get(track.id);
+      if (!e) continue;
+      try { e.strip.automate(MixGraph.mixerLanes(track), b0, b1, t0, spb, jump, this.buses); } catch (err) { this.onError(err); }
+    }
+  }
+
+  /**
+   * Control-rate automation (instrument / effect params) evaluated at `beat`.
+   * which: { inst = true, fx = true } — lets the realtime engine evaluate them at different beats.
+   */
+  applyControl(project, beat, { inst = true, fx = true, immediate = false } = {}) {
+    for (const track of project.tracks) {
+      const e = this.tracks.get(track.id);
+      if (!e) continue;
+      const ov = controlOverrides(track, beat);
+      if (fx) e.strip.setFxOverrides(ov.fx, immediate);
+      if (inst && e.instrument && track.instrument) {
+        const type = e.instrument.type || resolveInstrument(track.instrument).type;
+        if (changed(e.instOv || null, ov.inst, INSTRUMENT_DEFS[type]?.params)) {
+          e.instOv = ov.inst;
+          try { e.instrument.update(withParams(track.instrument, ov.inst)); } catch (err) { this.onError(err); }
+        }
+      }
+    }
+  }
+
+  /** Leave automation: every automated value goes back to the project's static value. */
+  endAutomation(project) {
+    this.master.endAutomation(this.buses);
+    for (const [id, e] of this.tracks) {
+      e.strip.endAutomation(this.buses);
+      if (e.instOv) {
+        e.instOv = null;
+        const track = project?.tracks.find((t) => t.id === id);
+        if (e.instrument && track?.instrument) { try { e.instrument.update(track.instrument); } catch (err) { this.onError(err); } }
+      }
+    }
   }
 
   /** Instrument for live play (null for audio/code tracks). */

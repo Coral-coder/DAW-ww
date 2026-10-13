@@ -113,7 +113,8 @@ export function codeToPatterns(source, { cycles = 4, beatsPerCycle = 4, trim = t
         g.notes = g.notes.filter((n) => n.start < lengthCycles * beatsPerCycle - EPS);
       }
       out.push({
-        name: groups.size > 1 ? `${label} ${g.kind === 'drums' ? 'drums' : g.sound}` : label,
+        // the pattern's name only — callers append the sound/kind (adding it here doubled it: "Pattern 1 drums Drums")
+        name: label,
         kind: g.kind,
         sound: g.sound,
         notes: g.notes,

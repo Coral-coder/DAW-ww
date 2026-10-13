@@ -4,6 +4,7 @@ import * as samplesIO from '../io/samples.js';
 import { beatsPerBar } from '../core/model.js';
 import { MixGraph } from './mixer.js';
 import { CodeCache, collectEvents, defaultEndBeat, isTrackAudible } from './scheduler.js';
+import { hasAutomation, hasControlAutomation } from '../core/automation.js';
 
 function fallbackBase64ToArrayBuffer(b64) {
   const bin = atob(b64);
@@ -133,9 +134,39 @@ async function renderOnce(project, cfg) {
     }
   };
 
+  // Automation (song mode only, like realtime playback): mixer targets become AudioParam
+  // ramps over the whole render; instrument/effect params are applied at control rate
+  // (every 1/16 note) while the render is suspended, right before that step's events.
+  const automate = mode === 'song' && hasAutomation(project);
+  if (automate) graph.automateMixer(project, startBeat, endBeat, 0, spb, 'seek');
+  const control = automate && hasControlAutomation(project) && typeof ctx.suspend === 'function';
+
   const chunkSec = 2;
   const chunkBeats = chunkSec / spb;
-  if (typeof ctx.suspend === 'function' && dur > chunkSec * 3) {
+  if (control) {
+    const stepBeats = 0.25;
+    const q = 128 / sampleRate; // suspend() works on render-quantum boundaries
+    const steps = Math.ceil((endBeat - startBeat) / stepBeats - 1e-9);
+    const runStep = (k, jump) => {
+      const b = startBeat + k * stepBeats;
+      try { graph.applyControl(project, b, { immediate: k === 0 }); } catch (e) { onError(e); }
+      schedule(b, Math.min(endBeat, b + stepBeats), jump);
+    };
+    runStep(0, true);
+    let lastT = 0;
+    const plan = (k) => {
+      if (k >= steps) return;
+      const t = Math.floor((k * stepBeats * spb) / q) * q;
+      if (!(t > lastT)) { runStep(k, false); plan(k + 1); return; } // sub-quantum step (extreme tempo)
+      lastT = t;
+      ctx.suspend(t).then(() => {
+        runStep(k, false);
+        plan(k + 1);
+        ctx.resume();
+      }, (e) => { onError(e); });
+    };
+    plan(1);
+  } else if (typeof ctx.suspend === 'function' && dur > chunkSec * 3) {
     // Schedule incrementally (keeps memory flat on long songs): events for chunk k+1 are
     // scheduled while the renderer is suspended at the start of chunk k.
     schedule(startBeat, Math.min(endBeat, startBeat + 2 * chunkBeats), true);

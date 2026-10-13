@@ -15,7 +15,9 @@ import { SCALES, pitchClassName } from '../theory/index.js';
 import { serializeProject, parseProjectFile, downloadBlob } from '../io/project-file.js';
 import { exportMidi, importMidi } from '../io/midi.js';
 import { encodeWav } from '../io/wav.js';
-import { fileToSample } from '../io/samples.js';
+import { fileToSample, arrayBufferToBase64 } from '../io/samples.js';
+import { AudioRecorder, isRecordingSupported } from '../audio/recorder.js';
+import { scheduleClick } from '../audio/metronome.js';
 import { readStrudelFile } from '../io/strudel-file.js';
 import { saveLocal, listLocal, loadLocal, deleteLocal, createAutosaver } from '../io/autosave.js';
 import { codeToPatterns, patternsToCode } from '../code/convert.js';
@@ -123,7 +125,12 @@ export function createActions(app) {
       return np;
     });
     nt.activePatternId = patMap[t.activePatternId] || null;
-    nt.fx = nt.fx.map((f) => ({ ...f, id: uid('fx') }));
+    const fxMap = {};
+    nt.fx = nt.fx.map((f) => { const id = uid('fx'); fxMap[f.id] = id; return { ...f, id }; });
+    nt.automation = (nt.automation || []).map((l) => ({
+      ...l, id: uid('aut'),
+      target: String(l.target).replace(/^fx:([^:]+):/, (m, fid) => (fxMap[fid] ? `fx:${fxMap[fid]}:` : m)),
+    }));
     const newClips = p.clips.filter((c) => c.trackId === trackId).map((c) => ({ ...c, id: uid('clip'), trackId: nt.id, patternId: patMap[c.patternId] || c.patternId }));
     store.transact(`Duplicate ${t.name}`, (pp) => {
       const idx = pp.tracks.findIndex((x) => x.id === trackId);
@@ -271,13 +278,133 @@ export function createActions(app) {
   }
   async function toggleRecord() {
     const rec = !ui.get('recording');
-    ui.set({ recording: rec });
-    if (rec) {
-      if (!app.keyboardPiano?.enabled) { app.keyboardPiano.enabled = true; }
-      toast('Recording: play notes with your computer keyboard (Z–M, Q–P) or a MIDI keyboard. Notes go into the selected track\'s active pattern.');
-      await play();
+    if (!rec) {
+      ui.set({ recording: false });
+      if (audioTake) await finishAudioRecording();
+      return;
     }
+    const armedAudio = get().tracks.filter((t) => t.type === 'audio' && t.arm);
+    ui.set({ recording: true });
+    if (armedAudio.length) { await startAudioRecording(); return; }
+    if (!app.keyboardPiano?.enabled) { app.keyboardPiano.enabled = true; }
+    toast('Recording: play notes with your computer keyboard (Z–M, Q–P) or a MIDI keyboard. Notes go into the selected track\'s active pattern. Arm an audio track (●) to record from your microphone instead.');
+    await play();
   }
+
+  // ---------------------------------------------------------------- audio recording (armed audio tracks)
+  // Record ▸ with armed audio tracks: switches to SONG mode, (optional 1-bar count-in), starts the
+  // transport and captures the input with MediaRecorder. When the transport stops (or Record is
+  // toggled off) the take is decoded, stored as a WAV project sample and placed as an audio clip on
+  // every armed audio track at the beat where it was heard.
+  const recorder = new AudioRecorder(engine);
+  let audioTake = null; // { trackIds, loop, ctxStart, finishing }
+  const prefKey = 'heroic-countin';
+  const getCountIn = () => { try { return localStorage.getItem(prefKey) === '1'; } catch { return false; } };
+  const setCountIn = (v) => { try { localStorage.setItem(prefKey, v ? '1' : '0'); } catch { /* */ } ui.set({ countIn: !!v }); };
+  ui.set({ countIn: getCountIn(), audioRecording: false });
+
+  /** Open the input while an audio track is armed (level meters), close it otherwise. */
+  async function syncRecordInput() {
+    const armed = get().tracks.some((t) => t.type === 'audio' && t.arm);
+    if (armed && !recorder.inputOpen && !syncRecordInput.failed) {
+      if (!isRecordingSupported()) { syncRecordInput.failed = true; toast('Audio recording is not supported in this browser.', { level: 'warn' }); return; }
+      try { await recorder.openInput(); } catch (e) { syncRecordInput.failed = true; toast(e.message, { level: 'error', timeout: 6000 }); }
+    } else if (!armed && recorder.inputOpen && !audioTake) {
+      recorder.closeInput();
+    }
+    if (!armed) syncRecordInput.failed = false;
+  }
+  store.on('change', () => { syncRecordInput(); });
+
+  async function startAudioRecording() {
+    const p = get();
+    const trackIds = p.tracks.filter((t) => t.type === 'audio' && t.arm).map((t) => t.id);
+    if (!trackIds.length) return false;
+    try {
+      await ensureAudio();
+      await recorder.openInput();
+    } catch (e) {
+      ui.set({ recording: false });
+      toast(e.message, { level: 'error', timeout: 6000 });
+      return false;
+    }
+    if (get().mode !== 'song') setMode('song');
+    const loop = get().loop?.enabled;
+    if (loop) store.transact('Loop off while recording', (pp) => { pp.loop.enabled = false; }, { undo: false });
+    audioTake = { trackIds, loop, ctxStart: null };
+    const wasPlaying = engine.isPlaying;
+    if (!wasPlaying && ui.get('countIn')) {
+      // one bar of clicks, then roll
+      const ctx = engine.ctx;
+      const bpb = beatsPerBar(get());
+      const spb = 60 / get().bpm;
+      const t0 = ctx.currentTime + 0.05;
+      for (let i = 0; i < bpb; i++) scheduleClick(ctx, engine.graph.clickOut, t0 + i * spb, i === 0);
+      app.setStatus?.('Count-in…');
+      await new Promise((r) => setTimeout(r, Math.max(0, (t0 + bpb * spb - ctx.currentTime - 0.12) * 1000)));
+      if (!audioTake || !ui.get('recording')) { audioTake = null; return false; }
+    }
+    try {
+      audioTake.ctxStart = await recorder.start();
+    } catch (e) {
+      audioTake = null;
+      ui.set({ recording: false });
+      toast('Could not start recording: ' + (e?.message || e), { level: 'error' });
+      return false;
+    }
+    if (!engine.isPlaying) await play();
+    audioTake.startBeat = engine.beatAtTime(audioTake.ctxStart);
+    ui.set({ audioRecording: true });
+    app.setStatus?.(`Recording audio into ${trackIds.length} armed track${trackIds.length > 1 ? 's' : ''} — press Stop (or Space) to finish the take.`);
+    return true;
+  }
+
+  async function finishAudioRecording() {
+    const take = audioTake;
+    if (!take || take.finishing) return null;
+    take.finishing = true;
+    const res = await recorder.stop();
+    audioTake = null;
+    ui.set({ audioRecording: false, recording: false });
+    if (take.loop) store.transact('Restore loop', (pp) => { pp.loop.enabled = true; }, { undo: false });
+    syncRecordInput();
+    if (!res) { toast('Nothing was recorded.', { level: 'warn' }); return null; }
+    let buffer;
+    try {
+      const ab = await res.blob.arrayBuffer();
+      buffer = await new Promise((resolve, reject) => {
+        const pr = engine.ctx.decodeAudioData(ab, resolve, reject);
+        if (pr?.then) pr.then(resolve, reject);
+      });
+    } catch (e) {
+      toast('Could not decode the recording: ' + (e?.message || e), { level: 'error' });
+      return null;
+    }
+    const p = get();
+    const n = Object.values(p.samples || {}).filter((x) => /^Take \d+/.test(x.name)).length + 1;
+    const sample = { id: uid('smp'), name: `Take ${n}`, mime: 'audio/wav', data: arrayBufferToBase64(encodeWav(buffer, { bitDepth: 16 })), duration: buffer.duration };
+    const bpm = p.bpm;
+    const startBeat = Number.isFinite(take.startBeat) ? take.startBeat : 0;
+    const lenBeats = (buffer.duration * bpm) / 60;
+    const offset = startBeat < 0 ? -startBeat : 0;
+    const clipLen = +(lenBeats - offset).toFixed(6);
+    if (!(clipLen > 0.01)) { toast('The take was too short.', { level: 'warn' }); return null; }
+    const clips = [];
+    store.transact('Record audio', (pp) => {
+      pp.samples[sample.id] = sample;
+      for (const tid of take.trackIds) {
+        if (!pp.tracks.some((t) => t.id === tid)) continue;
+        const c = createClip(tid, { type: 'audio', sampleId: sample.id, start: +Math.max(0, startBeat).toFixed(6), length: clipLen, offset: +offset.toFixed(6), name: sample.name });
+        pp.clips.push(c);
+        clips.push(c);
+      }
+    });
+    toast(`Recorded "${sample.name}" (${buffer.duration.toFixed(1)} s) onto ${clips.length} track${clips.length === 1 ? '' : 's'}.`, { level: 'success' });
+    return { sample, clips };
+  }
+
+  // the take ends whenever the transport stops
+  engine.on?.('state', ({ playing }) => { if (!playing && audioTake && audioTake.ctxStart != null) finishAudioRecording(); });
 
   // live notes + recording
   const liveHeld = new Map(); // pitch -> {trackId, startBeat, vel}
@@ -946,7 +1073,8 @@ export function createActions(app) {
   return {
     boot, selectTrack, selectedTrack, selectPattern, addTrack, deleteTrack, duplicateTrack, updateTrack, moveTrack, renameTrack, trackMenuItems, addTrackMenuItems,
     newPattern, duplicatePattern, deletePattern, ensurePattern, setPatternNotes,
-    togglePlay, play, stop, setPosition, setMode, toggleRecord, liveNoteOn, liveNoteOff, enableMidiInput, ensureAudio,
+    togglePlay, play, stop, setPosition, setMode, toggleRecord, liveNoteOn,
+    recorder, startAudioRecording, finishAudioRecording, getCountIn, setCountIn, liveNoteOff, enableMidiInput, ensureAudio,
     setGenre, applyGenreDefaults, newProject, openProject, saveProject, renameProject, loadProjectObject,
     exportWav, exportMidiFile, exportCode, importMidiFile, importStrudel, renderCodeToTracks, importSamples, placeSample, sampleToSampler,
     generatePart, generateSong, newProgression, currentProgression, applyAssistantAction,

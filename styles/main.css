@@ -151,8 +151,9 @@ canvas.meter { width: 10px; background: #000; border-radius: 2px; image-renderin
 .toast.warn { border-left-color: var(--warn); }
 .toast.error { border-left-color: var(--bad); }
 .toast.success { border-left-color: var(--good); }
-.ctx-menu { position: fixed; min-width: 190px; background: var(--bg-3); border: 1px solid var(--line-2); border-radius: var(--radius); box-shadow: var(--shadow); padding: 4px; z-index: 1200; }
-.ctx-menu.submenu { display: none; position: absolute; left: 100%; top: -5px; }
+.ctx-menu { position: fixed; min-width: 190px; max-height: calc(100vh - 8px); overflow-y: auto; background: var(--bg-3); color: var(--text); border: 1px solid var(--line-2); border-radius: var(--radius); box-shadow: var(--shadow); padding: 4px; z-index: 1200; }
+/* submenus are fixed-positioned by JS (flip at screen edges, scroll when tall) so a scrolling parent can't clip them */
+.ctx-menu.submenu { display: none; position: fixed; left: 0; top: 0; max-height: calc(100vh - 8px); }
 .ctx-item { position: relative; display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
 .ctx-item:hover { background: var(--accent); color: #fff; }
 .ctx-item:hover > .ctx-menu.submenu { display: block; }

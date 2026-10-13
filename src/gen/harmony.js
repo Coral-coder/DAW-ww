@@ -2,7 +2,7 @@
 import { createRng, clamp } from '../core/util.js';
 import {
   romanToChord, getProgression, findProgressions, suggestNextChords, voiceLead, isMinorScale,
-  chordPitchClasses, chordName, resolveScaleId, mod12, parseKey,
+  chordPitchClasses, chordName, resolveScaleId, mod12, parseKey, scalePitchClasses, SCALES,
 } from '../theory/index.js';
 import { getGenre } from './genres.js';
 import { makeNote } from './note-util.js';
@@ -24,8 +24,33 @@ export function resolveKey(opts = {}) {
 function progressionFitsScale(p, scale) {
   if (!p) return false;
   if (p.mode === 'any') return true;
-  if (isMinorScale(scale)) return p.mode !== 'major' && p.mode !== 'lydian';
-  return p.mode === 'major' || p.mode === 'lydian';
+  if (p.mode === scale) return romansFitScale(p.romans, scale) || (scale !== 'major' && scale !== 'minor');
+  const family = isMinorScale(scale) ? p.mode !== 'major' && p.mode !== 'lydian' : p.mode === 'major' || p.mode === 'lydian';
+  if (!family) return false;
+  return romansFitScale(p.romans, scale);
+}
+
+/**
+ * Plain (accidental-free, non-secondary) romans are read on the scale's own degrees, so a progression written
+ * for another mode can produce chromatic garbage (e.g. 'IVmaj7' in Lydian -> #IVmaj7). For heptatonic scales,
+ * require the triad of every plain roman to be diatonic; explicit borrowings (bVII, V/V) are intentional.
+ */
+function isDiatonicTriad(chord, root, scale) {
+  if (!chord) return false;
+  const set = new Set(scalePitchClasses(root, scale));
+  return chordPitchClasses(chord.root, chord.type).slice(0, 3).every((pc) => set.has(pc));
+}
+
+function romansFitScale(romans, scale) {
+  if ((SCALES[scale]?.intervals?.length || 0) !== 7) return true; // pentatonic/blues: idiomatic non-diatonic chords
+  const set = new Set(scalePitchClasses(0, scale));
+  return romans.every((r) => {
+    if (/^[b#♭♯]|\//.test(r)) return true;
+    const c = romanToChord(r, 0, scale);
+    if (!c) return true;
+    const triad = chordPitchClasses(c.root, c.type).slice(0, 3);
+    return triad.every((pc) => set.has(pc));
+  });
 }
 
 /** Pick one of the genre's signature progressions that fits the scale (major vs minor). -> progression | null */
@@ -102,7 +127,10 @@ export function generateProgression(opts = {}) {
     // Markov walk with the theory engine's functional suggestions
     const romans = [minor ? 'i' : 'I'];
     while (romans.length < 4) {
-      const sug = suggestNextChords(romans, root, scale, genre?.id, { limit: 5 });
+      let sug = suggestNextChords(romans, root, scale, genre?.id, { limit: 8 });
+      // suggestions are written for major / natural minor: in modes keep only chords that fit the scale
+      const fit = (SCALES[scale]?.intervals?.length || 0) === 7 ? sug.filter((s) => isDiatonicTriad(s.chord, root, scale)) : sug;
+      sug = (fit.length ? fit : sug).slice(0, 5);
       romans.push(rng.weighted(sug.map((s) => s.roman), sug.map((s) => s.score ** 2)));
     }
     items = romans.map((r) => ({ roman: r, bars: 1 }));

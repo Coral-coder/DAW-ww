@@ -60,7 +60,8 @@ export function generateRoleNotes(role, opts) {
     case 'drums': {
       const soft = kind === 'intro' || kind === 'outro' || kind === 'break';
       const band = BAND_FAMILIES.has(g.family);
-      const fill = kind === 'build' || (e >= 0.5 && (bars >= 8 || band));
+      // a one-bar loop must not end in a fill (it would play the fill every bar)
+      const fill = bars > 1 && (kind === 'build' || (e >= 0.5 && (bars >= 8 || band)));
       return generateDrumPattern({
         style: g.drumStyle, bars, rng, beatsPerBar: bpb, humanize: g.humanize || 0,
         density: soft ? Math.min(e + 0.1, kind === 'break' ? 0.3 : 0.45) : clamp(e, 0.3, 1),

@@ -90,11 +90,12 @@ export function knob({ def, value, onChange, size = 38, label, color, showValue 
   svg.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     const n0 = toNorm(def, v);
+    const v0 = v;
     el.classList.add('active');
     startDrag(e, (dx, dy, ev) => {
       const sens = ev.shiftKey ? 0.0015 : 0.006;
       set(fromNorm(def, n0 + (-dy + dx * 0.3) * sens));
-    }, () => { el.classList.remove('active'); onChange && onChange(v, { final: true }); });
+    }, () => { el.classList.remove('active'); if (v !== v0) onChange && onChange(v, { final: true }); }); // a plain click changes nothing
   });
   svg.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -192,14 +193,24 @@ export function numberField({ value, min, max, step = 1, onChange, width = 56, f
       if (moved) commit(v0 - dy * step * (ev.shiftKey ? 0.1 : 1) * (step < 1 ? 1 : 0.5), false);
     }, () => { if (!moved) { el.focus(); el.select(); } else commit(v, true); });
   });
+  // typed text -> number (accepts "0", "−3", "50%"); null when it isn't a number
+  const typed = () => { const n = parseFloat(String(el.value).replace('−', '-')); return Number.isFinite(n) ? n : null; };
+  let cancelled = false;
   el.addEventListener('keydown', (e) => {
     e.stopPropagation();
-    if (e.key === 'Enter') { commit(parseFloat(el.value) || v); el.blur(); }
-    if (e.key === 'Escape') { el.value = format ? format(v) : v; el.blur(); }
+    if (e.key === 'Enter') { const n = typed(); if (n != null) commit(n); el.blur(); }
+    if (e.key === 'Escape') { cancelled = true; el.value = format ? format(v) : v; el.blur(); }
     if (e.key === 'ArrowUp') commit(v + step);
     if (e.key === 'ArrowDown') commit(v - step);
   });
-  el.addEventListener('blur', () => { el.value = format ? format(v) : v; });
+  el.addEventListener('blur', () => {
+    // clicking away / Tab commits what was typed (Escape cancels)
+    const n = typed();
+    const shown = format ? format(v) : String(v);
+    if (!cancelled && n != null && el.value !== shown && n !== v) commit(n);
+    cancelled = false;
+    el.value = format ? format(v) : v;
+  });
   el.setValue = (nv) => { v = nv; if (document.activeElement !== el) el.value = format ? format(v) : v; };
   return el;
 }
@@ -337,9 +348,26 @@ export function contextMenu(ev, items) {
   const off = (e) => {
     if (!menu.contains(e.target)) { menu.remove(); window.removeEventListener('pointerdown', off, true); }
   };
+  const onKey = (e) => {
+    if (!menu.isConnected) { window.removeEventListener('keydown', onKey, true); return; }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); menu.closeMenu(); }
+  };
   setTimeout(() => window.addEventListener('pointerdown', off, true), 0);
-  menu.closeMenu = () => { menu.remove(); window.removeEventListener('pointerdown', off, true); };
+  window.addEventListener('keydown', onKey, true);
+  menu.closeMenu = () => { menu.remove(); window.removeEventListener('pointerdown', off, true); window.removeEventListener('keydown', onKey, true); };
   return menu;
+}
+
+/** Fixed-position a (now :hover-visible) submenu next to its row, flipping/clamping at the viewport edges. */
+function placeSubmenu(row, sub) {
+  const r = row.getBoundingClientRect();
+  const w = sub.offsetWidth, hh = sub.offsetHeight;
+  let left = r.right - 2;
+  if (left + w > window.innerWidth - 4) left = Math.max(4, r.left - w + 2);
+  let top = r.top - 5;
+  if (top + hh > window.innerHeight - 4) top = Math.max(4, window.innerHeight - 4 - hh);
+  sub.style.left = left + 'px';
+  sub.style.top = top + 'px';
 }
 
 function buildMenu(items) {
@@ -352,6 +380,7 @@ function buildMenu(items) {
       const sub = buildMenu(it.submenu);
       sub.classList.add('submenu');
       row.appendChild(sub);
+      row.addEventListener('mouseenter', () => placeSubmenu(row, sub));
     } else if (!it.disabled) {
       row.addEventListener('click', () => { document.querySelectorAll('.ctx-menu').forEach((m) => m.remove()); it.onClick && it.onClick(); });
     }
@@ -412,6 +441,8 @@ export function fileInput(accept, multiple = false) {
   return new Promise((resolve) => {
     const inp = h('input', { type: 'file', accept, multiple, style: { display: 'none' } });
     inp.addEventListener('change', () => { resolve([...inp.files]); inp.remove(); });
+    // dialog dismissed: settle the promise and drop the input instead of leaking both
+    inp.addEventListener('cancel', () => { resolve([]); inp.remove(); });
     document.body.appendChild(inp);
     inp.click();
   });

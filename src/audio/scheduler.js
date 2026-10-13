@@ -189,7 +189,10 @@ export function defaultEndBeat(project, mode = project.mode) {
  * Classic lookahead scheduler. Keeps (time, beat, bpm) anchors per scheduled window so the
  * playhead is exact across tempo changes and loop wraps.
  *
- * opts: { ctx, getProject, dispatch(event, time, spb), onWrap?(time), onError?, interval=25, lookahead=0.12 }
+ * opts: { ctx, getProject, dispatch(event, time, spb), onWrap?(time), onError?, interval=25, lookahead=0.12,
+ *         onWindow?(project, b0, b1, t0, spb, jump), onTick?(project, now) }
+ *   onWindow is called for every scheduled window before its events are dispatched
+ *   (jump: 'seek' after play/seek/drop-out, 'wrap' after a loop wrap, else null) — automation hook.
  */
 export class Scheduler {
   constructor(opts) {
@@ -227,6 +230,7 @@ export class Scheduler {
     this.nextTime = time;
     this.nextTimeStart = time;
     this.jump = true;
+    this.jumpKind = 'seek';
     this.anchors = [{ time, beat, bpm }];
   }
 
@@ -277,6 +281,7 @@ export class Scheduler {
       this.nextBeat = b;
       this.nextTime = now + 0.02;
       this.jump = true;
+      this.jumpKind = 'seek';
       this.anchors.push({ time: this.nextTime, beat: b, bpm: project.bpm });
     }
 
@@ -296,6 +301,9 @@ export class Scheduler {
       const last = this.anchors[this.anchors.length - 1];
       if (!last || Math.abs(last.time - t0) > 1e-9 || last.bpm !== bpm || Math.abs(last.beat - b0) > 1e-9) {
         this.anchors.push({ time: t0, beat: b0, bpm });
+      }
+      if (this.o.onWindow) {
+        try { this.o.onWindow(project, b0, b1, t0, spb, this.jump ? (this.jumpKind || 'seek') : null); } catch (e) { this.o.onError?.(e); }
       }
       let events = [];
       try {
@@ -318,12 +326,14 @@ export class Scheduler {
       if (wrap) {
         this.nextBeat = lp.start;
         this.jump = true;
+        this.jumpKind = 'wrap';
         this.o.onWrap?.(this.nextTime);
       } else {
         this.nextBeat = b1;
         break;
       }
     }
+    if (this.o.onTick) { try { this.o.onTick(project, now); } catch (e) { this.o.onError?.(e); } }
     // prune anchors that are fully in the past (keep the latest one <= now)
     while (this.anchors.length > 2 && this.anchors[1].time <= now) this.anchors.shift();
   }

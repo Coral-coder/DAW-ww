@@ -1052,13 +1052,16 @@ export function createDevicePanel(app) {
       } else if (loadingId !== id) {
         peaks = null;
         loadingId = id;
-        engine.decodeSample?.(id).then((buf) => { peakCache.set(id, computePeaks(buf)); loadingId = null; if (vals?.sampleId === id) { peaks = peakCache.get(id); draw(); } }).catch(() => { loadingId = null; info.textContent = 'Could not decode this sample'; });
+        engine.decodeSample?.(id).then((buf) => { peakCache.set(id, computePeaks(buf)); loadingId = null; if (vals?.sampleId === id) { peaks = peakCache.get(id); setInfo(vals, s); draw(); } }).catch(() => { loadingId = null; info.textContent = 'Could not decode this sample'; });
       }
-      const dur = peaks?.duration ?? s.duration ?? 0;
-      const win = dur * ((r.end ?? 1) - (r.start ?? 0));
-      info.textContent = `${s.name} · ${dur ? dur.toFixed(2) + ' s' : ''}${win && win < dur - 0.001 ? ` (window ${win.toFixed(2)} s)` : ''} · root ${noteLabel(r.rootNote ?? 60)}${r.slices > 0 ? ` · ${r.slices} slices from ${noteLabel(r.rootNote ?? 60)}` : ''}${r.loop ? ' · looping' : ''}`;
+      setInfo(r, s);
       draw();
     };
+    function setInfo(r, s) {
+      const dur = peaks?.duration ?? s.duration ?? 0;
+      const win = dur * ((r.end ?? 1) - (r.start ?? 0));
+      info.textContent = `${s.name}${dur ? ` · ${dur.toFixed(2)} s` : ''}${win && win < dur - 0.001 ? ` (window ${win.toFixed(2)} s)` : ''} · root ${noteLabel(r.rootNote ?? 60)}${r.slices > 0 ? ` · ${r.slices} slices from ${noteLabel(r.rootNote ?? 60)}` : ''}${r.loop ? ' · looping' : ''}`;
+    }
   }
 
   const NN = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];

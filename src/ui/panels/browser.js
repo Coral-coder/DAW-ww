@@ -244,7 +244,7 @@ export function createBrowserPanel(app) {
         { header: k.name || id },
         { label: 'Add drum track', icon: 'plus', onClick: () => actions.addTrack(id) },
         { label: 'Add drum track + beat', icon: 'dice', onClick: () => { const nt = actions.addTrack(id); if (nt) actions.generatePart('drums', { trackId: nt.id }); } },
-        { label: isDrum ? `Load on "${t.name}"` : 'Load on selected drum track', icon: 'drum', disabled: !isDrum, onClick: () => { actions.updateTrack(t.id, (tt) => { tt.instrument.preset = id; }, `Kit ${k.name}`); toast(`${t.name} now uses the ${k.name} kit`, { level: 'success' }); } },
+        { label: isDrum ? `Load on "${t.name}"` : 'Load on selected drum track', icon: 'drum', disabled: !isDrum, onClick: () => { actions.updateTrack(t.id, (tt) => { tt.instrument.preset = id; tt.instrument.params = { ...(tt.instrument.params || {}), kit: id }; }, `Kit ${k.name}`); toast(`${t.name} now uses the ${k.name} kit`, { level: 'success' }); } },
       ]); },
       actionsEls: [actBtn('plus', 'Add drum track', () => actions.addTrack(id))],
     }));

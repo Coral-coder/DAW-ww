@@ -1625,6 +1625,7 @@ export function createPianoView(app) {
   window.addEventListener('keydown', (e) => {
     if (!visible || !cur.pat || isTyping(e) || e.defaultPrevented) return;
     if (document.querySelector('.modal-backdrop')) return;
+    if (e.key === 'Escape' && document.querySelector('.ctx-menu')) return; // let the open menu close first
     const mod = e.ctrlKey || e.metaKey;
     const k = e.key;
     let handled = true;

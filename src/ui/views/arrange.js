@@ -2,9 +2,16 @@
 // canvas with pattern & audio clips. Clip editing (move / resize / trim / split / duplicate /
 // erase / rubber-band), drag & drop from the browser and the OS, follow-playhead.
 import { h, icon, startDrag, fitCanvas } from '../dom.js';
-import { button, iconButton, toggle, select, fader, meter, contextMenu, promptText, confirmDialog, toast } from '../components.js';
+import { button, iconButton, toggle, select, fader, meter, contextMenu, promptText, confirmDialog, toast, formatValue } from '../components.js';
 import { beatsPerBar, songLengthBeats, patternsForTrack, createClip, createPattern, TRACK_COLORS } from '../../core/model.js';
 import { uid, clamp, deepClone } from '../../core/util.js';
+import {
+  MIXER_TARGETS, parseTarget, createAutomationLane, valueAt, sortPoints, toNorm, fromNorm,
+  replaceRange, rampPoints, lfoPoints,
+} from '../../core/automation.js';
+import { INSTRUMENT_DEFS } from '../../audio/defs.js';
+import { EFFECT_DEFS, resolveEffectParams } from '../../audio/effect-defs.js';
+import { resolveInstrumentDef } from '../../audio/presets.js';
 import { isTyping } from '../keyboard.js';
 
 // ----------------------------------------------------------------------------- constants
@@ -20,6 +27,9 @@ const MAX_LANE = 180;
 const DT_SAMPLE = 'application/x-heroic-sample';
 const DT_PRESET = 'application/x-heroic-preset';
 const EPS = 1e-6;
+const AUTO_H = 58; // automation lane height (px)
+const AUTO_PAD = 7; // vertical padding inside an automation lane
+const PT_HIT = 7; // px radius for grabbing an automation point
 
 const SNAP_OPTIONS = [
   { value: 'bar', label: 'Snap: Bar' },
@@ -190,6 +200,7 @@ export function createArrangeView(app) {
   let laneH = clamp(prefs.laneH ?? 60, MIN_LANE, MAX_LANE);
   let headW = clamp(prefs.headW ?? 210, 150, 380);
   let snapMode = prefs.snap ?? 'bar';
+  const autoOpen = new Set(Array.isArray(prefs.autoOpen) ? prefs.autoOpen : []); // track ids with automation shown
   let tool = 'pointer';
   let visible = false;
   let stale = true;
@@ -197,7 +208,7 @@ export function createArrangeView(app) {
   let version = 0; // project version (bumped on every project change)
   let theme = {};
 
-  const savePrefs = () => { try { localStorage.setItem('heroic-arrange', JSON.stringify({ ppb, laneH, headW, snap: snapMode })); } catch { /* ignore */ } };
+  const savePrefs = () => { try { localStorage.setItem('heroic-arrange', JSON.stringify({ ppb, laneH, headW, snap: snapMode, autoOpen: [...autoOpen] })); } catch { /* ignore */ } };
   const bpbNow = () => beatsPerBar(get());
   const snapStep = () => (snapMode === 'off' ? 0 : snapMode === 'bar' ? bpbNow() : Number(snapMode));
   const snapB = (b, ev, fn = Math.round) => {
@@ -299,6 +310,7 @@ export function createArrangeView(app) {
       laneA: v('--arr-lane-a', '#12151c'), laneB: v('--arr-lane-b', '#151922'), laneSel: v('--arr-lane-sel', 'rgba(124,92,255,.1)'),
       below: v('--arr-below', '#0c0e13'), section: v('--arr-section', 'rgba(255,255,255,.025)'), loopShade: v('--arr-loop-shade', 'rgba(0,212,255,.05)'),
       clipText: v('--arr-clip-text', '#0b0d12'), sel: v('--arr-sel', '#ffffff'),
+      autoBg: v('--arr-auto-bg', 'rgba(0,0,0,.22)'), autoLine: v('--arr-auto-line', 'rgba(255,255,255,.05)'),
       font: v('--font', 'system-ui, sans-serif'), mono: v('--mono', 'monospace'),
     };
   }
@@ -313,12 +325,16 @@ export function createArrangeView(app) {
   }
 
   function setLaneH(v) {
-    const centerTrack = (scroller.scrollTop + scroller.clientHeight / 2) / laneH;
+    const L0 = rowsLayout();
+    const cy = scroller.scrollTop + scroller.clientHeight / 2;
+    const ri = clamp(rowAt(L0, cy), 0, Math.max(0, L0.rows.length - 1));
+    const frac = L0.rows[ri] ? (cy - L0.rows[ri].y) / L0.rows[ri].h : 0;
     laneH = Math.round(clamp(v, MIN_LANE, MAX_LANE));
     savePrefs();
     syncHeaders();
     layout();
-    scroller.scrollTop = Math.max(0, centerTrack * laneH - scroller.clientHeight / 2);
+    const L1 = rowsLayout();
+    if (L1.rows[ri]) scroller.scrollTop = Math.max(0, L1.rows[ri].y + frac * L1.rows[ri].h - scroller.clientHeight / 2);
     drawNow();
   }
 
@@ -348,17 +364,48 @@ export function createArrangeView(app) {
     const end = Math.max(songLengthBeats(p), p.loop?.end || 0, ...(p.markers || []).map((m) => m.beat));
     return Math.max(end + bpb * 32, (scroller.clientWidth || 800) / ppb + bpb * 4);
   }
+  // Rows: every track lane (laneH) is followed by its automation lanes (AUTO_H each) when shown.
+  function rowsLayout() {
+    const p = get();
+    const rows = [];
+    let y = 0;
+    for (let i = 0; i < p.tracks.length; i++) {
+      const t = p.tracks[i];
+      const r = { t, i, y, auto: [] };
+      y += laneH;
+      if (autoOpen.has(t.id)) {
+        const lanes = t.automation || [];
+        if (!lanes.length) { r.auto.push({ lane: null, idx: -1, y }); y += AUTO_H; }
+        else lanes.forEach((lane, idx) => { r.auto.push({ lane, idx, y }); y += AUTO_H; });
+      }
+      r.h = y - r.y;
+      rows.push(r);
+    }
+    return { rows, total: y };
+  }
+  /** Index of the row containing content-y (−1 above, rows.length below). */
+  function rowAt(L, y) {
+    if (y < 0) return -1;
+    if (y >= L.total) return L.rows.length;
+    let lo = 0, hi = L.rows.length - 1, ans = 0;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (L.rows[m].y <= y) { ans = m; lo = m + 1; } else hi = m - 1; }
+    return ans;
+  }
+  const trackY = (L, i) => (i < L.rows.length ? L.rows[Math.max(0, i)].y : L.total);
+
   function layout() {
     const p = get();
+    const L = rowsLayout();
     body.style.setProperty('--arr-head-w', headW + 'px');
     spacer.style.width = Math.ceil(totalBeats() * ppb) + 'px';
-    spacer.style.height = (p.tracks.length * laneH + ADD_ROW_H + 24) + 'px';
+    spacer.style.height = (L.total + ADD_ROW_H + 24) + 'px';
     const w = scroller.clientWidth, hh = scroller.clientHeight;
     canvas.style.width = w + 'px';
     canvas.style.height = hh + 'px';
     topCanvas.style.width = w + 'px';
-    headsInner.style.height = (p.tracks.length * laneH + ADD_ROW_H + 24) + 'px';
-    addRow.style.top = p.tracks.length * laneH + 'px';
+    headsInner.style.height = (L.total + ADD_ROW_H + 24) + 'px';
+    addRow.style.top = L.total + 'px';
+    void p;
     addRow.style.height = ADD_ROW_H + 'px';
     syncScrollY();
   }
@@ -441,20 +488,26 @@ export function createArrangeView(app) {
     const b0 = sx / ppb, b1 = (sx + W) / ppb;
     const tracks = p.tracks;
     const selTrack = ui.get('selectedTrackId');
-    const first = Math.max(0, Math.floor(sy / laneH));
-    const last = Math.min(tracks.length - 1, Math.floor((sy + H) / laneH));
+    const L = rowsLayout();
+    const first = Math.max(0, rowAt(L, sy));
+    const last = Math.min(tracks.length - 1, rowAt(L, sy + H));
     const xOf = (b) => b * ppb - sx;
 
     ctx.fillStyle = theme.below;
     ctx.fillRect(0, 0, W, H);
-    // lane backgrounds
+    // lane backgrounds (track lane + its automation lanes)
     for (let i = first; i <= last; i++) {
-      const y = i * laneH - sy;
+      const r = L.rows[i];
+      const y = r.y - sy;
       ctx.fillStyle = i % 2 ? theme.laneB : theme.laneA;
-      ctx.fillRect(0, y, W, laneH);
+      ctx.fillRect(0, y, W, r.h);
       if (tracks[i].id === selTrack) { ctx.fillStyle = theme.laneSel; ctx.fillRect(0, y, W, laneH); }
+      if (r.auto.length) {
+        ctx.fillStyle = theme.autoBg;
+        ctx.fillRect(0, y + laneH, W, r.h - laneH);
+      }
     }
-    const lanesBottom = Math.min(H, tracks.length * laneH - sy);
+    const lanesBottom = Math.min(H, L.total - sy);
     // section shading between markers
     const markers = [...(p.markers || [])].sort((a, b) => a.beat - b.beat);
     for (let i = 0; i < markers.length; i++) {
@@ -478,11 +531,18 @@ export function createArrangeView(app) {
       ctx.fillRect(Math.round(xOf(m.beat)), 0, 1, Math.max(0, lanesBottom));
     }
     // lane separators
-    ctx.fillStyle = theme.line;
-    for (let i = first; i <= last; i++) ctx.fillRect(0, (i + 1) * laneH - sy - 1, W, 1);
+    for (let i = first; i <= last; i++) {
+      const r = L.rows[i];
+      ctx.fillStyle = theme.line;
+      ctx.fillRect(0, r.y + r.h - sy - 1, W, 1);
+      if (r.auto.length) {
+        ctx.fillStyle = theme.autoLine;
+        for (const a of r.auto) ctx.fillRect(0, a.y - sy, W, 1);
+      }
+    }
 
     // code-track lanes
-    for (let i = first; i <= last; i++) if (tracks[i].type === 'code') drawCodeLane(ctx, tracks[i], i * laneH - sy, W);
+    for (let i = first; i <= last; i++) if (tracks[i].type === 'code') drawCodeLane(ctx, tracks[i], L.rows[i].y - sy, W);
 
     // clips
     const idx = new Map();
@@ -496,9 +556,18 @@ export function createArrangeView(app) {
       if (i === undefined) continue;
       if (c.start + c.length < b0 || c.start > b1) continue;
       if (sel.has(c.id)) { selected.push([c, i]); continue; }
-      drawClip(ctx, p, c, tracks[i], i * laneH - sy, W, sx, b0, b1, false);
+      drawClip(ctx, p, c, tracks[i], L.rows[i].y - sy, W, sx, b0, b1, false);
     }
-    for (const [c, i] of selected) drawClip(ctx, p, c, tracks[i], i * laneH - sy, W, sx, b0, b1, true);
+    for (const [c, i] of selected) drawClip(ctx, p, c, tracks[i], L.rows[i].y - sy, W, sx, b0, b1, true);
+
+    // automation lanes
+    for (let i = first; i <= last; i++) {
+      for (const a of L.rows[i].auto) {
+        const y = a.y - sy;
+        if (y > H || y + AUTO_H < 0) continue;
+        drawAutoLane(ctx, p, tracks[i], a, y, W, sx, b0, b1);
+      }
+    }
   }
 
   function drawGrid(ctx, W, H, b0, b1, bpb, sx) {

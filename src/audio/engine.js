@@ -75,6 +75,8 @@ export class AudioEngine extends Emitter {
         dispatch: (ev, time, spb) => this.graph.playEvent(ev, time, spb),
         onError: (e) => this._error(e),
         onWrap: (time) => this.graph.syncLfos(time),
+        onWindow: (project, b0, b1, t0, spb, jump) => this._automateWindow(project, b0, b1, t0, spb, jump),
+        onTick: (project) => this._automateTick(project),
       });
       try { this.graph.sync(this.project); } catch (e) { this._error(e); }
       if (ctx.state === 'suspended') ctx.resume().catch(() => {});
@@ -186,6 +188,30 @@ export class AudioEngine extends Emitter {
     } catch { /* */ }
   }
 
+  // ------------------------------------------------------------------ automation
+  // Automation plays in SONG mode only. Mixer targets are AudioParam ramps scheduled per
+  // scheduler window; instrument params are evaluated at each window start (so the notes of
+  // that window get them) and effect params at the audible position on every tick.
+  _automateWindow(project, b0, b1, t0, spb, jump) {
+    if (project.mode !== 'song') { this._endAutomation(project); return; }
+    this._autoActive = true;
+    this.graph.automateMixer(project, b0, b1, t0, spb, jump);
+    // after play/seek effect params jump straight to the automated value (no glide from static)
+    this.graph.applyControl(project, b0, { inst: true, fx: jump === 'seek', immediate: jump === 'seek' });
+  }
+
+  _automateTick(project) {
+    if (project.mode !== 'song' || !this._autoActive) return;
+    const beat = this.scheduler.getPosition();
+    if (beat != null) this.graph.applyControl(project, beat, { inst: false, fx: true });
+  }
+
+  _endAutomation(project = this.project) {
+    if (!this._autoActive || !this.graph) return;
+    this._autoActive = false;
+    try { this.graph.endAutomation(project); } catch (e) { this._error(e); }
+  }
+
   // ------------------------------------------------------------------ transport
   async play() {
     await this.init();
@@ -206,6 +232,7 @@ export class AudioEngine extends Emitter {
     this._pos = pos ?? this._pos;
     this._playing = false;
     this.graph.allNotesOff();
+    this._endAutomation();
     this._stopPosTimer();
     this.emit('state', { playing: false });
     this.emit('position', this._pos);
@@ -216,6 +243,7 @@ export class AudioEngine extends Emitter {
       this.scheduler.stop();
       this._playing = false;
       this.graph.allNotesOff();
+      this._endAutomation();
       this._stopPosTimer();
       this._pos = this._returnBeat;
       this.emit('state', { playing: false });
@@ -241,6 +269,9 @@ export class AudioEngine extends Emitter {
     }
     this.emit('position', beat);
   }
+
+  /** Transport beat that sounds at AudioContext time t (null when stopped). */
+  beatAtTime(t) { return this._playing ? this.scheduler.beatAt(t) : null; }
 
   /** Live transport position in beats. */
   getPosition() {

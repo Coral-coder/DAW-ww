@@ -1,6 +1,7 @@
 // The project data model. Everything in a project is plain JSON so it can be
 // saved, reloaded, diffed and undone. See docs/ARCHITECTURE.md for the contract.
 import { uid } from './util.js';
+import { normalizeLane } from './automation.js';
 
 export const PROJECT_FORMAT = 'heroic-daw-project';
 export const PROJECT_VERSION = 1;
@@ -68,6 +69,7 @@ export function createTrack(opts = {}) {
     instrument: type === 'instrument' ? (opts.instrument || { type: 'synth', preset: null, params: {} }) : null,
     code: type === 'code' ? (opts.code ?? 'note("c3 eb3 g3 bb3").s("sawtooth").lpf(1200)') : undefined,
     activePatternId: null,
+    automation: opts.automation || [], // [AutomationLane] — see src/core/automation.js (song mode only)
     role: opts.role || null, // optional hint for generators/assistant: 'drums'|'bass'|'chords'|'lead'|'pad'|'arp'|'fx'|'vocal'
   };
 }
@@ -120,7 +122,7 @@ export function createProject(opts = {}) {
     clips: [], // arrangement clips
     scenes: [createScene('Scene 1')],
     buses: [reverb, delay],
-    master: { volume: 0.9, fx: [createEffect('limiter', { threshold: -1 })] },
+    master: { volume: 0.9, fx: [createEffect('limiter', { threshold: -1 })], automation: [] },
     samples: {}, // id -> { id, name, mime, data(base64), duration }
     markers: [], // [{ id, beat, name }] — arrangement section markers
     createdAt: now,
@@ -138,7 +140,11 @@ export function normalizeProject(p) {
   out.key = { ...base.key, ...(p.key || {}) };
   out.loop = { ...base.loop, ...(p.loop || {}) };
   out.master = { ...base.master, ...(p.master || {}) };
-  out.tracks = (p.tracks || []).map((t) => ({ ...createTrack({ type: t.type }), ...t, fx: t.fx || [], sends: t.sends || {} }));
+  out.master.automation = Array.isArray(out.master.automation) ? out.master.automation.map(normalizeLane) : [];
+  out.tracks = (p.tracks || []).map((t) => ({
+    ...createTrack({ type: t.type }), ...t, fx: t.fx || [], sends: t.sends || {},
+    automation: Array.isArray(t.automation) ? t.automation.map(normalizeLane) : [],
+  }));
   out.patterns = p.patterns || {};
   out.clips = p.clips || [];
   out.scenes = p.scenes?.length ? p.scenes : base.scenes;

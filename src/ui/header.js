@@ -22,14 +22,14 @@ export function createHeader(app) {
   };
   const playBtn = tbtn('play', 'Play / Pause (Space)', 'play', () => actions.togglePlay());
   const stopBtn = tbtn('stop', 'Stop (Space twice / Enter)', '', () => actions.stop());
-  const recBtn = tbtn('record', 'Record notes from keyboard/MIDI (R)', 'rec', () => actions.toggleRecord());
+  const recBtn = tbtn('record', 'Record (R): notes from the keyboard/MIDI into the selected pattern — or, with an audio track armed (●), audio from your microphone / line-in onto the timeline', 'rec', () => actions.toggleRecord());
   const loopBtn = tbtn('loop', 'Loop region (L)', '', () => store.transact('Toggle loop', (p) => { p.loop.enabled = !p.loop.enabled; }));
   const metroBtn = tbtn('metronome', 'Metronome (M)', '', () => store.transact('Toggle metronome', (p) => { p.metronome = !p.metronome; }, { undo: false }));
   const lcd = h('div.lcd', { title: 'Position (bar.beat.step) — click to switch to time' }, '1.1.1');
   let lcdTime = false;
   lcd.addEventListener('click', () => { lcdTime = !lcdTime; });
 
-  const bpm = numberField({ value: p0.bpm, min: 20, max: 400, step: 1, width: 54, title: 'Tempo (BPM) — drag or type', onChange: (v, { final }) => store.transact('Tempo', (p) => { p.bpm = v; }, { coalesce: !final }) });
+  const bpm = numberField({ value: p0.bpm, min: 20, max: 400, step: 1, width: 54, title: 'Tempo (BPM) — drag or type', onChange: (v, { final }) => { if (final && store.get().bpm === v) return; store.transact('Tempo', (p) => { p.bpm = v; }, { coalesce: true }); } });
   const tapTimes = [];
   const tap = h('button.btn.small', { title: 'Tap tempo' }, 'TAP');
   tap.addEventListener('click', () => {
@@ -44,7 +44,7 @@ export function createHeader(app) {
   });
   const sigOptions = ['4/4', '3/4', '6/8', '5/4', '7/8', '2/4', '12/8', '7/4'].map((s) => ({ value: s, label: s }));
   const sig = select({ options: sigOptions, value: p0.timeSig.join('/'), title: 'Time signature', onChange: (v) => store.transact('Time signature', (p) => { p.timeSig = v.split('/').map(Number); }) });
-  const swing = numberField({ value: Math.round(p0.swing * 100), min: 0, max: 100, step: 1, width: 42, title: 'Swing % (applied to off-beat 16ths)', onChange: (v, { final }) => store.transact('Swing', (p) => { p.swing = v / 100; }, { coalesce: !final }) });
+  const swing = numberField({ value: Math.round(p0.swing * 100), min: 0, max: 100, step: 1, width: 42, title: 'Swing % (applied to off-beat 16ths)', onChange: (v, { final }) => { if (final && Math.abs(store.get().swing * 100 - v) < 1e-9) return; store.transact('Swing', (p) => { p.swing = v / 100; }, { coalesce: true }); } });
 
   const rootOpts = Array.from({ length: 12 }, (_, i) => ({ value: i, label: pitchClassName(i) }));
   const keyRoot = select({ options: rootOpts, value: p0.key.root, title: 'Key root', onChange: (v) => store.transact('Key', (p) => { p.key.root = Number(v); }) });
@@ -73,7 +73,7 @@ export function createHeader(app) {
 
   const masterMeter = meter({ height: 30 });
   masterMeter.style.height = '30px';
-  const masterVol = knob({ def: { key: 'mv', label: 'Master', min: 0, max: 1.5, default: 0.9, step: 0.01 }, value: p0.master.volume, size: 26, showValue: false, label: false, onChange: (v, { final }) => store.transact('Master volume', (p) => { p.master.volume = v; }, { coalesce: !final }) });
+  const masterVol = knob({ def: { key: 'mv', label: 'Master', min: 0, max: 1.5, default: 0.9, step: 0.01 }, value: p0.master.volume, size: 26, showValue: false, label: false, onChange: (v, { final }) => { if (final && store.get().master.volume === v) return; store.transact('Master volume', (p) => { p.master.volume = v; }, { coalesce: true }); } });
   masterVol.title = 'Master volume';
 
   const panelBtn = (ic, key, title) => {
