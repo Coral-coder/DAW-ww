@@ -284,48 +284,48 @@ const WAM_PARAMS = section('Host', [
   numP('gain', 'Volume', 0, 2, 0.8, { step: 0.01 }),
 ]);
 // ---- 'strudel': a superdough patch (Strudel's own audio engine, src/audio/strudel-voice.js). Keys are Strudel's
-// control names (see src/audio/strudel-patches.js strudelValue); -1 = "auto" (superdough's own default for that sound),
-// lpf 20000 / hpf 20 / 0 amounts = off.
-const auto = (key, label, max = 10, adv = false) => numP(key, label, -1, max, -1, { unit: 's', step: 0.001, adv });
+// control names (see src/audio/strudel-patches.js strudelValue). Defaults are superdough's own (lpf 20000 / hpf 20 /
+// 0 amounts = off); envelope defaults play samples / soundfonts untouched.
+const sec = (key, label, def, max = 10, adv = false) => numP(key, label, 0, max, def, { unit: 's', curve: 'exp', step: 0.001, adv });
 const STRUDEL_PARAMS = [
   ...section('Sound', [
     enumP('s', 'Sound', STRUDEL_SOUNDS, 'triangle'),
     numP('n', 'Variant (n)', 0, 32, 0, { step: 1, adv: true }),
-    numP('gain', 'Gain', 0, 3, 0.8, { step: 0.01 }),
+    numP('gain', 'Gain', 0, 10, 0.8, { step: 0.01, curve: 'exp' }),
   ]),
-  ...section('Envelope', [auto('attack', 'Attack'), auto('decay', 'Decay'), numP('sustain', 'Sustain', -1, 1, -1, { step: 0.01 }), auto('release', 'Release')]),
+  ...section('Envelope', [sec('attack', 'Attack', 0.001), sec('decay', 'Decay', 0.05), numP('sustain', 'Sustain', 0, 1, 1, { step: 0.01 }), sec('release', 'Release', 0.01)]),
   ...section('Filter', [
     numP('lpf', 'Low-pass', 20, 20000, 20000, { unit: 'Hz', curve: 'log' }),
     numP('resonance', 'Resonance', 0, 40, 1, { step: 0.1 }),
     numP('lpenv', 'Filter env', -8, 8, 0, { step: 0.1, unit: 'oct' }),
-    auto('lpattack', 'Filter attack', 10, true), auto('lpdecay', 'Filter decay', 10, true),
-    numP('lpsustain', 'Filter sustain', -1, 1, -1, { step: 0.01, adv: true }), auto('lprelease', 'Filter release', 10, true),
+    sec('lpattack', 'Filter attack', 0.005, 10, true), sec('lpdecay', 'Filter decay', 0.14, 10, true),
+    numP('lpsustain', 'Filter sustain', 0, 1, 0, { step: 0.01, adv: true }), sec('lprelease', 'Filter release', 0.1, 10, true),
     numP('hpf', 'High-pass', 20, 8000, 20, { unit: 'Hz', curve: 'log', adv: true }),
   ]),
   ...section('Oscillator', [
-    numP('unison', 'Unison (supersaw)', -1, 16, -1, { step: 1, adv: true }),
-    numP('detune', 'Detune (supersaw)', -1, 1, -1, { step: 0.01, adv: true }),
-    numP('spread', 'Spread (supersaw)', -1, 1, -1, { step: 0.01, adv: true }),
+    numP('unison', 'Unison (supersaw)', 1, 16, 5, { step: 1, adv: true }),
+    numP('detune', 'Detune (supersaw)', 0, 1, 0.18, { step: 0.01, adv: true }),
+    numP('spread', 'Spread (supersaw)', 0, 1, 0.6, { step: 0.01, adv: true }),
     numP('fm', 'FM index', 0, 16, 0, { step: 0.01 }),
     numP('fmh', 'FM harmonicity', 0, 16, 1, { step: 0.01, adv: true }),
-    auto('fmattack', 'FM attack', 4, true), auto('fmdecay', 'FM decay', 4, true),
-    numP('fmsustain', 'FM sustain', -1, 1, -1, { step: 0.01, adv: true }),
+    sec('fmattack', 'FM attack', 0.001, 4, true), sec('fmdecay', 'FM decay', 0.001, 4, true),
+    numP('fmsustain', 'FM sustain', 0, 1, 1, { step: 0.01, adv: true }),
     numP('penv', 'Pitch env', -48, 48, 0, { step: 1, unit: 'st', adv: true }),
-    auto('pattack', 'Pitch attack', 4, true), auto('pdecay', 'Pitch decay', 4, true),
+    sec('pattack', 'Pitch attack', 0.001, 4, true), sec('pdecay', 'Pitch decay', 0.1, 4, true),
     numP('vib', 'Vibrato rate', 0, 20, 0, { step: 0.1, unit: 'Hz', adv: true }),
     numP('vibmod', 'Vibrato depth', 0, 2, 0.5, { step: 0.01, unit: 'st', adv: true }),
   ]),
   ...section('Character', [
     enumP('vowel', 'Vowel', [{ value: '', label: 'Off' }, 'a', 'e', 'i', 'o', 'u'], '', { adv: true }),
     numP('shape', 'Shape', 0, 1, 0, { step: 0.01, adv: true }),
-    numP('crush', 'Crush (bits)', 0, 16, 0, { step: 1, adv: true }),
+    numP('crush', 'Crush (bits, 0 = off)', 0, 16, 0, { step: 1, adv: true }),
   ]),
   ...section('Space', [
     numP('pan', 'Pan', 0, 1, 0.5, { step: 0.01, adv: true }),
     numP('room', 'Room', 0, 1, 0, { step: 0.01 }),
     numP('size', 'Room size', 0, 10, 2, { step: 0.1 }),
     numP('delay', 'Delay', 0, 1, 0, { step: 0.01 }),
-    numP('delaytime', 'Delay time (-1 = 3/16)', -1, 2, -1, { unit: 's', step: 0.001, adv: true }),
+    numP('delaysync', 'Delay time (cycles)', 0.01, 1, 0.1875, { step: 0.0625 / 4, adv: true }),
     numP('delayfeedback', 'Delay feedback', 0, 0.95, 0.5, { step: 0.01 }),
   ]),
 ];

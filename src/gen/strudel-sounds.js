@@ -45,6 +45,7 @@ export const GENRE_STRUDEL = {
   rnb: { lead: 'sd-soft-lead' },
   amapiano: { lead: 'sd-house-piano' },
   breakbeat: { lead: 'sd-vowel-lead' },
+  eurobeat: { lead: 'sd-supersaw-lead' },
 };
 /** Roles that carry the hook: a soft e-piano never plays them in dance music. */
 const SOFT_KEYS = new Set(['sd-rhodes', 'sd-fm-epiano', 'sd-lofi-keys']);

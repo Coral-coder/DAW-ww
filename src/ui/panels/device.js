@@ -352,9 +352,14 @@ export function createDevicePanel(app) {
       for (const [id, k] of Object.entries(DRUM_KITS || {})) opts.push({ value: id, label: k.name, group: 'Kits' });
     } else {
       opts.push({ value: '', label: '— Init (no preset) —' });
-      const entries = Object.entries(PRESETS || {}).filter(([, pr]) => pr.instrument?.type === ins.type);
+      const entries = Object.entries(PRESETS || {}).filter(([, pr]) => pr.instrument?.type === ins.type && pr.instrument.type !== 'strudel');
       entries.sort((a, b) => String(a[1].category).localeCompare(String(b[1].category)) || a[1].name.localeCompare(b[1].name));
       for (const [id, pr] of entries) opts.push({ value: id, label: pr.name, group: pr.category || 'Presets' });
+      // Strudel sounds (superdough patches) can be loaded on any melodic instrument track (switches it to 'strudel')
+      const ROLE_ORDER = ['bass', 'lead', 'chords', 'pad', 'arp', 'fx'];
+      const sd = Object.entries(PRESETS || {}).filter(([, pr]) => pr.instrument?.type === 'strudel');
+      sd.sort((a, b) => ROLE_ORDER.indexOf(a[1].roles?.[0]) - ROLE_ORDER.indexOf(b[1].roles?.[0]) || a[1].name.localeCompare(b[1].name));
+      for (const [id, pr] of sd) opts.push({ value: id, label: `${pr.roles?.[0] ? pr.roles[0][0].toUpperCase() + pr.roles[0].slice(1) + ' · ' : ''}${pr.name}`, group: 'Strudel' });
     }
     const user = Object.entries(loadUserPresets()).filter(([, u]) => u.type === ins.type);
     for (const [id, u] of user) opts.push({ value: 'user:' + id, label: u.name, group: 'User' });

@@ -19,7 +19,7 @@ const song = (genre, seed = 1, opts = {}) => ({ ...createProject(), ...generateS
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const MAIN_TRACK = { drums: 'Drums', bass: 'Bass', chords: 'Chords', pad: 'Pad', lead: 'Lead', arp: 'Arp', fx: 'FX' };
 
-test('every genre (2 seeds): ≤ 70 lines, ≤ 5000 chars, short mini-notation, no rest soup, evaluates in real Strudel', () => {
+test('every genre (2 seeds): ≤ 70 lines, ≤ 5200 chars, short mini-notation, no rest soup, evaluates in real Strudel', () => {
   const report = [];
   for (const genre of Object.keys(GENRES)) {
     for (const seed of [1, 2]) {
@@ -28,7 +28,7 @@ test('every genre (2 seeds): ≤ 70 lines, ≤ 5000 chars, short mini-notation, 
       const lines = code.trimEnd().split('\n').length;
       report.push(`${genre}/${seed}: ${lines} lines ${code.length} chars`);
       assert.ok(lines <= 70, `${genre}/${seed}: ${lines} lines\n${code}`);
-      assert.ok(code.length <= 5000, // (Strudel patch controls: ~10% longer)
+      assert.ok(code.length <= 5200, // (Strudel patch controls: ~15% longer)
         `${genre}/${seed}: ${code.length} chars`);
       for (const m of code.matchAll(/"([^"]*)"/g)) assert.ok(m[1].length <= 100, `${genre}/${seed}: mini-notation too long: ${m[1]}`);
       assert.doesNotMatch(code, /~@\d{2}|(~@\d+\s+){3}/, `${genre}/${seed}: rest soup`);

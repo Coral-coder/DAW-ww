@@ -12,7 +12,7 @@ import { DRUM_MACHINES } from '../../audio/library/drum-machines.js';
 const LS_OPEN = 'daw3-browser-open';
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } };
-const CATEGORY_ORDER = ['Bass', 'Lead', 'Keys', 'Piano', 'Pad', 'Pluck', 'Chords', 'Strings', 'Brass', 'Arp', 'Mallets', 'World', 'FX'];
+const CATEGORY_ORDER = ['Strudel', 'Bass', 'Lead', 'Keys', 'Piano', 'Pad', 'Pluck', 'Chords', 'Strings', 'Brass', 'Arp', 'Mallets', 'World', 'FX'];
 const AUDIO_EXT = /\.(wav|mp3|ogg|oga|flac|aiff?|m4a|aac|webm)$/i;
 const fmtDur = (s) => (s ? (s < 10 ? s.toFixed(2) + ' s' : Math.round(s) + ' s') : '');
 const cap = (s) => String(s || '').replace(/(^|[-\s])\w/g, (m) => m.toUpperCase()).replace(/-/g, ' ');
@@ -216,7 +216,7 @@ export function createBrowserPanel(app) {
       return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
     });
     const total = [...cats.values()].reduce((s, l) => s + l.length, 0);
-    const groups = order.map((c) => group('inst:' + c, c, cats.get(c).map(([id, pr]) => item({
+    const groups = order.map((c) => group('inst:' + c, c === 'Strudel' ? 'Strudel sounds' : c, cats.get(c).map(([id, pr]) => item({
       key: 'preset:' + id, ic: 'music', label: pr.name, meta: (pr.instrument?.type || '').toUpperCase().slice(0, 5),
       title: `${pr.name} — ${pr.category}${pr.roles?.length ? ' · ' + pr.roles.join(', ') : ''}\nDouble-click or drag to add a track · right-click for more`,
       drag: { 'application/x-daw3-preset': id },

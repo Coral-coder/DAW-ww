@@ -196,6 +196,8 @@ export function extraInstrument(role, g, opts = {}) {
   if (opts.strudel === false || opts.soundfonts === false) return def;
   // the vox layer doubles the lead an octave down: an airy vowel pad, not a GM "oohs" sample
   if (role === 'vox') return { type: 'strudel', preset: 'sd-vox-pad', params: {}, fallbackPreset: 'choir-pad' };
+  // vocal chops: a staccato vowel synth (formant "oh"), not a GM choir sample
+  if (role === 'chop') return { type: 'strudel', preset: 'sd-vocal-chop', params: {}, fallbackPreset: 'saw-lead' };
   return hookSafe(toStrudel(def), role, g);
 }
 

@@ -417,6 +417,27 @@ track's channel strip, so mixer, inserts, sends, automation and the plugboard ap
   (`flushCode`). If superdough can't render, the render is redone with `codeSound: 'daw3'` and `onNotice` reports it
   (the export shows a one-time toast).
 
+## Instrument tracks on Strudel sounds (`src/audio/strudel-voice.js`, `strudel-patches.js`)
+
+Instrument type `'strudel'` plays a superdough *patch* (`params` = Strudel controls: `s`, `n`, `gain`, ADSR, `lpf`,
+`resonance`, `lpenv` + filter ADSR, `hpf`, supersaw `unison/detune/spread`, `fm/fmh` + FM envelope, `penv`, `vib`,
+`vowel`, `shape`, `crush`, `pan`, `room/size`, `delay/delaysync/delayfeedback`) from notes and the live keyboard.
+* `StrudelVoice` wraps a `StrudelInstrument` (same routing / offline path as code tracks — `MixGraph.strudelInstruments()`
+  lists it, so renders claim superdough and flush sample loads). `ready` resolves once superdough AND the patch's
+  sound (muted probe note) loaded; otherwise the track plays `fallbackPreset` (def field, else the patch's) with a
+  built-in engine.
+* Live edits: notes play at superdough's unity gain; patch gain + pan and a follow-the-knob low/high-pass live in a
+  post stage (AudioParams), so knob moves reach sounding notes; a new `s` loads in the background.
+* No AudioWorklets on a context (some headless browsers): supersaw -> 3 detuned saws, pulse -> square, shape/crush dropped.
+* Curated patches: `STRUDEL_PATCHES` (ids `sd-*`, category 'Strudel' in `PRESETS`; gains loudness-matched to their
+  fallback preset on a role phrase, so mix.js `levelFix` uses `role|strudel:<id>` or else the fallback's entry).
+  `strudelValue(params)` = what superdough gets; `strudelPatchCode(params)` = the same as Strudel code
+  (`.s("supersaw").adsr(…).lpf(…)…`, used by song-code / the live coder; envelope groups are sent whole or not at all).
+* Generated songs (`src/gen/strudel-sounds.js`): every melodic role maps preset / GM instrument -> patch (genre
+  overrides in `GENRE_STRUDEL`, dance-music hooks never a soft EP), the old def's preset as `fallbackPreset`; guitars,
+  brass, saxes, fiddles, orchestral solos keep their multisamples; drums keep sampled machines. `opts.strudel: false`
+  (or `soundfonts: false`) keeps the built-in instruments.
+
 ## Licensing
 
 daW³ is AGPL-3.0-or-later (`LICENSE`), because it ships Strudel (AGPL-3.0-or-later; © Strudel contributors,
