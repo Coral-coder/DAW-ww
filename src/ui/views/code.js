@@ -5,7 +5,7 @@
 import { h, icon, fitCanvas, cssVar, startDrag } from '../dom.js';
 import { iconButton, button, contextMenu, toggle, select, toast, promptText, modal } from '../components.js';
 import { createCodeEditor, splitBlocks } from '../code-editor.js';
-import { beatsPerBar } from '../../core/model.js';
+import { beatsPerBar, createProject, createTrack } from '../../core/model.js';
 import { deepClone } from '../../core/util.js';
 import { isTyping } from '../keyboard.js';
 import * as strudel from '../../code/strudel.js';
@@ -531,6 +531,78 @@ export function createCodeView(app) {
     });
   }
 
+  /** True when the editor holds a different song: none of the project's track labels / section names remain. */
+  function isForeignSong(text) {
+    const p = store.get();
+    if (!p.tracks.length) return text.trim().length > 0;
+    const names = new Set([...Object.keys(song?.labels || {}), ...[...(song?.code || '').matchAll(/\bconst\s+([A-Za-z_$][\w$]*)/g)].map((m) => m[1])]);
+    if (!names.size) return false;
+    for (const n of names) if (new RegExp(`(^|[^\\w$])${n.replace(/[$]/g, '\\$')}([^\\w$]|$)`).test(text)) return false;
+    return true;
+  }
+
+  /**
+   * One code track per instrument: every labelled block ($:, name:, _$:) becomes its own track, with the
+   * shared setup (register / setcpm / samples / const …) copied in front so each track runs on its own.
+   */
+  function splitCodeIntoTracks(text) {
+    const COLORS = ['#ffd43b', '#4dabf7', '#ff5f6d', '#38d9a9', '#9775fa', '#ffa94d', '#f783ac', '#3bc9db'];
+    const DRUMS = /^(bd|sd|hh|oh|cp|rim|lt|mt|ht|cr|rd|cb|sh|perc|tb|cl|tbd|kick|snare|hat|clap|breaks?\d*|.*_(bd|sd|hh|oh|cp))$/i;
+    let items = [];
+    try { items = strudel.splitTopLevel ? strudel.splitTopLevel(text) : []; } catch { items = []; }
+    const blocks = items.filter((it) => it.kind === 'label');
+    if (blocks.length < 2) return [createTrack({ type: 'code', name: 'Strudel', code: text, role: 'code', color: COLORS[0] })];
+    const setup = items.filter((it) => it.kind !== 'label').map((it) => text.slice(it.start, it.end)).join('\n');
+    const used = new Map();
+    return blocks.map((b, i) => {
+      const body = text.slice(b.start, b.end);
+      let name = b.name && b.name !== '$' ? b.name : '';
+      if (!name) {
+        const snd = /(?:^|[.\s(])(?:s|sound)\(\s*["'`]\s*([A-Za-z0-9_]+)/.exec(body)?.[1];
+        const isNote = /\b(?:note|n)\(/.test(body);
+        name = snd ? (DRUMS.test(snd) && !isNote ? 'Drums' : snd[0].toUpperCase() + snd.slice(1)) : `Part ${i + 1}`;
+      }
+      const k = used.get(name) || 0;
+      used.set(name, k + 1);
+      if (k) name = `${name} ${k + 1}`;
+      // un-mute the label inside its own track; the track's mute button carries the state instead
+      const code = (setup ? setup + '\n\n' : '') + body.replace(/^_(\$|[A-Za-z_][\w]*)\s*:/, '$1:');
+      const t = createTrack({ type: 'code', name, code, role: 'code', color: COLORS[i % COLORS.length] });
+      if (b.muted) t.mute = true;
+      return t;
+    });
+  }
+
+  /** Replace the whole project with one code track playing `text` (one undo step), keeping buses & master. */
+  function replaceProjectWithCode(text) {
+    const res = evaluate(text);
+    if (res.error) {
+      songErr = { error: res.error, line: errorLineOf(res.error, text) ?? locateErrorBlock(text) };
+      renderStatus();
+      app.setStatus?.(`Code error: ${res.error}`);
+      return;
+    }
+    const fresh = createProject();
+    const tracks = splitCodeIntoTracks(text);
+    const track = tracks[0];
+    store.transact('Replace project with code', (p) => {
+      const keep = { buses: p.buses, master: p.master, samples: p.samples };
+      for (const k of Object.keys(p)) if (!(k in keep)) delete p[k];
+      Object.assign(p, fresh, keep, { id: p.id, name: 'Strudel song', mode: 'pattern', tracks, patterns: {}, clips: [], markers: [] });
+      if (res.cps > 0) p.bpm = Math.round(res.cps * 60 * beatsPerBar(p) * 100) / 100;
+      for (const s of p.scenes || []) s.slots = {};
+    });
+    songDraft = null;
+    songErr = null;
+    ui.set({ selectedTrackId: track.id, selectedPatternId: null });
+    regenSong();
+    if (isSong()) editor.setValue(song.code);
+    renderStatus();
+    renderList(codeTracks());
+    toast(`Replaced the project with the pasted code: ${tracks.length} track${tracks.length > 1 ? 's' : ''} (${tracks.map((t) => t.name).join(', ')}). Ctrl+Z to undo.`, { level: 'success', timeout: 6000 });
+    if (!engine.isPlaying) actions.play?.();
+  }
+
   async function applySong() {
     if (!song) regenSong();
     const text = editor.getValue();
@@ -539,6 +611,8 @@ export function createCodeView(app) {
       if (!engine.isPlaying) actions.play?.();
       return;
     }
+    // Pasted a different song (none of this project's blocks are left)? Replace the project with it.
+    if (isForeignSong(text)) { replaceProjectWithCode(text); return; }
     const opts = { presets: PRESETS, kits: DRUM_KITS };
     let dry;
     try { dry = applySongCode(deepClone(store.get()), text, opts); } catch (e) { console.error(e); dry = { error: String(e?.message || e) }; }
