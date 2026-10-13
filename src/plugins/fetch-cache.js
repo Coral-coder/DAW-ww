@@ -1,6 +1,8 @@
 // Fetch helpers for plugin resources: progress reporting + a persistent Cache Storage layer so
 // reloading a project does not re-download soundfonts / Faust sources. Browser-only at call time.
 
+import { rawGitHubUrl } from './github.js';
+
 const CACHE_NAME = 'dawww-plugins-v1';
 const memText = new Map(); // url -> Promise<string>
 
@@ -41,8 +43,17 @@ export function fetchText(url, { onProgress, cache = true } = {}) {
         if (hit) { onProgress?.(1, 0); return await hit.text(); }
       } catch { /* cache unavailable */ }
     }
-    const res = await fetch(url, { mode: 'cors', credentials: 'omit' });
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText || ''}`.trim());
+    let res;
+    try {
+      res = await fetch(url, { mode: 'cors', credentials: 'omit' });
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText || ''}`.trim());
+    } catch (e) {
+      // jsDelivr can be blocked on some networks: fall back to raw.githubusercontent.com (CORS-enabled)
+      const raw = rawGitHubUrl(url);
+      if (!raw || /HTTP 404/.test(e.message)) throw e;
+      res = await fetch(raw, { mode: 'cors', credentials: 'omit' }).catch(() => null);
+      if (!res || !res.ok) throw e;
+    }
     const text = await readBody(res, onProgress);
     if (store) {
       try { await store.put(url, new Response(text, { headers: { 'content-type': res.headers.get('content-type') || 'text/plain' } })); } catch { /* quota */ }

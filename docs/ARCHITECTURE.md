@@ -168,6 +168,13 @@ suggestNextChords(progressionRomans[], keyRoot, scaleId, genre?) -> [{roman, cho
 PROGRESSIONS (named library, tagged by genre/mood), CIRCLE_OF_FIFTHS helpers, relativeKey, parallelKey,
 analyzeProgression(romans) -> notes for assistant (cadences, borrowed chords)`.
 
+`voicing.js` — chord-scales and voicings (every chord writer goes through these):
+`chordScale(chord, keyRoot, scale, {blues}) -> {tones, tensions, avoid, pool}` (key notes that contradict an altered
+chord tone are dropped; avoid = a half step above a chord tone), `fitToChord(midi, cs, {allow, dir, range})`,
+`chordVoicingPcs(chord, max, {rootless})` (drops 5th → 11 → root → 13 → 9; 3rd/7th always kept),
+`voiceChord(chord, {prev, range, maxVoices})` / `voiceLead(prev, pcs, range)` (voice-led search under low-interval
+limits: no m2 below C4, no M2 below G3, no 3rds below F3, no m9 between voices), `cleanVoicing(notes)`.
+
 ## Generators (`src/gen/*.js`) — pure, take `rng` (from `createRng(seed)`) for reproducibility
 
 * `genres.js`: `GENRES {id: GenreDef}`, ≥40 genres. GenreDef includes name, family, bpm range, default
@@ -177,9 +184,14 @@ analyzeProgression(romans) -> notes for assistant (cadences, borrowed chords)`.
 * `drums.js`: `generateDrumPattern({genre|style, bars, density, variation, fill, rng}) -> Note[]` (GM pitches).
 * `harmony.js`: `generateProgression({key, scale, genre, bars, chordsPerBar, rng}) -> [{roman, chord, startBeat, durBeats, notes(midi voicing)}]`,
   `progressionToNotes(...)`.
-* `bass.js`, `melody.js`, `arp.js`: produce `Note[]` from a progression with styles.
-* `song.js`: `generateSong({genre, key?, scale?, bpm?, seed}) -> partial project
-  {bpm, swing, key, genre, tracks, patterns, clips, scenes, markers}` using model factories.
+* `bass.js`, `melody.js`, `arp.js`: produce `Note[]` from a progression with styles. Upper parts are judged against the
+  chord-scale of the chord sounding under each note (`fit.js` `fitNotesToHarmony`), not just the project scale;
+  basses keep strong beats / chord starts on chord tones and approach notes never grind against the current chord.
+  `colorChord(chord, flavor, rng, {key})` takes extensions from the key (no maj7 on a dorian IV, no m9 on iii).
+  Quality is enforced by `tests/harmony-quality.test.js` (all genres × seeds; rules in `tests/lib/harmony-check.js`).
+* `song.js`: `generateSong({genre, key?, scale?, bpm?, seed, withHarmony?}) -> partial project
+  {bpm, swing, key, genre, tracks, patterns, clips, scenes, markers}` using model factories (`withHarmony` adds
+  `harmony` [{startBeat, durBeats, roman, root, type, bass, name}] + `harmonyLength` for analysis/tests).
 * `assistant.js`: `getRecommendations(project, context) -> [{id, level:'tip'|'warn'|'idea', title, text, action?: {label, kind, payload}}]`
   (context = { selectedTrackId, selectedPatternId, view }). Actions are applied by the UI via `applyAssistantAction`.
 
@@ -219,3 +231,22 @@ analyzeProgression(romans) -> notes for assistant (cadences, borrowed chords)`.
 * `wav.js`: `encodeWav(audioBuffer, {bitDepth:16|24|32}) -> ArrayBuffer`.
 * `autosave.js`: IndexedDB autosave + list/restore of local projects.
 * `samples.js`: `fileToSample(file) -> Sample` (base64), `sampleToArrayBuffer(sample)`.
+
+## Plugins (`src/plugins/*`, browser runtime lazy-loaded)
+
+Web-native stand-ins for VSTs, as instrument types `soundfont` / `faust` / `wam` (INSTRUMENT_DEFS,
+`plugin: true`) and effect types `faust` / `wam` (EFFECT_DEFS category 'Plugins'). Everything needed
+to reload lives in `params`: soundfont `{library, instrument, url?}`, faust `{name, code, url?,
+values:{address: value}}`, wam `{name, url, state}`.
+* Pure (Node-tested in `tests/plugins.test.js`): `github.js` (`resolveGitHubUrl` → jsDelivr,
+  `detectPluginKind`, `validateManifest` for `daWWW.json`/`plugin.json` `{name, kind, entry, type?}`),
+  `soundfont-parse.js` (midi-js file parser, note names), `gm.js` (128 GM names, libraries),
+  `catalog.js` (+ `faust-library.js` sources), `status.js` (load-status registry keyed by `pluginKey(def)`).
+* Runtime: `soundfont.js` (bank cache, repitch, ADSR), `faust.js` (@grame/faustwasm from jsDelivr,
+  factory cache per source), `wam.js` (WAM 2.0 host, experimental), `fetch-cache.js` (Cache Storage,
+  raw.githubusercontent fallback). `src/audio/plugin-instrument.js` is the sync facade used by
+  `instruments.js` (`Instrument.ready` / `.error`), plus `awaitPluginsReady` / `flushPlugins` used by
+  `render.js` (offline renders wait for plugins and for worklet note delivery), `preloadInstrument(def)`,
+  `isSoundfontReady(def)`. `src/audio/plugin-fx.js` builds plugin effects (pass-through until loaded).
+* UI: `src/ui/plugins-dialog.js` (Catalog / GitHub link / Faust editor), `src/ui/plugin-device.js`
+  (device-panel status + retry, Faust knobs, WAM GUI), `styles/plugins.css`.

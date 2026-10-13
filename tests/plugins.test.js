@@ -241,3 +241,10 @@ test('faust UI JSON -> knob descriptors (voice controls hidden)', () => {
   assert.ok(hasEffectSection('process = _;\neffect = dm.zita_light;'));
   assert.ok(!hasEffectSection('process = _; // effect = x;'));
 });
+
+test('rawGitHubUrl maps jsDelivr /gh/ URLs back to raw.githubusercontent (fetch fallback)', async () => {
+  const { rawGitHubUrl } = await import('../src/plugins/github.js');
+  assert.equal(rawGitHubUrl(soundfontUrl('FluidR3_GM', 'marimba')), 'https://raw.githubusercontent.com/gleitz/midi-js-soundfonts/gh-pages/FluidR3_GM/marimba-mp3.js');
+  assert.equal(rawGitHubUrl('https://cdn.jsdelivr.net/gh/o/r/x.js'), null);
+  assert.equal(rawGitHubUrl('https://example.com/a.js'), null);
+});

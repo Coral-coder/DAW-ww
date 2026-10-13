@@ -109,7 +109,7 @@ export function getFaustFactory(code, mode = 'poly', { onStage } = {}) {
         const meta = JSON.parse(generator.factory.json);
         return { mode, generator, hash, meta, ui: meta.ui, params: faustParams(meta.ui), inputs: meta.inputs, outputs: meta.outputs };
       } catch (e) {
-        const msg = String(e?.message || e).replace(/^Error:\s*/, '').trim();
+        const msg = String(e?.message || e).replace(/^Error:\s*/, '').replace(/\bdsp[0-9a-f]{8}\s*:\s*(\d+)\s*:/g, 'line $1:').trim();
         throw userError(`Faust compile error: ${msg || 'unknown error'}`);
       }
     };
@@ -144,6 +144,39 @@ function applyValues(node, factory, values, time) {
   }
 }
 
+// Offline renders: notes reach the Faust processor through its MessagePort, which an
+// OfflineAudioContext does not service while it renders. A tiny echo worklet in the same context
+// gives a round-trip barrier: once it answers, the messages posted before it have been delivered.
+const PING_SRC = "registerProcessor('dawww-ping', class extends AudioWorkletProcessor { constructor() { super(); this.port.onmessage = (e) => this.port.postMessage(e.data); } process() { return true; } });";
+const pings = new WeakMap(); // ctx -> Promise<AudioWorkletNode>
+function pingNode(ctx) {
+  if (!pings.has(ctx)) {
+    pings.set(ctx, (async () => {
+      const url = URL.createObjectURL(new Blob([PING_SRC], { type: 'text/javascript' }));
+      await ctx.audioWorklet.addModule(url);
+      return new AudioWorkletNode(ctx, 'dawww-ping', { numberOfInputs: 0, numberOfOutputs: 1 });
+    })());
+  }
+  return pings.get(ctx);
+}
+const isOffline = (ctx) => typeof OfflineAudioContext !== 'undefined' && ctx instanceof OfflineAudioContext;
+async function roundTrip(ctx, node) {
+  // the Faust port first (same port as the notes), then the echo worklet
+  const ping = await pingNode(ctx);
+  for (let i = 0; i < 2; i++) {
+    await new Promise((resolve) => {
+      const id = Math.random();
+      const done = () => { clearTimeout(timer); ping.port.removeEventListener('message', on); resolve(); };
+      const on = (e) => { if (e.data === id) done(); };
+      const timer = setTimeout(done, 1500);
+      ping.port.addEventListener('message', on);
+      ping.port.start();
+      ping.port.postMessage(id);
+    });
+  }
+  void node;
+}
+
 // ----------------------------------------------------------------------------- instrument
 export class FaustEngine {
   constructor(ctx, output, params, opts = {}) {
@@ -154,6 +187,7 @@ export class FaustEngine {
     this.node = null;
     this.factory = null;
     this.voices = [];
+    this.offline = isOffline(ctx);
     this.error = null;
     this._sig = null;
     this._values = {};
@@ -196,10 +230,12 @@ export class FaustEngine {
       if (!looksPolyphonic(code)) throw userError('Faust instruments need “freq”, “gain” and “gate” controls (the polyphonic voice convention).');
       const factory = await getFaustFactory(code, 'poly', { onStage: stage });
       if (sig !== this._sig) return false;
+      setStatus(key, { state: 'loading', progress: null, message: 'Starting the audio node…', info: { params: factory.params, name: factory.meta?.name || this.p.name } });
       const voices = Math.max(1, Math.min(32, Math.round(this.p.voices || 8)));
       const node = await factory.generator.createNode(this.ctx, voices);
       if (!node) throw userError('Faust could not create the audio node.');
       if (sig !== this._sig) { this._retire(node); return false; }
+      if (this.offline) await pingNode(this.ctx);
       node.connect(this.out);
       this.node = node;
       this.factory = factory;
@@ -213,6 +249,12 @@ export class FaustEngine {
       setStatus(key, { state: 'error', error: message, message });
       return false;
     }
+  }
+
+  /** Offline renders: resolve once every posted note has reached the processor. */
+  async flush() {
+    if (!this.offline || !this.node) return;
+    await roundTrip(this.ctx, this.node);
   }
 
   _retire(node) {
@@ -267,6 +309,12 @@ export class FaustEffect {
     this.thru = true;
     input.connect(output);
     this.ready = Promise.resolve(false);
+    // keep the input "active": AudioWorklet effects get zero input channels once the source goes
+    // silent and then stop computing — which would cut reverb / delay tails.
+    this.keepAlive = ctx.createConstantSource();
+    this.keepAlive.offset.value = 0;
+    this.keepAlive.connect(input);
+    this.keepAlive.start();
   }
 
   get key() { return pluginKey({ type: 'faust', params: this.p }); }
@@ -302,6 +350,7 @@ export class FaustEffect {
       const code = await resolveCode(this.p);
       const factory = await getFaustFactory(code, 'mono', { onStage: stage });
       if (sig !== this._sig) return false;
+      setStatus(key, { state: 'loading', progress: null, message: 'Starting the audio node…', info: { params: factory.params, name: factory.meta?.name || this.p.name } });
       if (!factory.inputs) throw userError('This Faust program has no audio inputs — load it as an instrument instead.');
       const node = await factory.generator.createNode(this.ctx);
       if (!node) throw userError('Faust could not create the audio node.');
@@ -325,6 +374,7 @@ export class FaustEffect {
 
   dispose() {
     this._sig = '#disposed';
+    try { this.keepAlive.stop(); this.keepAlive.disconnect(); } catch { /* */ }
     const n = this.node;
     this.node = null;
     try { n?.disconnect(); n?.destroy?.(); } catch { /* */ }

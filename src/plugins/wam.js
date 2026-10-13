@@ -135,6 +135,12 @@ class WamBase {
     return s;
   }
 
+  /** Offline renders: wait until posted events reached the processor (round trip on the same port). */
+  async flush() {
+    if (!this.offline || !this.node?.getParameterValues) return;
+    try { await Promise.race([this.node.getParameterValues(), new Promise((r) => setTimeout(r, 1500))]); } catch { /* */ }
+  }
+
   dispose() { this.url = '#disposed'; this._teardown(); }
 }
 
@@ -190,6 +196,12 @@ export class WamEffect extends WamBase {
     this.output = output;
     this.thru = true;
     input.connect(output);
+    // keep the input "active": AudioWorklet effects get zero input channels once the source goes
+    // silent and then stop computing — which would cut reverb / delay tails.
+    this.keepAlive = ctx.createConstantSource();
+    this.keepAlive.offset.value = 0;
+    this.keepAlive.connect(input);
+    this.keepAlive.start();
   }
 
   _connect() {
@@ -197,6 +209,8 @@ export class WamEffect extends WamBase {
     this.node.connect(this.output);
     if (this.thru) { try { this.input.disconnect(this.output); } catch { /* */ } this.thru = false; }
   }
+
+  dispose() { super.dispose(); try { this.keepAlive.stop(); this.keepAlive.disconnect(); } catch { /* */ } }
 
   _teardown() {
     if (this.node) { try { this.input.disconnect(this.node); } catch { /* */ } }

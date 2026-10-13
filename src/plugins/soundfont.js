@@ -57,6 +57,23 @@ export async function resetSoundfont(url) {
   await forget(url);
 }
 
+/** Load a bank while reporting progress / errors to the status registry (key 'sf:<url>'). */
+export function loadSoundfontWithStatus(url, sampleRate = 44100) {
+  const key = 'sf:' + url;
+  setStatus(key, { state: 'loading', progress: 0, message: 'Downloading samples…' });
+  return loadSoundfontBank(url, {
+    sampleRate,
+    onProgress: (f) => setStatus(key, { state: 'loading', progress: f ?? 0, message: f != null && f >= 0.7 ? 'Decoding samples…' : 'Downloading samples…' }),
+  }).then((bank) => {
+    setStatus(key, { state: 'ready', progress: 1, message: `${bank.buffers.length} samples`, info: { name: bank.name, samples: bank.buffers.length } });
+    return bank;
+  }, (e) => {
+    const message = friendlyError(e, { url, kind: 'soundfont' });
+    setStatus(key, { state: 'error', error: message, message });
+    throw userError(message);
+  });
+}
+
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
 export class SoundfontEngine {
@@ -94,20 +111,12 @@ export class SoundfontEngine {
   }
 
   _load(url) {
-    const key = 'sf:' + url;
     this.error = null;
-    setStatus(key, { state: 'loading', progress: 0, message: 'Downloading samples…' });
-    return loadSoundfontBank(url, {
-      sampleRate: this.ctx.sampleRate,
-      onProgress: (f) => setStatus(key, { state: 'loading', progress: f ?? 0, message: f != null && f >= 0.7 ? 'Decoding samples…' : 'Downloading samples…' }),
-    }).then((bank) => {
+    return loadSoundfontWithStatus(url, this.ctx.sampleRate).then((bank) => {
       if (this.url === url) this.bank = bank;
-      setStatus(key, { state: 'ready', progress: 1, message: `${bank.buffers.length} samples`, info: { name: bank.name, samples: bank.buffers.length } });
       return true;
     }, (e) => {
-      const message = friendlyError(e, { url, kind: 'soundfont' });
-      if (this.url === url) this.error = message;
-      setStatus(key, { state: 'error', error: message, message });
+      if (this.url === url) this.error = e.message;
       return false;
     });
   }

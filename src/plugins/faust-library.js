@@ -49,7 +49,7 @@ lvl(i) = ba.if(i == 3, 1 - 0.5 * mix, mix * 0.55);
 left = sum(i, 7, saw(i) * lvl(i) * (1 - (i % 2) * 0.6));
 right = sum(i, 7, saw(i) * lvl(i) * (1 - ((i + 1) % 2) * 0.6));
 env = en.asr(a, 1, r, gate) * gain;
-process = left, right : par(k, 2, fi.lowpass(2, cutoff) : *(env * 0.22));
+process = left, right : par(k, 2, fi.lowpass(2, cutoff) : *(env * 0.32));
 `,
   },
   pluck: {

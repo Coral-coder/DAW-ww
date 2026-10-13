@@ -148,3 +148,13 @@ export function hashString(s) {
   }
   return h.toString(16).padStart(8, '0');
 }
+
+/**
+ * jsDelivr /gh/ URL -> raw.githubusercontent.com equivalent (CORS-enabled fallback when jsDelivr is
+ * blocked). Null for other URLs or when no ref is pinned. raw.* serves text/plain, so this is only
+ * suitable for fetch() (soundfonts, .dsp sources), not for ES-module imports.
+ */
+export function rawGitHubUrl(url) {
+  const m = /^https:\/\/cdn\.jsdelivr\.net\/gh\/([^/]+)\/([^/@]+)@([^/]+)\/(.+)$/.exec(String(url || ''));
+  return m ? `https://raw.githubusercontent.com/${m[1]}/${m[2]}/${m[3]}/${m[4]}` : null;
+}

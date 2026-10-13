@@ -23,8 +23,8 @@ const ROLE_INFO = {
   fx: { name: 'FX', color: TRACK_COLORS[10], volume: 0.42, pan: 0 },
 };
 
-/** Register plan: pads voiced in [52, 71], leads from G4 up (riffs may dip lower). */
-const PAD_RANGE = [52, 71];
+/** Register plan: pads voiced in [55, 74] (thirds clear of the low-register mud), leads from E4 up, above the pad. */
+const PAD_RANGE = [55, 74];
 const LEAD_FLOOR = 64;
 
 const BAND_FAMILIES = new Set(['rock', 'funk', 'jazz', 'blues', 'soul', 'caribbean', 'latin', 'americana', 'pop', 'african', 'retro', 'hiphop']);
@@ -86,7 +86,7 @@ export function generateRoleNotes(role, opts) {
       // pads get their own (thinner, 4-voice) voicing, voice-led and kept under the lead's register
       let prev = [];
       const padProg = progression.map((c) => {
-        const notes = c.chord?.type === '5' ? c.notes.map((n) => (n < 52 ? n + 12 : n)) : voiceChord(c.chord, { prev, range: PAD_RANGE, maxVoices: 4 });
+        const notes = c.chord?.type === '5' ? c.notes.map((n) => (n < 52 ? n + 12 : n)) : voiceChord(c.chord, { prev, range: PAD_RANGE, maxVoices: 4, context: c.notes, center: 63 });
         prev = notes;
         return { ...c, notes: notes.length ? notes : c.notes };
       });

@@ -3,6 +3,46 @@
 import { clamp, midiToFreq } from '../core/util.js';
 import { BaseInstrument, Voice, envNote, num } from './synth.js';
 
+/**
+ * DX7-style operator envelope: attack -> L1 (peak), dB-linear decay (exponential ramp, like the
+ * DX7's log-domain EG) to the break level L2 in `d` seconds, then an RC approach to the sustain
+ * level L3 with time constant d2/4, release with time constant r/6. Without d2 this is the plain
+ * ADSR of envNote(). Returns an envelope state usable with envRelease()/envRegate().
+ */
+export function fmEnv(param, t, tOff, env, peak) {
+  const d2 = num(env.d2, 0, 0, 60);
+  if (!(d2 > 0.0005) || !(peak > 0)) return envNote(param, t, tOff, env, peak, 0);
+  const a = Math.max(0.0008, num(env.a, 0.002)), d = Math.max(0.002, num(env.d, 0.3));
+  const brk = Math.max(1e-4, Math.min(1, num(env.brk, 0.5)));
+  const s = Math.max(0, Math.min(1, num(env.s, 0))), r = Math.max(0.004, num(env.r, 0.1));
+  const vb = peak * brk, vs = peak * s;
+  const t1 = t + a, t2 = t1 + d;
+  const fn = (tm) => {
+    if (tm <= t) return 0;
+    if (tm < t1) return (peak * (tm - t)) / a;
+    if (tm < t2) return peak * Math.pow(brk, (tm - t1) / d);
+    return vs + (vb - vs) * Math.exp(-(tm - t2) / (d2 / 4));
+  };
+  const st = { t, a, d, s, r, peak, base: 0, from: 0, sus: vs, tOff: null, fn, convex: false };
+  param.setValueAtTime(0, t);
+  const end = tOff != null ? Math.max(t + 0.0005, tOff) : Infinity;
+  if (end <= t1) {
+    param.linearRampToValueAtTime(fn(end), end);
+  } else {
+    param.linearRampToValueAtTime(peak, t1);
+    if (end <= t2) param.exponentialRampToValueAtTime(Math.max(1e-9, fn(end)), end);
+    else {
+      param.exponentialRampToValueAtTime(vb, t2);
+      param.setTargetAtTime(vs, t2, d2 / 4);
+    }
+  }
+  if (Number.isFinite(end)) {
+    param.setTargetAtTime(0, end, r / 6);
+    st.tOff = end;
+  }
+  return st;
+}
+
 /** Algorithms: mods = [src, dst] pairs (1-based op numbers), carriers = audible ops. */
 export const FM_ALGORITHMS = [
   { id: 1, name: 'Stack 1→2→3→4', mods: [[1, 2], [2, 3], [3, 4]], carriers: [4] },
@@ -18,7 +58,7 @@ export const FM_ALGORITHMS = [
   { id: 11, name: '1→2→3, 1→4', mods: [[1, 2], [2, 3], [1, 4]], carriers: [3, 4] },
 ];
 
-const MAX_INDEX = 10;
+const MAX_INDEX = 4 * Math.PI; // DX7: a full-level modulator deviates the carrier phase by ±4π rad
 const VOICE_SCALE = 0.32;
 
 export class FMInstrument extends BaseInstrument {
@@ -63,12 +103,15 @@ export class FMInstrument extends BaseInstrument {
       const op = ops[i];
       const level = clamp(num(p[`op${i}Level`], i === 4 ? 1 : 0.5), 0, 1);
       const vs = num(p[`op${i}Vel`], 0.5, 0, 1);
-      const velScale = 1 - vs + vs * vel;
+      // DX7-like velocity: attenuation in dB grows with (1 - vel)^1.3 (KVS 7 ≈ -4 dB @ vel .8, -12 dB @ .5)
+      const velScale = Math.pow(10, (-vs * 30 * Math.pow(1 - vel, 1.3)) / 20);
       const env = {
         a: num(p[`op${i}Attack`], 0.005, 0, 20) * timeScale,
         d: num(p[`op${i}Decay`], 0.5, 0, 30) * timeScale,
         s: num(p[`op${i}Sustain`], 0.7, 0, 1),
         r: num(p[`op${i}Release`], 0.3, 0, 30) * Math.sqrt(timeScale),
+        brk: num(p[`op${i}Break`], 0.5, 0, 1),
+        d2: num(p[`op${i}Decay2`], 0, 0, 60) * timeScale,
       };
       let peak;
       if (carriers.has(i)) {
@@ -76,10 +119,18 @@ export class FMInstrument extends BaseInstrument {
         op.g.connect(out);
       } else {
         peak = level * level * MAX_INDEX * op.freq * velScale * levelScale; // Hz deviation
-        for (const [src, dst] of algo.mods) if (src === i) op.g.connect(ops[dst].osc.frequency);
+        // A modulator that is itself modulated (stack / feedback) has a DC component in FM (unlike
+        // the DX7's phase modulation) which would shift the carrier's pitch -> block DC first.
+        let mo = op.g;
+        if (algo.mods.some(([, dst]) => dst === i) || (i === 1 && num(p.feedback, 0, 0, 1) > 0.001)) {
+          mo = v.node(ctx.createBiquadFilter());
+          mo.type = 'highpass'; mo.frequency.value = Math.min(8, op.freq / 4); mo.Q.value = 0.5;
+          op.g.connect(mo);
+        }
+        for (const [src, dst] of algo.mods) if (src === i) mo.connect(ops[dst].osc.frequency);
       }
       if (peak <= 1e-7 && carriers.has(i)) continue;
-      const st = envNote(op.g.gain, t, tOff, env, peak, 0);
+      const st = fmEnv(op.g.gain, t, tOff, env, peak);
       st.peak0 = peak; st.sus0 = peak * env.s;
       v.envs.push([op.g.gain, st]);
       if (carriers.has(i)) maxRel = Math.max(maxRel, st.r);

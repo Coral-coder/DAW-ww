@@ -48,6 +48,21 @@ export function sect(a, b) {
   return span(begin, end);
 }
 
+/**
+ * Merges two hap contexts (Strudel semantics): source `locations` are concatenated so an event
+ * remembers every mini-notation token that contributed to it (used for live highlighting).
+ */
+export function combineContext(a, b) {
+  if (!a) return b;
+  if (!b || a === b) return a;
+  const la = a.locations;
+  const lb = b.locations;
+  const out = { ...a, ...b };
+  if (la && lb) out.locations = la.concat(lb);
+  else if (la) out.locations = la;
+  return out;
+}
+
 const spanEq = (a, b) => (!a && !b) || (a && b && Math.abs(a.begin - b.begin) < EPS && Math.abs(a.end - b.end) < EPS);
 
 // ---------------------------------------------------------------------------------------- Hap
@@ -108,7 +123,7 @@ export class Pattern {
       for (const hf of patFunc.query(st)) {
         for (const hv of patVal.query({ ...st, span: hf.wholeOrPart() })) {
           const part = sect(hf.part, hv.part);
-          if (part) out.push(new Hap(hf.whole, part, hf.value(hv.value), hf.context));
+          if (part) out.push(new Hap(hf.whole, part, hf.value(hv.value), combineContext(hf.context, hv.context)));
         }
       }
       return out;
@@ -123,7 +138,7 @@ export class Pattern {
       for (const hv of patVal.query(st)) {
         for (const hf of patFunc.query({ ...st, span: hv.wholeOrPart() })) {
           const part = sect(hf.part, hv.part);
-          if (part) out.push(new Hap(hv.whole, part, hf.value(hv.value), hv.context));
+          if (part) out.push(new Hap(hv.whole, part, hf.value(hv.value), combineContext(hf.context, hv.context)));
         }
       }
       return out;
@@ -137,7 +152,7 @@ export class Pattern {
       const out = [];
       for (const oh of outer.query(st)) {
         const inner = oh.value instanceof Pattern ? oh.value : pure(oh.value);
-        for (const ih of inner.query({ ...st, span: oh.part })) out.push(ih);
+        for (const ih of inner.query({ ...st, span: oh.part })) out.push(oh.context ? new Hap(ih.whole, ih.part, ih.value, combineContext(oh.context, ih.context)) : ih);
       }
       return out;
     });
@@ -151,7 +166,7 @@ export class Pattern {
       for (const oh of outer.query(st)) {
         const inner = oh.value instanceof Pattern ? oh.value : pure(oh.value);
         const t = oh.wholeOrPart().begin;
-        for (const ih of inner.query({ ...st, span: span(t, t) })) out.push(new Hap(oh.whole, oh.part, ih.value, oh.context));
+        for (const ih of inner.query({ ...st, span: span(t, t) })) out.push(new Hap(oh.whole, oh.part, ih.value, combineContext(oh.context, ih.context)));
       }
       return out;
     });
@@ -172,7 +187,7 @@ export class Pattern {
           }
           const part = sect(ih.part, oh.part);
           if (!part) continue;
-          out.push(new Hap(whole, part, ih.value, ih.context));
+          out.push(new Hap(whole, part, ih.value, combineContext(oh.context, ih.context)));
         }
       }
       return out;
@@ -186,10 +201,9 @@ export class Pattern {
       const groups = [];
       for (const h of pat.query(st)) {
         const g = groups.find((x) => spanEq(x.whole, h.whole) && spanEq(x.part, h.part));
-        if (g) g.values.push(h.value);
-        else groups.push({ whole: h.whole, part: h.part, values: [h.value] });
+        if (g) { g.values.push(h.value); g.context = combineContext(g.context, h.context); } else groups.push({ whole: h.whole, part: h.part, values: [h.value], context: h.context });
       }
-      return groups.map((g) => new Hap(g.whole, g.part, g.values));
+      return groups.map((g) => new Hap(g.whole, g.part, g.values, g.context));
     });
   }
 
@@ -284,13 +298,28 @@ export class Pattern {
 
 export const silence = new Pattern(() => []);
 
-export function pure(value) {
+export function pure(value, context) {
   return new Pattern((st) =>
     spanCycles(st.span).map((sp) => {
       const c = sam(sp.begin);
-      return new Hap(span(c, c + 1), sp, value);
+      return new Hap(span(c, c + 1), sp, value, context);
     }),
   );
+}
+
+/** Same pattern without source locations (for strings whose positions are unknown). */
+export function stripLocations(pat) {
+  return new Pattern((st) => pat.query(st).map((h) => (h.context?.locations ? new Hap(h.whole, h.part, h.value, { ...h.context, locations: undefined }) : h)));
+}
+
+/** Same pattern, with every hap's source locations shifted by `offset` characters. */
+export function shiftLocations(pat, offset) {
+  if (!offset) return pat;
+  return new Pattern((st) => pat.query(st).map((h) => {
+    const locs = h.context?.locations;
+    if (!locs) return h;
+    return new Hap(h.whole, h.part, h.value, { ...h.context, locations: locs.map((l) => ({ start: l.start + offset, end: l.end + offset })) });
+  }));
 }
 
 export function isPattern(x) { return x instanceof Pattern; }

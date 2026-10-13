@@ -4,6 +4,8 @@
 // *n fast, /n slow, !n and bare ! replicate, @n elongate, _ hold, ? / ?0.3 degrade,
 // , stack, | random choice, (k,n,r) euclid, a:b lists (bd:3), . grouping, 0 .. 3 ranges,
 // numbers and words (note names, sample names, chord symbols).
+// Every atom carries its source range ({start, end}, relative to the string) in
+// hap.context.locations; Pattern operations merge locations (see combineContext).
 import {
   pure, silence, stack, fastcat, slowcat, timeCat, rand, chooseInWith, Pattern,
 } from './pattern.js';
@@ -114,7 +116,8 @@ class Parser {
         const b = nxt?.node.value;
         if (typeof a !== 'number' || typeof b !== 'number') this.fail('".." needs numbers on both sides');
         const dir = b >= a ? 1 : -1;
-        for (let v = a; dir > 0 ? v <= b : v >= b; v += dir) steps.push({ node: { type: 'atom', value: v }, weight: 1 });
+        const loc = prev.node.loc && nxt.node.loc ? { start: prev.node.loc.start, end: nxt.node.loc.end } : undefined;
+        for (let v = a; dir > 0 ? v <= b : v >= b; v += dir) steps.push({ node: { type: 'atom', value: v, loc }, weight: 1 });
         continue;
       }
       steps.push(...this.parseStep());
@@ -183,7 +186,7 @@ class Parser {
         return { type: 'poly', layers, steps };
       }
       case '~': return { type: 'rest' };
-      case 'word': return { type: 'atom', value: atomValue(k.v) };
+      case 'word': return { type: 'atom', value: atomValue(k.v), loc: { start: k.pos, end: k.pos + k.v.length } };
       default: return this.fail(`unexpected "${k.t}"`);
     }
   }
@@ -223,7 +226,8 @@ function argOf(node) {
 
 function toPat(node) {
   switch (node.type) {
-    case 'atom': return pure(node.value);
+    // each atom remembers its source range (relative to the string) for live highlighting
+    case 'atom': return pure(node.value, node.loc ? { locations: [node.loc] } : undefined);
     case 'rest': return silence;
     case 'seq': return seqPat(node.steps);
     case 'stack': return stack(...node.layers.map(toPat));

@@ -11,7 +11,7 @@
 import {
   Pattern, pure, silence, stack, slowcat, fastcat, cat, seq, sequence, timeCat, timecat, arrange,
   polymeter, polymeterSteps, polyrhythm, run, irand, choose, chooseCycles, randcat, reify, register,
-  curried, controls, METHOD_ARITY, setPatternRegistrar, isObj, EPS,
+  curried, controls, METHOD_ARITY, setPatternRegistrar, isObj, EPS, shiftLocations, stripLocations,
   saw, isaw, sine, cosine, square, tri, rand, perlin, saw2, isaw2, sine2, cosine2, square2, tri2, rand2,
 } from './pattern.js';
 import { mini } from './mini.js';
@@ -30,6 +30,9 @@ const RESERVED = new Set(['break', 'case', 'catch', 'class', 'const', 'continue'
   'let', 'static', 'enum', 'await', 'implements', 'package', 'protected', 'interface', 'private', 'public',
   'eval', 'arguments', 'null', 'true', 'false', 'undefined']);
 
+// `mini("…")` in user code: the literal was already turned into a (located) pattern
+const miniArg = (x) => (x instanceof Pattern ? x : stripLocations(mini(x)));
+
 function buildStaticScope() {
   const scope = {};
   for (const name of Object.keys(METHOD_ARITY)) {
@@ -38,7 +41,7 @@ function buildStaticScope() {
   Object.assign(scope, controls, {
     pure, silence, stack, slowcat, fastcat, cat, seq, sequence, timeCat, timecat, arrange, polymeter,
     polymeterSteps, polyrhythm, pr: polyrhythm, run, irand, choose, chooseCycles, randcat, reify, register,
-    mini, m: mini, Pattern,
+    mini: miniArg, m: miniArg, Pattern,
     saw, isaw, sine, cosine, square, tri, rand, perlin, saw2, isaw2, sine2, cosine2, square2, tri2, rand2,
   });
   return scope;
@@ -57,6 +60,7 @@ const PER_EVAL_NAMES = ['setcps', 'setCps', 'setcpm', 'setCpm', 'setbpm', 'setBp
 function maskSource(src) {
   const chars = src.split('');
   const literals = [];
+  const comments = [];
   const blank = (a, b) => { for (let k = a; k < b; k++) if (chars[k] !== '\n') chars[k] = ' '; };
   let i = 0;
   const n = src.length;
@@ -66,11 +70,13 @@ function maskSource(src) {
       let j = src.indexOf('\n', i);
       if (j < 0) j = n;
       blank(i, j);
+      comments.push({ start: i, end: j });
       i = j;
     } else if (c === '/' && src[i + 1] === '*') {
       let j = src.indexOf('*/', i + 2);
       j = j < 0 ? n : j + 2;
       blank(i, j);
+      comments.push({ start: i, end: j });
       i = j;
     } else if (c === '"' || c === "'" || c === '`') {
       let j = i + 1;
@@ -87,7 +93,80 @@ function maskSource(src) {
       i = end;
     } else i++;
   }
-  return { masked: chars.join(''), literals };
+  return { masked: chars.join(''), literals, comments };
+}
+
+/** The source without comments (strings untouched). */
+export function stripComments(src) {
+  src = String(src ?? '');
+  const { comments } = maskSource(src);
+  if (!comments.length) return src;
+  let out = '';
+  let cur = 0;
+  for (const c of comments) { out += src.slice(cur, c.start); cur = c.end; }
+  return out + src.slice(cur);
+}
+
+/**
+ * Splits code into its top-level items (statements / labelled patterns), in source order:
+ * [{ kind: 'label'|'decl'|'stmt', name?, muted?, start, end, exprStart }]. Lines that only hold
+ * comments belong to no item. `end` excludes trailing whitespace/comments.
+ */
+export function splitTopLevel(source) {
+  const src = String(source ?? '');
+  const { masked } = maskSource(src);
+  const n = src.length;
+  const items = [];
+  let d = 0;
+  let prev = '';
+  let cur = null;
+  let lineStart = 0;
+  const close = (end) => {
+    if (!cur) return;
+    let e = end;
+    while (e > cur.start && /\s/.test(masked[e - 1])) e--;
+    cur.end = e;
+    items.push(cur);
+    cur = null;
+  };
+  while (lineStart <= n) {
+    let lineEnd = masked.indexOf('\n', lineStart);
+    if (lineEnd < 0) lineEnd = n;
+    const line = masked.slice(lineStart, lineEnd);
+    const t = line.trim();
+    if (t) {
+      const first = lineStart + line.length - line.trimStart().length;
+      const lab = d === 0 ? LABEL_RE.exec(line) : null;
+      const isLabel = lab && !NON_LABELS.has(lab[3]);
+      const startsNew = d === 0 && (isLabel || !cur || (prev && !CONT_PREV.has(prev) && !CONT_NEXT.has(t[0])));
+      if (startsNew) {
+        close(lineStart);
+        if (isLabel) cur = { kind: 'label', name: lab[3], muted: lab[2] === '_', start: first, exprStart: lineStart + lab[0].length };
+        else {
+          const dm = /^(?:const|let|var)\s+([A-Za-z_$][\w$]*)/.exec(t);
+          cur = dm ? { kind: 'decl', name: dm[1], start: first, exprStart: first + t.indexOf('=') + 1 } : { kind: 'stmt', start: first, exprStart: first };
+        }
+      }
+      for (let k = lineStart; k < lineEnd; k++) {
+        const c = masked[k];
+        if (c === '(' || c === '[' || c === '{') d++;
+        else if (c === ')' || c === ']' || c === '}') d = Math.max(0, d - 1);
+        if (!/\s/.test(c)) prev = c;
+      }
+    }
+    lineStart = lineEnd + 1;
+  }
+  close(n);
+  return items;
+}
+
+/** Start offset of the last top-level expression statement (where `label:` can be inserted), or -1. */
+export function lastExpressionStart(source) {
+  const items = splitTopLevel(source).filter((it) => it.kind !== 'decl');
+  const last = items[items.length - 1];
+  if (!last || last.kind !== 'stmt') return -1;
+  const text = String(source).slice(last.start, last.end);
+  return STMT_KEYWORD.test(text) ? -1 : last.start;
 }
 
 const LABEL_RE = /^(\s*)(_?)(\$|[A-Za-z_][\w]*)\s*:(?![:=])/;
@@ -101,7 +180,9 @@ const STMT_KEYWORD = /^(const|let|var|function|class|if|for|while|do|return|impo
  * Returns { body, labels: [{name, muted}], wrapped: boolean }.
  */
 export function transformSource(source, { wrapLast = true } = {}) {
-  const src = String(source ?? '').replace(/^﻿/, '');
+  const raw0 = String(source ?? '');
+  const src = raw0.replace(/^\uFEFF/, '');
+  const bom = raw0.length - src.length;
   const { masked, literals } = maskSource(src);
   const edits = []; // { pos, del, text, order }
   let order = 0;
@@ -137,6 +218,25 @@ export function transformSource(source, { wrapLast = true } = {}) {
     for (let k = b - 1; k >= a; k--) if (!/\s/.test(masked[k])) return k;
     return -1;
   };
+  // a label's block ends at the next label or at the next top-level statement
+  // (`const x = …`, `setcpm(…)`, …) so declarations can sit between labelled patterns
+  const statementBoundary = (from, to) => {
+    let k = from;
+    while (k < to && /\s/.test(masked[k])) k++;
+    let prev = '';
+    for (; k < to; k++) {
+      const c = masked[k];
+      if (depth[k] === 0 && c === '\n' && prev) {
+        let j = k + 1;
+        while (j < to && /\s/.test(masked[j])) j++;
+        const next = masked[j];
+        if (j < to && next && !CONT_PREV.has(prev) && !CONT_NEXT.has(next)) return lineStartOf(j);
+      }
+      if (!/\s/.test(c)) prev = c;
+    }
+    return to;
+  };
+  const lineStartOf = (pos) => masked.lastIndexOf('\n', pos - 1) + 1;
 
   // string literals -> mini patterns (double quotes & backticks without interpolation)
   for (const lit of literals) {
@@ -147,8 +247,12 @@ export function transformSource(source, { wrapLast = true } = {}) {
     let b = lit.end;
     while (b < masked.length && /\s/.test(masked[b])) b++;
     if (masked[b] === ':' && (masked[a] === '{' || masked[a] === ',')) continue;
+    // the content offset lets every mini-notation atom report its position in `source`
+    // (escape sequences would shift positions -> no locations for those literals)
+    const raw = src.slice(lit.start + 1, lit.end - 1);
+    const off = raw.includes('\\') ? -1 : lit.start + 1 + bom;
     edit(lit.start, 0, '__mini(');
-    edit(lit.end, 0, ')');
+    edit(lit.end, 0, `, ${off})`);
   }
   // strip top-level await (samples() etc. are no-ops here)
   for (const m of masked.matchAll(/\bawait\s+/g)) edit(m.index, m[0].length, '');
@@ -156,14 +260,16 @@ export function transformSource(source, { wrapLast = true } = {}) {
   let wrapped = false;
   if (labels.length) {
     labels.forEach((lab, idx) => {
-      const blockEnd = idx + 1 < labels.length ? labels[idx + 1].start : src.length;
+      const nextLabel = idx + 1 < labels.length ? labels[idx + 1].start : src.length;
+      const blockEnd = statementBoundary(lab.end, nextLabel);
+      lab.blockEnd = blockEnd;
       let last = lastCode(lab.end, blockEnd);
       while (last >= lab.end && masked[last] === ';') {
         edit(last, 1, '');
         last = lastCode(lab.end, last);
       }
       const name = lab.name === '$' ? null : lab.name;
-      edit(lab.start, lab.end - lab.start, `__reg(${JSON.stringify(name)}, ${lab.muted}, (`);
+      edit(lab.start, lab.end - lab.start, `__reg(${idx}, ${JSON.stringify(name)}, ${lab.muted}, (`);
       if (last < lab.end) edit(lab.end, 0, 'undefined\n));');
       else edit(last + 1, 0, '\n));');
     });
@@ -209,7 +315,12 @@ export function transformSource(source, { wrapLast = true } = {}) {
     cur = e.pos + e.del;
   }
   out += src.slice(cur);
-  return { body: `{\n${out}\n}`, labels: labels.map((l) => ({ name: l.name, muted: l.muted })), wrapped };
+  return {
+    body: `{\n${out}\n}`,
+    // start/end: source range of the label's block (label included) — used for highlighting
+    labels: labels.map((l) => ({ name: l.name, muted: l.muted, start: l.start + bom, end: (l.blockEnd ?? src.length) + bom })),
+    wrapped,
+  };
 }
 
 // ---------------------------------------------------------------------------------- evaluate
@@ -221,16 +332,18 @@ const errMsg = (e) => (e && e.message ? e.message : String(e));
  * @returns {{patterns: Pattern[], entries: {name, pattern, muted}[], cps: number|null, error: string|null}}
  */
 export function evaluate(source) {
-  const result = { patterns: [], entries: [], cps: null, error: null };
+  const result = { patterns: [], entries: [], labels: [], cps: null, error: null };
   const entries = [];
   let hushed = false;
   const allFns = [];
-  const register$ = (name, muted, value) => {
+  const register$ = (name, muted, value, block = null) => {
     if (value === undefined || value === null) return value;
     const pattern = value instanceof Pattern ? value : reify(value);
-    entries.push({ name: name || `$${entries.filter((e) => !e.explicitName).length + 1}`, explicitName: !!name, pattern, muted: !!muted });
+    entries.push({ name: name || `$${entries.filter((e) => !e.explicitName).length + 1}`, explicitName: !!name, pattern, muted: !!muted, block });
     return value;
   };
+  // labelled blocks: __reg(blockIndex, name, muted, value)
+  const regLabel = (block, name, muted, value) => register$(name, muted, value, block);
   const plainStr = (x) => (x instanceof Pattern && x._src !== undefined ? x._src : x);
   const perEval = {
     setcps: (x) => { result.cps = Number(plainStr(x)); },
@@ -250,8 +363,9 @@ export function evaluate(source) {
   perEval.setCps = perEval.setcps;
   perEval.setCpm = perEval.setcpm;
   perEval.setBpm = perEval.setbpm;
-  const __mini = (s) => {
-    const p = mini(s);
+  const __mini = (s, offset = -1) => {
+    let p = mini(s);
+    p = offset >= 0 ? shiftLocations(p, offset) : stripLocations(p);
     if (p._src === undefined) p._src = s;
     return p;
   };
@@ -265,14 +379,16 @@ export function evaluate(source) {
   try {
     let fn;
     let t = transformSource(source);
+    result.labels = t.labels;
     try {
       fn = new Function(...names, '__reg', '__mini', t.body);
     } catch (e) {
       if (!t.wrapped) throw e;
       t = transformSource(source, { wrapLast: false });
+      result.labels = t.labels;
       fn = new Function(...names, '__reg', '__mini', t.body);
     }
-    ret = fn(...values, register$, __mini);
+    ret = fn(...values, regLabel, __mini);
     if (!entries.length && ret !== undefined && ret !== null && (ret instanceof Pattern || typeof ret === 'string')) {
       register$('main', false, ret);
     }
@@ -325,26 +441,65 @@ export function normalizeValue(v) {
   return out;
 }
 
+/** Unique, sorted source ranges of a hap ([{start, end}]). */
+function hapLocations(h) {
+  const locs = h.context?.locations;
+  if (!locs || !locs.length) return [];
+  if (locs.length === 1) return [{ start: locs[0].start, end: locs[0].end }];
+  const seen = new Set();
+  const out = [];
+  for (const l of locs) {
+    const k = l.start * 1e6 + l.end;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({ start: l.start, end: l.end });
+  }
+  return out.sort((a, b) => a.start - b.start);
+}
+
 /**
  * Onsets in [beginCycle, endCycle), sorted by begin.
  * `evaluated` may be an evaluate() result, a Pattern, or an array of patterns.
+ * Each event: { begin, end, value, pattern (index into the playing patterns), name (label, when
+ * known), block (labelled-block index, when known), locations: [{start, end}] (source ranges of
+ * the mini-notation tokens that produced it — absolute offsets for evaluate() results) }.
+ * opts.active: return the events *overlapping* the window instead of the onsets inside it
+ * (used for live highlighting).
  */
-export function queryEvents(evaluated, beginCycle, endCycle) {
-  const pats = evaluated instanceof Pattern ? [evaluated] : Array.isArray(evaluated) ? evaluated : evaluated?.patterns || [];
+export function queryEvents(evaluated, beginCycle, endCycle, opts = {}) {
+  let list;
+  if (evaluated instanceof Pattern) list = [{ pattern: evaluated }];
+  else if (Array.isArray(evaluated)) list = evaluated.map((pattern) => ({ pattern }));
+  else {
+    const entries = (evaluated?.entries || []).filter((e) => !e.muted);
+    list = entries.length === (evaluated?.patterns || []).length && entries.length
+      ? entries
+      : (evaluated?.patterns || []).map((pattern) => ({ pattern }));
+  }
   const events = [];
-  pats.forEach((pat, i) => {
+  const overlap = !!opts.active;
+  list.forEach((entry, i) => {
     let haps;
     try {
-      haps = pat.queryArc(beginCycle, endCycle);
+      haps = entry.pattern.queryArc(beginCycle, endCycle);
     } catch (e) {
       if (evaluated && !(evaluated instanceof Pattern) && !Array.isArray(evaluated)) evaluated.queryError = errMsg(e);
       return;
     }
     for (const h of haps) {
-      if (!h.hasOnset()) continue;
+      if (!h.whole) continue;
       const b = h.whole.begin;
-      if (b < beginCycle - EPS || b >= endCycle - EPS) continue;
-      events.push({ begin: b, end: h.whole.end, value: normalizeValue(h.value), pattern: i });
+      if (overlap) {
+        // events overlapping the window: report each once (at its onset fragment, or the first fragment)
+        if (!h.hasOnset() && h.part.begin > beginCycle + EPS) continue;
+      } else {
+        if (!h.hasOnset()) continue;
+        if (b < beginCycle - EPS || b >= endCycle - EPS) continue;
+      }
+      const ev = { begin: b, end: h.whole.end, value: normalizeValue(h.value), pattern: i, locations: hapLocations(h) };
+      if (entry.name !== undefined) ev.name = entry.name;
+      if (entry.block !== undefined && entry.block !== null) ev.block = entry.block;
+      events.push(ev);
     }
   });
   events.sort((a, b) => a.begin - b.begin || a.pattern - b.pattern);
