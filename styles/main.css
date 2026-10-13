@@ -272,3 +272,8 @@ canvas.meter { width: 10px; background: #000; border-radius: 2px; image-renderin
 .extend-hint { margin: 0; }
 .logo-tagline { transition: opacity .4s ease; }
 .logo-tagline.fading { opacity: 0; }
+
+/* Home-screen app (standalone, iOS black-translucent status bar): keep clear of the notch / home indicator */
+@media (display-mode: standalone) {
+  #app { box-sizing: border-box; height: 100dvh; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+}
