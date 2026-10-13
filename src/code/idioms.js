@@ -561,7 +561,20 @@ export function velocityModel(evs, L, bpb, tol = VEL_TOL) {
     }
     // empty cells take a neighbour's value (a rest in the velocity pattern would drop notes)
     for (let i = 0; i < g; i++) if (vals[i] === null) vals[i] = vals.slice(0, i).reverse().find((x) => x !== null) ?? vals.find((x) => x !== null);
-    return compactSteps(vals.map(velStr), { rests: false, euclid: false });
+    const exact = compactSteps(vals.map(velStr), { rests: false, euclid: false });
+    // runs of neighbouring cells whose notes all fit one value (within ±tol) share it: "a!5 b!3" instead of jitter
+    const merged = [];
+    let run = null;
+    const close = () => { if (run) { const v = fitVel(run.vs, tol); for (let k = 0; k < run.n; k++) merged.push(v); } };
+    for (let i = 0; i < g; i++) {
+      const cvs = cells[i];
+      if (run && (!cvs.length || fitVel(run.vs.concat(cvs), tol) !== null)) { run.vs.push(...cvs); run.n++; continue; }
+      close();
+      run = { vs: cvs.length ? [...cvs] : [vals[i]], n: 1 };
+    }
+    close();
+    const loose = compactSteps(merged.map(velStr), { rests: false, euclid: false });
+    return loose.length < exact.length ? loose : exact;
   };
   const GRIDS = [...new Set([1, 2, bpb, 2 * bpb, 3 * bpb, 4 * bpb, 6 * bpb, 8 * bpb, 12 * bpb, 24 * bpb])].filter((g) => Number.isInteger(g) && g >= 1);
   const tryGrids = (list) => { for (const g of GRIDS) { const t = gridFor(list, g); if (t !== null) return t; } return null; };

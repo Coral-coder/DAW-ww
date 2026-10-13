@@ -218,12 +218,14 @@ export function formatExpr(expr, indent = '', width = 100) {
     if (close > 0) {
       const args = splitArgs(expr.slice(6, close));
       if (args.length > 1) {
-        const inner = args.map((a) => `${indent}  ${formatExpr(a.trim(), indent + '  ', width)},`).join('\n');
+        const inner = args.map((a) => `${indent}  ${wrapChain(formatExpr(a.trim(), indent + '  ', width - 2), indent.length + 2, 112, `${indent}    `)},`).join('\n');
         return `stack(\n${inner}\n${indent})${expr.slice(close + 1)}`;
       }
     }
   }
-  return expr.replace(/"([^"`]*)"/g, (m, mini) => (mini.length > 90 && /[<\[,]/.test(mini) ? strLit(mini, indent) : m));
+  // (a string longer than the line has room for — ~115 columns in all — goes over several lines)
+  const room = Math.min(110, Math.max(60, width + 12));
+  return expr.replace(/"([^"`]*)"/g, (m, mini) => (mini.length > room && /[<\[,]/.test(mini) ? strLit(mini, indent, room) : m));
 }
 
 /** Top-level method-call pieces of an expression: 'n("…").scale("…").lpf(…)' -> ['n("…")', '.scale("…")', '.lpf(…)'] */
@@ -243,14 +245,14 @@ function chainPieces(expr) {
 }
 
 /** Wraps a method chain over continuation lines (indented by 2) when a line would exceed `width`. */
-export function wrapChain(expr, startCol = 0, width = 100) {
+export function wrapChain(expr, startCol = 0, width = 100, ind = '  ') {
   const pieces = chainPieces(expr);
   if (pieces.length < 2) return expr;
   let out = '';
   let col = startCol;
   for (const p of pieces) {
     const firstLine = p.split('\n')[0];
-    if (out && col + firstLine.length > width) { out += '\n  '; col = 2; }
+    if (out && col + firstLine.length > width) { out += `\n${ind}`; col = ind.length; }
     out += p;
     col = p.includes('\n') ? p.length - p.lastIndexOf('\n') - 1 : col + p.length;
   }
@@ -343,14 +345,14 @@ function miniLines(mini, ind, width) {
 }
 
 /** Mini-notation string literal; long ones become multi-line template strings. */
-function strLit(mini, indent = '') {
-  if (mini.length <= 90) return `"${mini}"`;
+function strLit(mini, indent = '', room = 110) {
+  if (mini.length <= room) return `"${mini}"`;
   if (splitMini(mini, ',').length > 1) {
     // stacked layers: one per line (each broken further when long), inside an indented template string
-    const ls = miniLines(mini, '  ', Math.max(40, 88 - indent.length));
+    const ls = miniLines(mini, '  ', Math.max(40, 114 - indent.length));
     return '`\n' + ls.map((l) => indent + l).join('\n') + `\n${indent}\``;
   }
-  const lines = miniLines(mini, '', Math.max(40, 86 - indent.length));
+  const lines = miniLines(mini, '', Math.max(40, 112 - indent.length));
   if (lines.length < 2) return `"${mini}"`;
   return '`' + lines.map((l, i) => (i ? indent + l : l)).join('\n') + '`';
 }
@@ -931,7 +933,9 @@ export function songToCode(project, opts = {}) {
       const w = Math.max(0, ...list.map((c) => c.name.length));
       for (const c of list) {
         const head = `const ${c.name.padEnd(w)} = `;
-        push(`${head}${wrapChain(formatExpr(c.core + c.suffix, '', 100 - head.length), head.length)}\n`);
+        const text = wrapChain(formatExpr(c.core + c.suffix, '', 100 - head.length), head.length);
+        // a long automation arrange(): one segment per line
+        push(`${head}${text.split('\n').map((l) => (l.length > 116 && /arrange\(\[/.test(l) ? l.replace(/\], \[/g, '],\n    [') : l)).join('\n')}\n`);
         firstUse.set(c.name, sec);
       }
       blocks.push({ kind: 'section', name: sec.name, beat: sec.start, start, end: code.length });
