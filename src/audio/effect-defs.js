@@ -161,6 +161,25 @@ export const EFFECT_DEFS = {
       bool('clip', 'Soft Clip Safety', true, { section: 'Output', advanced: true }),
     ],
   },
+  mastering: {
+    name: 'Mastering', category: 'Dynamics',
+    description: 'Finishing chain for the master: tone (low shelf, tilt, air), glue compressor, soft saturation, width of the highs only and a true-peak-safe limiter.',
+    params: [
+      num('low', 'Low', -6, 6, 0, { step: 0.1, unit: 'dB', section: 'Tone' }),
+      num('tilt', 'Tilt', -4, 4, 0, { step: 0.1, unit: 'dB', section: 'Tone' }),
+      num('air', 'Air', -6, 6, 0, { step: 0.1, unit: 'dB', section: 'Tone' }),
+      num('glueThreshold', 'Glue Threshold', -40, 0, -16, { step: 0.1, unit: 'dB', section: 'Glue' }),
+      num('glueRatio', 'Glue Ratio', 1, 6, 1.6, { step: 0.05, curve: 'log', section: 'Glue' }),
+      num('glueAttack', 'Glue Attack', 0.001, 0.1, 0.03, { step: 0.001, unit: 's', curve: 'log', section: 'Glue', advanced: true }),
+      num('glueRelease', 'Glue Release', 0.05, 1, 0.3, { step: 0.005, unit: 's', curve: 'log', section: 'Glue', advanced: true }),
+      num('drive', 'Saturation', 0, 12, 0, { step: 0.1, unit: 'dB', section: 'Color' }),
+      num('width', 'High Width', 0, 2, 1, { step: 0.01, section: 'Stereo' }),
+      freq('widthFreq', 'Width Above', 2500, { section: 'Stereo', advanced: true }),
+      num('gain', 'Limiter Drive', 0, 18, 0, { step: 0.1, unit: 'dB', section: 'Limiter' }),
+      num('ceiling', 'Ceiling (dBTP)', -6, 0, -1, { step: 0.1, unit: 'dB', section: 'Limiter' }),
+      num('release', 'Release', 0.02, 0.6, 0.12, { step: 0.005, unit: 's', curve: 'log', section: 'Limiter' }),
+    ],
+  },
   gate: {
     name: 'Gate', category: 'Dynamics',
     description: 'Noise gate: silences the signal when it falls below the threshold. Also good for chopping tails.',
@@ -266,8 +285,12 @@ export const EFFECT_DEFS = {
   },
   reverb: {
     name: 'Reverb', category: 'Delay & Reverb',
-    description: 'Algorithmic convolution reverb — from small rooms to huge halls.',
+    description: 'Convolution reverb with a modelled space — early reflections and a frequency-dependent tail, from small rooms to huge halls and plates.',
     params: [
+      enm('character', 'Space', [
+        { value: 'auto', label: 'Auto (by size)' }, { value: 'room', label: 'Room' }, { value: 'chamber', label: 'Chamber' },
+        { value: 'hall', label: 'Hall' }, { value: 'plate', label: 'Plate' }, { value: 'ambience', label: 'Ambience' }, { value: 'classic', label: 'Classic (v1)' },
+      ], 'auto', { section: 'Space' }),
       num('decay', 'Decay', 0.1, 12, 2.2, { step: 0.01, unit: 's', curve: 'log', section: 'Space' }),
       num('size', 'Size', 0, 1, 0.6, { step: 0.01, section: 'Space' }),
       num('predelay', 'Pre-delay', 0, 0.25, 0.01, { step: 0.001, unit: 's', section: 'Space' }),

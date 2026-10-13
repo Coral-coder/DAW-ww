@@ -15,7 +15,7 @@ export const FAUST_INSTRUMENTS = {
     name: 'VA Poly Synth',
     description: 'Virtual-analog polysynth: two detuned saws + square sub through a Moog ladder with filter envelope.',
     code: `${HEAD}declare name "VA Poly Synth";
-declare author "daWWW (built on the Faust libraries)";
+declare author "daW³ (built on the Faust libraries)";
 declare license "MIT";
 ${VOICE}detune = hslider("[1]Detune[style:knob]", 0.15, 0, 1, 0.01);
 sub = hslider("[2]Sub[style:knob]", 0.4, 0, 1, 0.01);

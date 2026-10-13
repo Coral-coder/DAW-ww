@@ -84,7 +84,16 @@ export class Instrument {
     }, () => false);
   }
   trigger(time, pitch, vel, durSec, extra) {
-    try { this.engine.trigger(time, pitch, vel, durSec, extra || {}); } catch (e) { warn(e); }
+    try {
+      // flam: a soft grace stroke, then the main stroke 16 ms later (any engine; used on drum fills)
+      if (extra?.flam > 0) {
+        const { flam, ...rest } = extra;
+        this.engine.trigger(time, pitch, Math.max(0.02, vel * flam), Math.min(durSec, 0.05), rest);
+        this.engine.trigger(time + 0.016, pitch, vel, durSec, rest);
+        return;
+      }
+      this.engine.trigger(time, pitch, vel, durSec, extra || {});
+    } catch (e) { warn(e); }
   }
   noteOn(pitch, vel, time) { try { this.engine.noteOn(pitch, vel, time); } catch (e) { warn(e); } }
   noteOff(pitch, time) { try { this.engine.noteOff(pitch, time); } catch (e) { warn(e); } }

@@ -3,7 +3,7 @@
 
 import { rawGitHubUrl } from './github.js';
 
-const CACHE_NAME = 'dawww-plugins-v1';
+const CACHE_NAME = 'daw3-plugins-v1';
 const memText = new Map(); // url -> Promise<string>
 
 async function openCache() {

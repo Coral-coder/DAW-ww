@@ -21,12 +21,12 @@ const LOOP_H = 14;
 const TOP_H = RULER_H + MARK_H + LOOP_H;
 const ADD_ROW_H = 46;
 const OWNER_H = 28; // header row of a bus / master automation owner (below the tracks)
-const MIN_PPB = 1.2;
+const MIN_PPB = 0.35; // low enough that "Fit" shows a 10-minute club track
 const MAX_PPB = 480;
 const MIN_LANE = 26;
 const MAX_LANE = 180;
-const DT_SAMPLE = 'application/x-dawww-sample';
-const DT_PRESET = 'application/x-dawww-preset';
+const DT_SAMPLE = 'application/x-daw3-sample';
+const DT_PRESET = 'application/x-daw3-preset';
 const EPS = 1e-6;
 const AUTO_H = 58; // automation lane height (px)
 const AUTO_PAD = 7; // vertical padding inside an automation lane
@@ -189,7 +189,7 @@ export function clipsFromActivePatterns(app, { start = 0, bars = null } = {}) {
   return clips;
 }
 
-const loadPrefs = () => { try { return JSON.parse(localStorage.getItem('dawww-arrange') || '{}'); } catch { return {}; } };
+const loadPrefs = () => { try { return JSON.parse(localStorage.getItem('daw3-arrange') || '{}'); } catch { return {}; } };
 const mod = (a, n) => (n > 0 ? ((a % n) + n) % n : a);
 
 // ============================================================================ the view
@@ -209,7 +209,7 @@ export function createArrangeView(app) {
   let version = 0; // project version (bumped on every project change)
   let theme = {};
 
-  const savePrefs = () => { try { localStorage.setItem('dawww-arrange', JSON.stringify({ ppb, laneH, headW, snap: snapMode, autoOpen: [...autoOpen] })); } catch { /* ignore */ } };
+  const savePrefs = () => { try { localStorage.setItem('daw3-arrange', JSON.stringify({ ppb, laneH, headW, snap: snapMode, autoOpen: [...autoOpen] })); } catch { /* ignore */ } };
   const bpbNow = () => beatsPerBar(get());
   const snapStep = () => (snapMode === 'off' ? 0 : snapMode === 'bar' ? bpbNow() : Number(snapMode));
   const snapB = (b, ev, fn = Math.round) => {
@@ -348,6 +348,13 @@ export function createArrangeView(app) {
     drawNow();
   }
   const zoomBy = (f) => zoomAt(f, scroller.clientWidth / 2);
+  /** Scroll (and zoom out when needed) so beats [a, b) are in view — e.g. a part that was just added. */
+  function revealRange(a, b) {
+    const w = scroller.clientWidth || 800;
+    if ((b - a) * ppb > w - 80) { ppb = clamp((w - 80) / Math.max(1, b - a), MIN_PPB, MAX_PPB); savePrefs(); layout(); }
+    scroller.scrollLeft = Math.max(0, a * ppb - 40);
+    drawNow();
+  }
   function zoomToFit() {
     const p = get();
     const end = Math.max(p.clips.length ? songLengthBeats(p) : bpbNow() * 16, ...(p.markers || []).map((m) => m.beat + bpbNow()));
@@ -1905,6 +1912,10 @@ export function createArrangeView(app) {
       '-',
       { label: 'Loop the selection', icon: 'loop', disabled: !n, onClick: () => setLoop(Math.min(...cs.map((c) => c.start)), Math.max(...cs.map((c) => c.start + c.length))) },
       { label: 'Loop the whole song', icon: 'loop', disabled: !p.clips.length, onClick: () => setLoop(0, songLengthBeats(p)) },
+      '-',
+      { label: 'Extend song…', icon: 'plus', disabled: !p.clips.length, onClick: () => actions.showExtendDialog?.() },
+      { label: 'Insert a section…', icon: 'plus', disabled: !p.clips.length, onClick: () => actions.showExtendDialog?.({ mode: 'insert-section', at: snapB(pos(), null, Math.floor) }) },
+      '-',
       { label: 'Automation', icon: 'sliders', submenu: [
         { label: 'Show automation lanes on all tracks', onClick: () => { for (const t of p.tracks) autoOpen.add(t.id); savePrefs(); syncHeaders(); layout(); drawNow(); } },
         { label: 'Show only tracks that have automation', onClick: () => { autoOpen.clear(); for (const t of p.tracks) if ((t.automation || []).some((l) => l.points?.length)) autoOpen.add(t.id); savePrefs(); syncHeaders(); layout(); drawNow(); } },
@@ -2345,6 +2356,10 @@ export function createArrangeView(app) {
         { label: 'Go to marker', icon: 'play', onClick: () => actions.setPosition(m.beat) },
         { label: 'Loop this section', icon: 'loop', onClick: () => { const [a, b] = markerSection(m); setLoop(a, b); } },
         '-',
+        { label: 'Insert section here…', icon: 'plus', title: 'Insert a new section (breakdown, solo, chorus…) before this marker; everything after it moves right', onClick: () => actions.showExtendDialog?.({ mode: 'insert-section', markerId: m.id }) },
+        { label: 'Extend this section by…', icon: 'plus', onClick: () => actions.showExtendDialog?.({ mode: 'insert-section', templateMarkerId: m.id }) },
+        { label: 'Shorten / remove section', icon: 'scissors', onClick: () => actions.removeSectionAt?.(m.id) },
+        '-',
         { label: 'Delete marker', icon: 'trash', onClick: () => deleteMarker(m.id) },
       ]);
       return;
@@ -2524,6 +2539,6 @@ export function createArrangeView(app) {
       if (rafLoop) { cancelAnimationFrame(rafLoop); rafLoop = 0; }
     },
     // exposed for automation / other views
-    revealAutomation, zoomToFit, scenesToArrangement: (o) => scenesToArrangement(app, o), getState: () => ({ ppb, laneH, headW, tool, snapMode, stale }),
+    revealAutomation, zoomToFit, revealRange, scenesToArrangement: (o) => scenesToArrangement(app, o), getState: () => ({ ppb, laneH, headW, tool, snapMode, stale }),
   };
 }

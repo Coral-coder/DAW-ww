@@ -6,7 +6,7 @@
 
 export const CDN = 'https://cdn.jsdelivr.net';
 export const PLUGIN_KINDS = ['soundfont', 'faust', 'wam'];
-export const MANIFEST_FILES = ['daWWW.json', 'plugin.json'];
+export const MANIFEST_FILES = ['daW3.json', 'plugin.json'];
 
 const cdnUrl = (owner, repo, ref, path) =>
   `${CDN}/gh/${owner}/${repo}${ref ? '@' + ref : ''}/${(path || '').replace(/^\/+/, '')}`;
@@ -94,7 +94,7 @@ export function detectPluginKind(url, text) {
   }
   if (/\.dsp$/.test(path)) return 'faust';
   if (/-(mp3|ogg)\.js$/.test(path)) return 'soundfont';
-  if (/(^|\/)(dawww|plugin)\.json$/.test(path)) return 'manifest';
+  if (/(^|\/)(daw3|plugin)\.json$/i.test(path)) return 'manifest';
   if (/\.(m?js)$/.test(path)) return t == null ? 'wam' : null;
   return null;
 }

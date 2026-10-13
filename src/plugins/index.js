@@ -22,7 +22,7 @@ const ENGINES = {
 export async function detectPlugin(link, { onStage } = {}) {
   const r = resolveGitHubUrl(link);
   if (r.isDir || r.isRepoRoot) {
-    onStage?.('Looking for a daWWW.json / plugin.json manifest…');
+    onStage?.('Looking for a daW3.json / plugin.json manifest…');
     const tried = [];
     for (const mu of manifestUrls(r)) {
       let text;
@@ -31,7 +31,7 @@ export async function detectPlugin(link, { onStage } = {}) {
       if (!v.ok) throw userError(`Invalid manifest (${mu.split('/').pop()}): ${v.errors.join(' ')}`);
       return describe(v.manifest.kind, v.manifest.url, { r, name: v.manifest.name, description: v.manifest.description, type: v.manifest.type, onStage });
     }
-    throw userError('No daWWW.json or plugin.json manifest was found there. Link directly to a Faust .dsp file, a midi-js soundfont (*-mp3.js) or a WAM index.js — or add a manifest {"name","kind","entry"} to the repository.');
+    throw userError('No daW3.json or plugin.json manifest was found there. Link directly to a Faust .dsp file, a midi-js soundfont (*-mp3.js) or a WAM index.js — or add a manifest {"name","kind","entry"} to the repository.');
   }
   let kind = detectPluginKind(r.url);
   if (kind === 'manifest') {

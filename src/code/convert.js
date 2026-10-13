@@ -224,7 +224,7 @@ const fmt = (x) => String(round(x, 3));
 export function patternsToCode(project, { trackIds = null } = {}) {
   const bpb = beatsPerBar(project);
   const lines = [
-    `// ${project.name || 'daWWW project'} — exported from daWWW`,
+    `// ${project.name || 'daW³ project'} — exported from daW³`,
     `setcpm(${fmt(project.bpm)}/${fmt(bpb)})`,
   ];
   if (project.swing > 0) lines.push(`all(x => x.swingBy(${fmt(project.swing / 2)}, ${fmt(bpb * 2)}))`);

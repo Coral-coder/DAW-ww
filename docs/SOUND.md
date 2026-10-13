@@ -1,4 +1,4 @@
-# daWWW — Sound design notes (built-in instruments)
+# daW³ — Sound design notes (built-in instruments)
 
 The built-in instruments are plain Web Audio graphs (no AudioWorklets), so the same code runs in
 the live `AudioContext` and in `OfflineAudioContext` renders. Where Web Audio cannot do a model

@@ -15,9 +15,10 @@ export function detectPatternChords(pattern, bpb = 4) {
   // onset clusters
   const clusters = [];
   for (const n of notes) {
-    const q = Math.round(n.start * 8) / 8;
-    let c = clusters.find((x) => Math.abs(x.t - q) < 0.07);
-    if (!c) { c = { t: q, notes: [] }; clusters.push(c); }
+    // a strummed / humanized chord spreads its notes over a few ms: cluster on the real onsets (not a rounded grid,
+    // which splits a strum that straddles a grid boundary into two "chords")
+    let c = clusters.find((x) => Math.abs(x.s0 - n.start) < 0.07);
+    if (!c) { c = { t: Math.round(n.start * 8) / 8, s0: n.start, notes: [] }; clusters.push(c); }
     c.notes.push(n);
   }
   let chordClusters = clusters.filter((c) => new Set(c.notes.map((n) => mod12(n.pitch))).size >= 3).sort((a, b) => a.t - b.t);
@@ -40,7 +41,9 @@ export function detectPatternChords(pattern, bpb = 4) {
       const ringOut = Math.max(...c.notes.map((n) => n.start + n.dur));
       // a chord holds (harmonically) until the next chord, even when the part rests in between
       const end = i + 1 < chordClusters.length ? chordClusters[i + 1].t : Math.min(length, Math.max(ringOut, c.t + 0.25));
-      if (prev && prev.chord.root === chord.root && prev.chord.type === chord.type) { prev.end = end; continue; }
+      // the same chord re-struck (also when a different voicing makes detectChord name it differently: F#m9 / Amaj7)
+      const pcsKey = (ns) => [...new Set(ns.map((p) => mod12(p)))].sort((a, b) => a - b).join();
+      if (prev && ((prev.chord.root === chord.root && prev.chord.type === chord.type) || pcsKey(prev.notes) === pcsKey(c.notes.map((n) => n.pitch)))) { prev.end = end; continue; }
       out.push({ start: c.t, end, chord, notes: c.notes.map((n) => n.pitch).sort((a, b) => a - b) });
     }
     if (out.length) return out;

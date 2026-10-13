@@ -25,7 +25,7 @@ export async function createApp(rootEl) {
   const ui = new UIState();
   const engine = new AudioEngine(store);
   const app = { store, ui, engine, views: {}, toast };
-  window.dawww = app; // handy for debugging / automation
+  window.daw3 = app; // handy for debugging / automation
 
   // ---- render batching: components call app.subscribe(fn) and get rAF-batched updates ----
   const subs = new Set();

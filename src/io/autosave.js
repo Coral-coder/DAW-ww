@@ -1,9 +1,9 @@
-// IndexedDB persistence of projects in the browser ('dawww' db, 'projects' store).
+// IndexedDB persistence of projects in the browser ('daw3' db, 'projects' store).
 // In environments without IndexedDB (Node), list/load/delete resolve to empty results and
 // saveLocal rejects with a readable error.
 import { uid } from '../core/util.js';
 
-const DB_NAME = 'dawww';
+const DB_NAME = 'daw3';
 const STORE = 'projects';
 const DB_VERSION = 1;
 
@@ -76,7 +76,7 @@ function migrateLegacy() {
     if (typeof indexedDB.databases !== 'function') return;
     const dbs = await indexedDB.databases().catch(() => []);
     for (const { name } of dbs) {
-      if (!name || name === DB_NAME || !/-daw$/.test(name)) continue;
+      if (!name || name === DB_NAME || !/^(.+-daw|daw[a-z]+)$/.test(name)) continue;
       const old = await new Promise((res) => {
         const r = indexedDB.open(name);
         r.onsuccess = () => res(r.result);

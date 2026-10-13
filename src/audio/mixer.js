@@ -80,6 +80,24 @@ function changed(a, b, defs) {
   return false;
 }
 
+/**
+ * Note expression fields (see src/gen/expression.js) -> instrument trigger extras:
+ * glide (semitones to slide in from) + gt (s), bend (semitones, reached from bendAt × duration), vib (depth in semitones),
+ * flam (grace-stroke level, played by Instrument.trigger).
+ */
+export function noteExtra(ev, durSec) {
+  const x = ev.x || {};
+  const out = {};
+  if (Number.isFinite(x.glide) && x.glide !== 0) { out.glideFrom = ev.pitch + x.glide; out.glideTime = Number.isFinite(x.gt) ? x.gt : 0.07; }
+  if (Number.isFinite(x.bend) && x.bend !== 0) {
+    const at = Math.min(0.95, Math.max(0, Number.isFinite(x.bendAt) ? x.bendAt : 0.6)) * durSec;
+    out.bend = { to: x.bend, at, time: Math.max(0.03, Math.min(0.4, (durSec - at) * 0.8)) };
+  }
+  if (Number.isFinite(x.vib) && x.vib > 0 && durSec > 0.3) out.vib = { depth: Math.min(1, x.vib), rate: 5.2, delay: Math.min(0.6, Math.max(0.18, durSec * 0.3)) };
+  if (Number.isFinite(x.flam) && x.flam > 0) out.flam = Math.min(1, x.flam);
+  return out;
+}
+
 export class ChannelStrip {
   /**
    * @param {BaseAudioContext} ctx
@@ -622,7 +640,8 @@ export class MixGraph {
     const e = this.tracks.get(ev.trackId);
     if (!e) return;
     if (ev.type === 'note') {
-      e.instrument?.trigger(time, ev.pitch, ev.vel, Math.max(0.005, ev.dur * spb));
+      const durSec = Math.max(0.005, ev.dur * spb);
+      e.instrument?.trigger(time, ev.pitch, ev.vel, durSec, ev.x ? noteExtra(ev, durSec) : undefined);
     } else if (ev.type === 'code') {
       e.code?.trigger(time, ev.value, Math.max(0.005, ev.dur * spb));
     } else if (ev.type === 'audio') {
