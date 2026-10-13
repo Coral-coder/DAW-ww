@@ -1,6 +1,6 @@
 // Subtractive polysynth + shared voice/DSP helpers used by every instrument engine.
 // Browser-only at runtime, but importable in Node (no AudioContext use at import time).
-import { clamp, midiToFreq } from '../core/util.js';
+import { clamp, createRng, midiToFreq } from '../core/util.js';
 
 /* ------------------------------------------------------------------ */
 /* Small numeric helpers                                               */
@@ -422,7 +422,7 @@ export class Voice {
   startAll(t) {
     let pending = this.sources.length;
     for (const s of this.sources) {
-      s.start(t);
+      if (s._offset != null) s.start(t, s._offset); else s.start(t);
       // clean up once every source has ended (sources may stop at different times)
       s.onended = () => { if (--pending <= 0) this.cleanup(); };
     }
@@ -452,6 +452,14 @@ export class Voice {
 /* Output stage shared by all instruments: drive -> tone -> gain        */
 /* ------------------------------------------------------------------ */
 
+export const DRIVE_TYPES = ['soft', 'tube', 'amp'];
+
+/**
+ * input -> pre -> [amp pre-EQ] -> [shaper -> dc-block] -> post -> [cabinet] -> tone -> gain -> output
+ * driveType: 'soft' (symmetric tanh), 'tube' (asymmetric, even harmonics), 'amp' (guitar amp:
+ * tightening HPF + mid hump into a high-gain asymmetric stage, then a 4x12-ish cabinet:
+ * HPF 80 Hz, low resonance ~120 Hz, presence peak ~2.4 kHz, steep roll-off above ~5 kHz).
+ */
 export class OutputStage {
   constructor(ctx, output) {
     this.ctx = ctx;
@@ -465,35 +473,75 @@ export class OutputStage {
     this.tone.Q.value = -3; // dB, ~Butterworth
     this.gain = ctx.createGain();
     this.input.connect(this.pre);
-    this._driveOn = null;
+    this._route = null;
     this.tone.connect(this.gain);
     if (output) this.gain.connect(output);
     this.drive = -1;
+    this.curveKey = '';
+  }
+  _biquad(type, f, q, g = 0) {
+    const b = this.ctx.createBiquadFilter();
+    b.type = type; b.frequency.value = f; b.Q.value = q; b.gain.value = g;
+    return b;
+  }
+  _ampNodes() {
+    if (!this.ampPre) {
+      this.ampPre = [this._biquad('highpass', 110, 0.6), this._biquad('peaking', 750, 0.8, 5)];
+      this.cab = [this._biquad('highpass', 80, 0.7), this._biquad('peaking', 120, 1.2, 3), this._biquad('peaking', 420, 1, -3),
+        this._biquad('peaking', 2400, 1.4, 4), this._biquad('lowpass', 5200, 0.9), this._biquad('lowpass', 6500, 0.6)];
+      for (const list of [this.ampPre, this.cab]) for (let i = 0; i < list.length - 1; i++) list[i].connect(list[i + 1]);
+    }
+  }
+  _dcNode() {
+    if (!this.dc) this.dc = this._biquad('highpass', 18, 0.6);
+    return this.dc;
   }
   set(p, time = this.ctx.currentTime) {
     const drive = clamp(num(p.drive, 0), 0, 1);
+    const type = DRIVE_TYPES.includes(p.driveType) ? p.driveType : 'soft';
     const on = drive > 0.001;
-    if (on !== this._driveOn) {
-      try { this.pre.disconnect(); } catch { /* */ }
-      try { this.post.disconnect(); } catch { /* */ }
-      try { this.shaper.disconnect(); } catch { /* */ }
-      if (on) { this.pre.connect(this.shaper); this.shaper.connect(this.post); this.post.connect(this.tone); }
-      else this.pre.connect(this.tone);
-      this._driveOn = on;
+    const route = `${on}:${type}`;
+    if (route !== this._route) {
+      for (const n of [this.pre, this.post, this.shaper, this.dc, ...(this.ampPre || []), ...(this.cab || [])]) {
+        if (n) { try { n.disconnect(); } catch { /* */ } }
+      }
+      if (type === 'amp') {
+        this._ampNodes();
+        for (const list of [this.ampPre, this.cab]) for (let i = 0; i < list.length - 1; i++) list[i].connect(list[i + 1]);
+      }
+      let node = this.pre;
+      const link = (n) => { node.connect(n); node = n; };
+      if (type === 'amp') { link(this.ampPre[0]); node = this.ampPre[this.ampPre.length - 1]; }
+      if (on) {
+        link(this.shaper);
+        if (type !== 'soft') link(this._dcNode());
+      }
+      link(this.post);
+      if (type === 'amp') { link(this.cab[0]); node = this.cab[this.cab.length - 1]; }
+      node.connect(this.tone);
+      this.shaper.oversample = type === 'amp' ? '4x' : '2x';
+      this._route = route;
+      this.curveKey = '';
     }
-    if (on && Math.abs(drive - this.drive) > 0.004) {
-      this.shaper.curve = getDriveCurve(drive);
+    const ck = `${type}:${Math.round(drive * 200)}`;
+    if (on && ck !== this.curveKey) {
+      this.shaper.curve = type === 'amp' ? getAmpCurve(drive) : type === 'tube' ? getTubeCurve(drive) : getDriveCurve(drive);
+      this.curveKey = ck;
       this.drive = drive;
     }
     // more pre-gain hits the shaper harder; post gain compensates loudness
-    this.pre.gain.setTargetAtTime(on ? 1 + drive * 3 : 1, time, 0.02);
-    this.post.gain.setTargetAtTime(on ? 1 / (1 + drive * 1.8) : 1, time, 0.02);
+    const preG = !on ? 1 : type === 'amp' ? 1 + drive * 2 : 1 + drive * 3;
+    const postG = !on ? 1 : type === 'amp' ? 0.55 / (1 + drive * 0.6) : 1 / (1 + drive * 1.8);
+    this.pre.gain.setTargetAtTime(preG, time, 0.02);
+    this.post.gain.setTargetAtTime(postG, time, 0.02);
     const nyq = this.ctx.sampleRate / 2 - 100;
     this.tone.frequency.setTargetAtTime(clamp(num(p.toneCut, 20000), 40, nyq), time, 0.02);
     this.gain.gain.setTargetAtTime(clamp(num(p.gain, 0.8), 0, 2), time, 0.02);
   }
   dispose() {
-    for (const n of [this.input, this.pre, this.shaper, this.post, this.tone, this.gain]) { try { n.disconnect(); } catch { /* */ } }
+    for (const n of [this.input, this.pre, this.shaper, this.post, this.tone, this.gain, this.dc, ...(this.ampPre || []), ...(this.cab || [])]) {
+      if (n) { try { n.disconnect(); } catch { /* */ } }
+    }
   }
 }
 
@@ -508,6 +556,7 @@ export class BaseInstrument {
     this.out = new OutputStage(ctx, output);
     this.voices = new Set();
     this.held = new Map(); // pitch -> voice (live keyboard)
+    this.rand = createRng(0x5eed1); // deterministic per instance -> reproducible offline renders
     this.params = {};
     this.setParams(params || {});
   }
