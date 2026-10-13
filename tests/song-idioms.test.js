@@ -192,7 +192,9 @@ test('compactness: chars per bar of music vs the previous writer (10 genres)', (
   const rows = [];
   let before = 0, after = 0;
   for (const [genre, b] of Object.entries(BEFORE)) {
-    const p = song(genre, 1);
+    // the writer is measured on the core band it was benchmarked on (the extra orchestration layers of
+    // src/gen/orchestra.js add tracks, i.e. more music per bar, not a less compact writer)
+    const p = { ...createProject(), ...generateSong({ genre, seed: 1, orchestra: false }), mode: 'song' };
     const { code } = songToCode(p);
     const cpb = code.length / barsOf(p);
     rows.push(`${genre.padEnd(14)} ${String(b).padStart(4)} -> ${cpb.toFixed(0).padStart(4)} chars/bar (${code.split('\n').length} lines)`);
@@ -205,8 +207,11 @@ test('compactness: chars per bar of music vs the previous writer (10 genres)', (
   assert.ok(after / before <= 0.45, `overall ${after.toFixed(0)} vs ${before}`);
   console.log(`# compactness (before -> after):\n# ${rows.join('\n# ')}`);
   // a ~7 minute trance song (256 bars, every section varied by the generator) fits a handful of screens: < 2 lines/bar
-  const t = songToCode(song('trance', 1)).code.split('\n').length;
+  const t = songToCode({ ...createProject(), ...generateSong({ genre: 'trance', seed: 1, orchestra: false }), mode: 'song' }).code.split('\n').length;
   assert.ok(t <= 512, `trance: ${t} lines`);
+  // fully orchestrated (14 tracks: + percussion, counter, vox, impacts, texture): still < 2.5 lines / bar
+  const full = songToCode(song('trance', 1)).code.split('\n').length;
+  assert.ok(full <= 640, `trance (orchestrated): ${full} lines`);
 });
 
 test('export: Menu ▸ Export ▸ Strudel code writes the whole arrangement, playable on strudel.cc', () => {

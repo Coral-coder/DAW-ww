@@ -78,11 +78,13 @@ export function attachAutocomplete(editor, { getCatalog, getOptions } = {}) {
   function renderDoc(it) {
     if (!it || (!it.desc && !it.example && !it.detail)) { doc.classList.add('hidden'); return; }
     doc.classList.remove('hidden');
-    doc.replaceChildren(
-      it.detail ? h('code.cac-sig', it.detail) : null,
+    const fnLike = ['method', 'function', 'const', 'keyword'].includes(it.kind);
+    doc.replaceChildren(...[
+      it.detail ? h(fnLike ? 'code.cac-sig' : 'span.cac-tag', it.detail) : null,
       it.desc ? h('p', it.desc) : null,
       it.example ? h('pre.cac-ex', it.example) : null,
-      h('div.cac-keys', 'Enter / Tab insert · Esc close'));
+      h('div.cac-keys', 'Enter / Tab insert · Esc close'),
+    ].filter(Boolean));
   }
   function position() {
     const c = editor.coordsAt(res.from);
@@ -99,18 +101,26 @@ export function attachAutocomplete(editor, { getCatalog, getOptions } = {}) {
 
   function accept() {
     if (!open || !res) return false;
-    const it = res.items[sel];
+    const r = res;
+    const it = r.items[sel];
     if (!it) return false;
     const src = ta.value;
-    const out = applyCompletion(src, res, it, getOptions?.() || {});
+    const out = applyCompletion(src, r, it, getOptions?.() || {});
     recent = [it.label, ...recent.filter((r) => r !== it.label)].slice(0, 40);
     saveRecent(recent);
     close();
     suppressNext = true;
     // one native undo step: replace only the changed span
-    editor.replaceRange(res.from, res.to, out.inserted, out.selStart, out.selEnd);
+    editor.replaceRange(r.from, r.to, out.inserted, out.selStart, out.selEnd);
     suppressNext = false;
     return true;
+  }
+
+  function stillValid() {
+    if (!res || ta.selectionStart !== ta.selectionEnd) return false;
+    let r;
+    try { r = completionsAt(ta.value, ta.selectionStart, getCatalog(), { recent, force: forced }); } catch { return false; }
+    return r.items.length > 0 && r.from === res.from && r.ctx.kind === res.ctx.kind && r.ctx.prefix === res.ctx.prefix;
   }
 
   function move(d) {
@@ -130,6 +140,8 @@ export function attachAutocomplete(editor, { getCatalog, getOptions } = {}) {
       return;
     }
     if (!open) return;
+    // the caret may have moved without an input event (closer skip-over): re-validate before accepting
+    if ((e.key === 'Enter' || e.key === 'Tab') && !stillValid()) { close(); return; }
     const stop = () => { e.preventDefault(); e.stopPropagation(); };
     if (e.key === 'ArrowDown') { stop(); move(1); }
     else if (e.key === 'ArrowUp') { stop(); move(-1); }
@@ -152,6 +164,16 @@ export function attachAutocomplete(editor, { getCatalog, getOptions } = {}) {
       return;
     }
     close();
+  });
+  // caret moved without an input event (typing over an auto-closed quote / bracket, clicks, arrows): re-check
+  let selRaf = 0;
+  document.addEventListener('selectionchange', () => {
+    if (!open || document.activeElement !== ta || selRaf) return;
+    selRaf = requestAnimationFrame(() => { selRaf = 0; if (open) update(); });
+  });
+  ta.addEventListener('keydown', (e) => {
+    // keys the editor handles itself by moving the caret (closer skip-over) never fire `input`
+    if (open && e.key.length === 1 && /[)\]}"'`]/.test(e.key)) setTimeout(() => { if (open) update(); }, 0);
   });
   ta.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== ta) close(); }, 0));
   ta.addEventListener('mousedown', close);

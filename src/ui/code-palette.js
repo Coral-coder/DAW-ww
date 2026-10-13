@@ -132,8 +132,9 @@ export function createCodePalette(app, editor, opts = {}) {
     ind.classList.toggle('bad', !r);
     indLabel.classList.remove('hidden');
     indLabel.textContent = r ? (r.message || 'Insert here') : 'Can\'t place here';
-    indLabel.style.left = Math.min(er.right - 220, er.left + 52) + 'px';
-    indLabel.style.top = Math.max(er.top, lr.top - 22) + 'px';
+    const lw = indLabel.offsetWidth || 160;
+    indLabel.style.left = Math.max(er.left + 50, er.right - lw - 14) + 'px';
+    indLabel.style.top = Math.max(er.top, Math.min(er.bottom - lr.height, lr.top) + 1) + 'px';
   }
   function hideIndicator() { ind.classList.add('hidden'); indLabel.classList.add('hidden'); }
   const lineOf = (src, off) => { let n = 0; for (let i = src.indexOf('\n'); i >= 0 && i < off; i = src.indexOf('\n', i + 1)) n++; return n; };

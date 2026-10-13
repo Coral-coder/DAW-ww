@@ -39,7 +39,7 @@ const SLIDE_808_GENRES = new Set(['trap', 'drill', 'phonk', 'footwork', 'danceha
 
 /** Instrument family of a track's instrument: keys | mallet | guitar | strings | brass | wind | organ | pad | bass | synthlead | pluck | other. */
 export function instrumentClass(inst) {
-  const name = String(inst?.type === 'soundfont' ? inst.params?.instrument || '' : inst?.preset || inst?.type || '');
+  const name = String(inst?.type === 'soundfont' ? inst.params?.instrument || '' : inst?.preset || inst?.fallbackPreset || inst?.type || ''); // plugins (faust): their fallback preset names the family
   if (/organ|harmonium/.test(name)) return 'organ';
   if (/guitar|nylon|power-chord|banjo|koto|sitar/.test(name)) return 'guitar';
   if (/piano|clav|celesta|harpsichord|lofi-keys|epiano/.test(name)) return 'keys';
@@ -310,7 +310,8 @@ export function applyExpression(project, opts = {}) {
     const pat = project.patterns[id];
     const track = trackById.get(pat.trackId);
     if (!track || track.type !== 'instrument' || !pat.notes?.length) continue;
-    const role = track.role || (track.instrument?.type === 'drums' ? 'drums' : 'lead');
+    // extra drum layers (percussion / break ghosts / impacts) are played like drums
+    const role = track.instrument?.type === 'drums' ? 'drums' : track.role || 'lead';
     if (role === 'fx') continue;
     const inst = track.instrument;
     const instName = String(inst?.type === 'soundfont' ? inst.params?.instrument || '' : inst?.preset || '');

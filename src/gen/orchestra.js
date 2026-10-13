@@ -544,6 +544,13 @@ export function addOrchestra(ctx) {
       (sectionNotes[si] ||= {})[role] = clean;
     }
   });
+  // a layer that found no room anywhere (budget / density rules) is not added at all
+  for (const [role, t] of made) {
+    if (sectionSlots.some((x) => x.slots[t.id])) continue;
+    tracks.splice(tracks.indexOf(t), 1);
+    auto.delete(t.id);
+    made.delete(role);
+  }
   return [...made.values()];
 }
 

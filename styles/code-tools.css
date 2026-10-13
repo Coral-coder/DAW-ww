@@ -84,3 +84,4 @@
   background: var(--bg-3); border: 1px solid var(--accent-2); color: var(--text); box-shadow: var(--shadow);
 }
 @media (max-width: 900px) { .cpal { min-width: 170px; } }
+.cac-tag { display: inline-block; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); background: var(--bg-4); border-radius: 3px; padding: 0 5px; }
