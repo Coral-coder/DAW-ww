@@ -411,7 +411,25 @@ export function evaluate(source) {
     return p;
   };
 
+  // Strudel REPL widgets: the code keeps working with the widget's current (initial) value.
+  perEval.slider = (value) => reify(Number(plainStr(value)));
+  perEval.toggle = (value) => reify(plainStr(value) ? 1 : 0);
+
   const scope = { ...buildStaticScope(), ...perEval };
+  // Functions / methods we don't implement yet degrade to pass-throughs (with a warning) instead of
+  // failing the whole song.
+  const unknown = findUnknownNames(source, scope);
+  result.warnings = [];
+  for (const name of unknown.functions) {
+    scope[name] = (...args) => args.find((a) => a instanceof Pattern) ?? silence;
+    result.warnings.push(`${name}() is not supported yet — ignored`);
+  }
+  const addedMethods = [];
+  for (const name of unknown.methods) {
+    Pattern.prototype[name] = function passThrough() { return this; };
+    addedMethods.push(name);
+    result.warnings.push(`.${name}() is not supported yet — ignored`);
+  }
   const names = Object.keys(scope).filter((k) => /^[A-Za-z_$][\w$]*$/.test(k) && !RESERVED.has(k));
   const values = names.map((k) => scope[k]);
 
@@ -437,6 +455,7 @@ export function evaluate(source) {
     result.error = errMsg(e);
   } finally {
     setPatternRegistrar(null);
+    for (const name of addedMethods) delete Pattern.prototype[name];
   }
   if (result.error) return result;
   if (hushed) entries.length = 0;
@@ -457,6 +476,38 @@ export function evaluate(source) {
   result.patterns = entries.filter((e) => !e.muted).map((e) => e.pattern);
   if (result.cps !== null && !(result.cps > 0)) result.cps = null;
   return result;
+}
+
+// Identifiers JavaScript itself provides (never stubbed).
+const JS_GLOBALS = new Set(['Math', 'Number', 'String', 'Array', 'Object', 'Boolean', 'JSON', 'Date', 'console', 'parseInt',
+  'parseFloat', 'isNaN', 'isFinite', 'Promise', 'Symbol', 'Map', 'Set', 'RegExp', 'Error', 'setTimeout', 'clearTimeout',
+  'setInterval', 'clearInterval', 'fetch', 'window', 'globalThis', 'require', 'import', 'async', 'function', 'return',
+  'if', 'for', 'while', 'switch', 'catch', 'typeof', 'new', 'await', 'Infinity', 'NaN', 'undefined']);
+// Methods of plain JS values that may legitimately appear in Strudel code.
+const JS_METHODS = new Set(['map', 'filter', 'reduce', 'forEach', 'join', 'split', 'slice', 'splice', 'push', 'pop', 'shift',
+  'unshift', 'concat', 'includes', 'indexOf', 'toString', 'toFixed', 'then', 'catch', 'finally', 'keys', 'values',
+  'entries', 'replace', 'trim', 'toUpperCase', 'toLowerCase', 'repeat', 'fill', 'flat', 'flatMap', 'find', 'some',
+  'every', 'sort', 'reverse', 'at', 'charAt', 'startsWith', 'endsWith', 'padStart', 'padEnd', 'log', 'apply', 'call', 'bind',
+  'floor', 'ceil', 'round', 'random', 'min', 'max', 'abs', 'pow', 'sqrt', 'sin', 'cos', 'exp']);
+
+/** Calls in the source to functions / Pattern methods the engine doesn't know. */
+export function findUnknownNames(source, scope) {
+  const { masked } = maskSource(String(source ?? ''));
+  const declared = new Set();
+  for (const m of masked.matchAll(/\b(?:const|let|var|function)\s+([A-Za-z_$][\w$]*)/g)) declared.add(m[1]);
+  for (const m of masked.matchAll(/\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*=>/g)) declared.add(m[1]);
+  for (const m of masked.matchAll(/\(([^()]*)\)\s*=>/g)) for (const a of m[1].split(',')) declared.add(a.trim().replace(/=.*$/, '').trim());
+  const functions = new Set();
+  const methods = new Set();
+  for (const m of masked.matchAll(/(\.\s*)?\b([A-Za-z_$][\w$]*)\s*\(/g)) {
+    const name = m[2];
+    if (m[1]) {
+      if (!(name in Pattern.prototype) && !JS_METHODS.has(name)) methods.add(name);
+    } else if (!(name in scope) && !declared.has(name) && !JS_GLOBALS.has(name) && !RESERVED.has(name)) {
+      functions.add(name);
+    }
+  }
+  return { functions: [...functions], methods: [...methods] };
 }
 
 // ------------------------------------------------------------------------------------- events
