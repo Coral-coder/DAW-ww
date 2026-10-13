@@ -192,11 +192,10 @@ export function varyPart(notes, opts = {}) {
       if (!c?.chord) continue;
       const tones = chordPitchClasses(c.chord.root, c.chord.type);
       const fifth = mod12(c.chord.root + 7);
-      if (b % 4 === 3 && tones.includes(fifth) && pick.length > 1) {
-        const m = pick[pick.length - 2];
-        let p = m.pitch - mod12(m.pitch - fifth);
-        if (p < 28) p += 12;
-        m.pitch = p;
+      const toFifth = (m) => { let p = m.pitch - mod12(m.pitch - fifth); if (p < 28) p += 12; m.pitch = p; };
+      if (b % 4 === 3 && tones.includes(fifth)) {
+        if (pick.length > 1) toFifth(pick[pick.length - 2]);
+        else { toFifth(n); continue; }
       }
       if (n.pitch + 12 <= 60) n.pitch += 12;
     }
