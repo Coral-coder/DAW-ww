@@ -152,7 +152,10 @@ export function mixTrack(track, ctx) {
     case 'drums': {
       track.pan = 0;
       fx.push(createEffect('compressor', { threshold: -16, ratio: 3, attack: 0.012, release: 0.14, knee: 6, makeup: 2, mix: 0.75 }));
-      if (TAPE_GENRES.has(g.id)) fx.push(createEffect('tape', { drive: 3, tone: 9000, wow: 0.08, flutter: 0.08, mix: 1 }));
+      if (g.family === 'dnb') {
+        // dnb snares live at 2–8 kHz and get harsh fast: no kit saturation; tame the bite (4.5 kHz) and the fizz (>9 kHz)
+        fx.push(createEffect('eq8', { b4On: true, b4Type: 'peaking', b4Freq: 4500, b4Gain: -3.5, b4Q: 1.1, b7On: true, b7Type: 'highshelf', b7Freq: 9000, b7Gain: -3 }));
+      } else if (TAPE_GENRES.has(g.id)) fx.push(createEffect('tape', { drive: 3, tone: 9000, wow: 0.08, flutter: 0.08, mix: 1 }));
       else if (DRIVE_GENRES.has(g.id)) fx.push(createEffect('saturator', { type: 'warm', drive: 4, tone: 11000, output: -2, mix: 0.6 }));
       send(rev, 0.07 * sp.scale);
       break;
