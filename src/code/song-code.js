@@ -226,6 +226,37 @@ export function formatExpr(expr, indent = '', width = 100) {
   return expr.replace(/"(<[^"]*>)"/g, (m, mini) => (mini.length > 60 ? strLit(mini, indent) : m));
 }
 
+/** Top-level method-call pieces of an expression: 'n("…").scale("…").lpf(…)' -> ['n("…")', '.scale("…")', '.lpf(…)'] */
+function chainPieces(expr) {
+  const out = [];
+  let depth = 0, cur = '';
+  for (let i = 0; i < expr.length; i++) {
+    const c = expr[i];
+    if (c === '"' || c === '`' || c === "'") { const j = expr.indexOf(c, i + 1); if (j < 0) return [expr]; cur += expr.slice(i, j + 1); i = j; continue; }
+    if ('([{'.includes(c)) depth++;
+    else if (')]}'.includes(c)) depth--;
+    if (c === '.' && depth === 0 && cur && /[)\]`"]$/.test(cur)) { out.push(cur); cur = ''; }
+    cur += c;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/** Wraps a method chain over continuation lines (indented by 2) when a line would exceed `width`. */
+export function wrapChain(expr, startCol = 0, width = 100) {
+  const pieces = chainPieces(expr);
+  if (pieces.length < 2) return expr;
+  let out = '';
+  let col = startCol;
+  for (const p of pieces) {
+    const firstLine = p.split('\n')[0];
+    if (out && col + firstLine.length > width) { out += '\n  '; col = 2; }
+    out += p;
+    col = p.includes('\n') ? p.length - p.lastIndexOf('\n') - 1 : col + p.length;
+  }
+  return out;
+}
+
 /** Index of the parenthesis closing the one at `open` (strings skipped), or -1. */
 function matchParen(s, open) {
   let depth = 0;
@@ -826,7 +857,7 @@ export function songToCode(project, opts = {}) {
       const w = Math.max(0, ...list.map((c) => c.name.length));
       for (const c of list) {
         const head = `const ${c.name.padEnd(w)} = `;
-        push(`${head}${formatExpr(c.core + c.suffix, '', 100 - head.length)}\n`);
+        push(`${head}${wrapChain(formatExpr(c.core + c.suffix, '', 100 - head.length), head.length)}\n`);
         firstUse.set(c.name, sec);
       }
       blocks.push({ kind: 'section', name: sec.name, beat: sec.start, start, end: code.length });
@@ -877,7 +908,7 @@ export function songToCode(project, opts = {}) {
       const pat = project.patterns?.[track.activePatternId];
       const r = pat ? render(pat, info.kind) : null;
       const expr = r ? r.expr : `${isDrums ? 's' : 'note'}("~")`;
-      body = `${muted ? '_' : ''}${label}: ${formatExpr(expr, '', 100 - label.length - 2)}`;
+      body = `${muted ? '_' : ''}${label}: ${wrapChain(formatExpr(expr, '', 100 - label.length - 2), label.length + 2)}`;
       push(`\n// —— ${title} ——\n`);
     }
     body = withTail(body, tail);
