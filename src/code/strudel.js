@@ -615,6 +615,7 @@ export function queryEvents(evaluated, beginCycle, endCycle, opts = {}) {
   const events = [];
   const overlap = !!opts.active;
   list.forEach((entry, i) => {
+    const real = isStrudelPattern(entry.pattern);
     let haps;
     try {
       haps = entry.pattern.queryArc(beginCycle, endCycle);
@@ -633,6 +634,8 @@ export function queryEvents(evaluated, beginCycle, endCycle, opts = {}) {
         if (b < beginCycle - EPS || b >= endCycle - EPS) continue;
       }
       const ev = { begin: b, end: Number(h.whole.end), value: normalizeValue(h.value), pattern: i, locations: hapLocations(h) };
+      // sounding length in cycles as Strudel computes it (value.duration / clip|legato applied)
+      if (real) ev.duration = Number(h.duration);
       if (entry.name !== undefined) ev.name = entry.name;
       if (entry.block !== undefined && entry.block !== null) ev.block = entry.block;
       events.push(ev);

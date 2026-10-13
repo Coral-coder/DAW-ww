@@ -18,6 +18,11 @@
 import { DRUM_PADS, beatsPerBar, songLengthBeats, createTrack, createPattern, createNote, createClip, createEffect } from '../core/model.js';
 import { evaluate, queryEvents, splitTopLevel, stripComments, lastExpressionStart } from './strudel.js';
 import { drumPitch } from './convert.js';
+import {
+  renderPart, snapBeat as snapBeatQ, qVel as qVelQ, alternation, barsText, rootName, compactSteps, weightedSeq, mergeRests, chooseRes, barGroups,
+} from './idioms.js';
+import { valueAt, parseTarget } from '../core/automation.js';
+import { grooveFor } from '../gen/groove.js';
 
 const EPS = 1e-6;
 const SHARP = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b'];
@@ -26,21 +31,10 @@ const PITCH_TO_SHORT = Object.fromEntries(DRUM_PADS.map((p) => [p.pitch, p.short
 const DRUM_ORDER = new Map(DRUM_PADS.map((p, i) => [p.pitch, i]));
 // keys whose signature uses flats (major-relative pitch class of the key)
 const FLAT_KEYS = new Set([5, 10, 3, 8, 1, 6]);
-const RES = [1, 2, 4, 3, 8, 6, 12, 16, 24];
-/**
- * Onset quantisation used by the code view: onsets on the 1/24-beat grid (16ths, 32nds, 8th and
- * 16th triplets) stay; others snap to the nearest 16th when within 0.05 beat (humanised or strummed
- * notes), else to the nearest 1/24 beat.
- */
-export function snapBeat(b) {
-  const s24 = Math.round(b * 24) / 24;
-  if (Math.abs(b - s24) < 0.002) return s24; // already on the fine grid (32nds, triplets, fast arps)
-  const s16 = Math.round(b * 4) / 4;
-  if (Math.abs(b - s16) <= 0.05 + 1e-9) return s16;
-  return Math.round(b * 24) / 24;
-}
-/** Velocity quantisation used by the code view (0.05 steps — inaudible, far more readable). */
-export const qVel = (v) => Math.round(clamp(v, 0, 1) * 20) / 20;
+/** Onset quantisation used by the code view (see idioms.js snapBeat). */
+export const snapBeat = snapBeatQ;
+/** Velocity quantisation used by the code view (0.05 steps). */
+export const qVel = qVelQ;
 const DEFAULT_VEL = 0.8;
 const DEFAULT_VOL = 0.8;
 const RESERVED = new Set(['break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default', 'delete', 'do', 'else',
@@ -88,115 +82,6 @@ export function labelFor(name, used = new Set()) {
 }
 
 // ------------------------------------------------------------------------- mini-notation writer
-
-/** True when every value in `times` (beats) lies on a grid of `r` steps per beat. */
-const onGrid = (times, r) => times.every((t) => Math.abs(t * r - Math.round(t * r)) < 1e-3 * r + 1e-6);
-function chooseRes(times) {
-  for (const r of RES) if (onGrid(times, r)) return r;
-  return 24; // starts are pre-snapped to 1/24 beat
-}
-
-const wrap = (x) => (/\s/.test(x) ? `[${x}]` : x);
-
-/** Drop rests at every other (or every 2nd/3rd of three) position while possible: "bd ~ sd ~" -> "bd sd". */
-function reduceRests(tokens) {
-  for (;;) {
-    let done = true;
-    for (const f of [2, 3]) {
-      if (tokens.length > 1 && tokens.length % f === 0 && tokens.every((t, i) => i % f === 0 || t === '~')) {
-        tokens = tokens.filter((_, i) => i % f === 0);
-        done = false;
-        break;
-      }
-    }
-    if (done) return tokens;
-  }
-}
-
-/** Compact mini-notation for a grid of one-step tokens (drum hits / velocities). */
-export function compactSteps(tokens, { rests = true } = {}) {
-  if (rests) tokens = reduceRests(tokens);
-  const n = tokens.length;
-  if (n === 0) return '~';
-  if (n === 1) return tokens[0];
-  if (tokens.every((t) => t === tokens[0])) return tokens[0] === '~' ? '~' : `${tokens[0]}*${n}`;
-  const cands = [];
-  // grouped by beats/halves: "bd ~ [~ bd] ~"
-  for (const g of [4, 3, 2, 8, 6]) {
-    if (n % g || n / g < 2) continue;
-    const per = n / g;
-    const parts = [];
-    for (let i = 0; i < g; i++) parts.push(wrap(compactSteps(tokens.slice(i * per, (i + 1) * per), { rests })));
-    cands.push(parts.join(' '));
-  }
-  // periodic: "[~ hh]*4"
-  for (let p = 1; p <= n / 2; p++) {
-    if (n % p) continue;
-    let ok = true;
-    for (let i = p; i < n && ok; i++) ok = tokens[i] === tokens[i - p];
-    if (ok) { cands.push(`${wrap(compactSteps(tokens.slice(0, p), { rests }))}*${n / p}`); break; }
-  }
-  cands.push(tokens.join(' '));
-  let best = cands[0];
-  for (const c of cands) if (c.length < best.length) best = c;
-  return best;
-}
-
-/** Weighted items [{tok, w}] -> "c3@3 e3" (weights reduced by their gcd). */
-function weightedSeq(items) {
-  if (!items.length) return '~';
-  const g = items.reduce((a, it) => gcd(a, it.w), 0) || 1;
-  const ws = items.map((it) => it.w / g);
-  if (ws.every((w) => w === 1)) return compactSteps(items.map((it) => it.tok), { rests: false });
-  return items.map((it, i) => (ws[i] === 1 ? it.tok : `${it.tok}@${ws[i]}`)).join(' ');
-}
-
-/** Alternation of segments [{text, w}] -> "<a b@2 c!2>" (or just "a"). */
-function alternation(segs) {
-  if (!segs.length) return '~';
-  // periodic segment lists collapse to their period
-  const key = (s) => `${s.text}@${s.w}`;
-  for (let p = 1; p < segs.length; p++) {
-    if (segs.length % p) continue;
-    let ok = true;
-    for (let i = p; i < segs.length && ok; i++) ok = key(segs[i]) === key(segs[i - p]);
-    if (ok) { segs = segs.slice(0, p); break; }
-  }
-  if (segs.length === 1 && segs[0].w === 1) return segs[0].text;
-  const out = [];
-  for (let i = 0; i < segs.length;) {
-    let j = i + 1;
-    while (j < segs.length && key(segs[j]) === key(segs[i])) j++;
-    const s = segs[i];
-    let t = wrap(s.text) + (s.w !== 1 ? `@${s.w}` : '');
-    if (j - i > 1) t += `!${j - i}`;
-    out.push(t);
-    i = j;
-  }
-  return `<${out.join(' ')}>`;
-}
-
-/** Splits [0, bars) into groups so no note crosses a group boundary. -> [[barStart, barEnd]] */
-function barGroups(notes, bars, barLen) {
-  const groups = [];
-  let b = 0;
-  while (b < bars) {
-    let end = b + 1;
-    for (let changed = true; changed;) {
-      changed = false;
-      for (const n of notes) {
-        if (n.start >= b * barLen - EPS && n.start < end * barLen - EPS && n.start + n.dur > end * barLen + 1e-4) {
-          end = Math.min(bars, Math.ceil((n.start + n.dur) / barLen - 1e-4));
-          changed = true;
-        }
-      }
-      if (end >= bars) { end = bars; break; }
-    }
-    groups.push([b, end]);
-    b = end;
-  }
-  return groups;
-}
 
 /**
  * Notes -> mini-notation voices.
@@ -311,16 +196,6 @@ export function notesToVoices(notes, lengthBeats, { kind = 'melodic', beatsPerBa
   return { voices: finishVel(voices), slow };
 }
 
-function mergeRests(items) {
-  const out = [];
-  for (const it of items) {
-    const last = out[out.length - 1];
-    if (last && last.tok === '~' && it.tok === '~') last.w += it.w;
-    else out.push({ ...it });
-  }
-  return out;
-}
-
 /** vel: null (all default .8) | number (uniform) | mini string (varies). */
 function finishVel(voices) {
   return voices.map((v) => {
@@ -333,10 +208,15 @@ function finishVel(voices) {
   });
 }
 
-/** Mini-notation string literal; long ones become multi-line template strings. */
+/** Splits a long expression's long mini-notation literals over several lines (one alternation chunk per line). */
+export function formatExpr(expr, indent = '', width = 100) {
+  if (expr.length + indent.length <= width) return expr;
+  return expr.replace(/"(<[^"]*>)"/g, (m, mini) => (mini.length > 60 ? strLit(mini, indent) : m));
+}
+
+/** Mini-notation string literal; long alternations become multi-line template strings. */
 function strLit(mini, indent = '') {
-  if (mini.length <= 96 || !mini.startsWith('<') || !mini.endsWith('>')) return `"${mini}"`;
-  // one alternation step per line
+  if (mini.length <= 90 || !mini.startsWith('<') || !mini.endsWith('>')) return `"${mini}"`;
   const inner = mini.slice(1, -1);
   const parts = [];
   let depth = 0, cur = '';
@@ -349,43 +229,17 @@ function strLit(mini, indent = '') {
   const lines = [];
   let line = '';
   for (const p of parts) {
-    if (line && (line + ' ' + p).length > 72) { lines.push(line); line = p; } else line = line ? `${line} ${p}` : p;
+    if (line && (line + ' ' + p).length > 84 - indent.length) { lines.push(line); line = p; } else line = line ? `${line} ${p}` : p;
   }
   if (line) lines.push(line);
   return '`<\n' + lines.map((l) => `${indent}  ${l}`).join('\n') + `\n${indent}>\``;
 }
 
-/** The note-producing expression for a pattern (no track-level controls). */
-export function patternExpr(pattern, { kind, bpb, spell, indent = '' }) {
-  const fn = kind === 'drums' ? 's' : 'note';
-  if (!pattern || !pattern.notes?.length) {
-    const len = pattern?.length || bpb;
-    const sl = len / bpb;
-    return `${fn}("~")${Math.abs(sl - 1) > EPS ? `.slow(${fmt(sl)})` : ''}`;
-  }
-  const { voices, slow } = notesToVoices(pattern.notes, pattern.length || bpb, { kind, beatsPerBar: bpb, spell });
-  const slowStr = Math.abs(slow - 1) < EPS ? '' : (Number.isInteger(round(1 / slow, 6)) ? `.fast(${fmt(1 / slow)})` : `.slow(${fmt(slow)})`);
-  const vels = voices.map((v) => v.vel);
-  const uniform = vels.every((v) => typeof v !== 'string') && new Set(vels.map((v) => v ?? DEFAULT_VEL)).size === 1;
-  if (uniform) {
-    const v = vels[0] ?? DEFAULT_VEL;
-    const minis = voices.map((x) => x.mini);
-    const joined = minis.join(', ');
-    let body;
-    if (joined.length > 96 && minis.length > 1) body = '`' + minis.map((m, i) => (i ? `${indent}  ${m}` : m)).join(',\n') + '`';
-    else body = strLit(joined, indent);
-    return `${fn}(${body})${slowStr}${Math.abs(v - DEFAULT_VEL) > 0.005 ? `.velocity(${velStr(v)})` : ''}`;
-  }
-  if (voices.length === 1) {
-    const v = voices[0];
-    return `${fn}(${strLit(v.mini, indent)})${slowStr}.velocity(${typeof v.vel === 'string' ? strLit(v.vel, indent) : velStr(v.vel ?? DEFAULT_VEL)})`;
-  }
-  const rows = voices.map((v) => {
-    let e = `${fn}(${strLit(v.mini, indent + '  ')})`;
-    if (v.vel !== null) e += `.velocity(${typeof v.vel === 'string' ? strLit(v.vel, indent + '  ') : velStr(v.vel)})`;
-    return `${indent}  ${e},`;
-  });
-  return `stack(\n${rows.join('\n')}\n${indent})${slowStr}`;
+/** The note-producing expression for a pattern (no track-level controls), written by the idiom engine. */
+export function patternExpr(pattern, { kind, bpb, spell, key = null, indent = '' }) {
+  const len = pattern?.length || bpb;
+  const r = renderPart(pattern?.notes || [], len, { kind, bpb, spell, key, spellKey: spell?.key });
+  return formatExpr(r.expr, indent);
 }
 
 // ---------------------------------------------------------------------------- track controls
@@ -396,22 +250,25 @@ function fxParam(fx, key, def) {
 }
 
 /** Track instrument -> Strudel sound / bank call. */
-export function soundCall(track) {
+export function soundCall(track, { export: exp = false } = {}) {
   const inst = track.instrument || {};
-  if (inst.type === 'drums') return inst.preset ? `.bank("${inst.preset}")` : '';
-  const s = inst.preset || ({ synth: 'sawtooth', fm: 'fm', organ: 'organ', sampler: 'piano' }[inst.type]) || 'sawtooth';
+  if (inst.type === 'drums') return inst.preset ? `.bank("${kitBank(inst.preset)}")` : '';
+  const s = exp ? strudelSound(track) : inst.preset || ({ synth: 'sawtooth', fm: 'fm', organ: 'organ', sampler: 'piano' }[inst.type]) || 'sawtooth';
   return `.s("${s}")`;
 }
 
 /** Mixer + main insert effects -> Strudel controls. */
-export function trackControls(track, project) {
+export function trackControls(track, project, { ride = null, automated = null } = {}) {
   let out = '';
   const vol = typeof track.volume === 'number' ? track.volume : DEFAULT_VOL;
-  if (Math.abs(vol - DEFAULT_VOL) > 1e-3) out += `.gain(${fmt(vol / DEFAULT_VOL)})`;
+  if (ride?.mini) out += `.gain("${ride.mini}")`;
+  else if (ride && ride.static !== undefined) { if (Math.abs(ride.static - 1) > 1e-3) out += `.gain(${fmt(ride.static)})`; }
+  else if (Math.abs(vol - DEFAULT_VOL) > 1e-3) out += `.gain(${fmt(vol / DEFAULT_VOL)})`;
   if (track.pan) out += `.pan(${fmt((track.pan + 1) / 2)})`;
   const bpm = project?.bpm || 120;
   const done = new Set();
   for (const fx of track.fx || []) {
+    if (automated?.has(fx.id)) { done.add(fx.type); continue; } // automated: written per section
     if (fx.enabled === false || done.has(fx.type)) continue;
     const mixv = fxParam(fx, 'mix', 1);
     switch (fx.type) {
@@ -447,6 +304,13 @@ export function trackControls(track, project) {
         break;
       default:
     }
+  }
+  // sends to the reverb / delay buses -> .room() / .delay() (when there is no insert of that kind)
+  for (const [busId, amt] of Object.entries(track.sends || {})) {
+    const bus = (project?.buses || []).find((b) => b.id === busId);
+    if (!bus || !(amt > 0.005) || bus.mute) continue;
+    const has = (type) => (bus.fx || []).some((f) => f.type === type && f.enabled !== false);
+    if (has('reverb') && !done.has('reverb')) { out += `.room(${fmt(amt, 2)})`; done.add('reverb'); } else if (has('delay') && !done.has('delay')) { out += `.delay(${fmt(amt, 2)})`; done.add('delay'); }
   }
   return out;
 }
@@ -541,46 +405,364 @@ function trackSections(project, track, bpb, totalBeats) {
   return secs;
 }
 
+/** True when the project has an arrangement: pattern clips on instrument tracks. */
+export function hasArrangement(project) {
+  const inst = new Set((project.tracks || []).filter((t) => t.type === 'instrument').map((t) => t.id));
+  return (project.clips || []).some((c) => c.type !== 'audio' && inst.has(c.trackId) && project.patterns?.[c.patternId]);
+}
+
+/** Song sections from the markers: [{name, label, start, end}] (beats), covering [0, total). */
+function songSections(project, total, used) {
+  const ms = (project.markers || []).filter((m) => m.beat >= -EPS && m.beat < total - EPS).slice().sort((a, b) => a.beat - b.beat);
+  const out = [];
+  for (const m of ms) {
+    if (out.length && Math.abs(out[out.length - 1].start - m.beat) < EPS) { out[out.length - 1].name = m.name || out[out.length - 1].name; continue; }
+    out.push({ name: String(m.name || `Section ${out.length + 1}`), start: Math.max(0, m.beat) });
+  }
+  if (!out.length || out[0].start > EPS) out.unshift({ name: out.length ? 'Start' : 'Song', start: 0 });
+  out.forEach((s, i) => { s.end = out[i + 1] ? out[i + 1].start : total; });
+  const local = new Set(used);
+  for (const s of out) s.label = labelFor(s.name, local);
+  return out;
+}
+
+const sig2 = (x) => {
+  if (!(x > 0)) return round(x, 2);
+  const p = 10 ** (Math.floor(Math.log10(x)) - 1);
+  return Math.round(x / p) * p;
+};
+const numStr = (x) => String(round(x, 3)).replace(/^0\./, '.').replace(/^-0\./, '-.');
+
+/** Filter insert (lowpass/highpass/bandpass) -> Strudel method name, or null. */
+function filterMethod(fx) {
+  if (!fx || fx.type !== 'filter' || fx.enabled === false || fxParam(fx, 'mix', 1) < 0.5) return null;
+  const t = fxParam(fx, 'type', 'lowpass');
+  return t === 'highpass' ? 'hpf' : t === 'bandpass' ? 'bpf' : t === 'lowpass' ? 'lpf' : null;
+}
+const NEUTRAL = { lpf: (v) => v >= 19000, hpf: (v) => v <= 25, bpf: () => false };
+
+/** Automated filter lanes of a track: [{fxId, method, points}] */
+function filterLanes(track) {
+  const out = [];
+  for (const l of track.automation || []) {
+    if (l.enabled === false || !l.points?.length) continue;
+    const t = parseTarget(l.target);
+    if (!t || t.kind !== 'fx' || t.key !== 'cutoff') continue;
+    const fx = (track.fx || []).find((f) => f.id === t.fxId);
+    const method = filterMethod(fx);
+    if (method) out.push({ fxId: fx.id, method, points: l.points });
+  }
+  return out;
+}
+
+/**
+ * A lane over [a, b) beats as a section-relative Strudel value: a number, a signal ramp
+ * (`saw.rangex(400, 8000).slow(16)`), a per-bar pattern ("<400 800 1600>"), or null (neutral / unchanged).
+ */
+function laneExpr(points, a, b, bpb, { neutral = () => false, exp = true } = {}) {
+  const nb = Math.max(1, Math.round((b - a) / bpb));
+  const at = (beat) => valueAt(points, beat, null);
+  const samples = Array.from({ length: nb }, (_, i) => at(a + i * bpb + 0.01));
+  const last = at(b - 0.02);
+  const all = [...samples, last];
+  const lo = Math.min(...all), hi = Math.max(...all);
+  if (hi <= 0 || lo / hi > 0.95) {
+    const v = sig2(samples[0]);
+    return neutral(v) ? null : numStr(v);
+  }
+  // one ramp across the section: exponential (filters) or linear
+  const v0 = samples[0], v1 = last;
+  if (nb >= 2 && Math.abs(v1 - v0) > 1e-9) {
+    const ok = samples.every((v, i) => {
+      const t = i / nb;
+      const want = exp && v0 > 0 && v1 > 0 ? v0 * (v1 / v0) ** t : v0 + (v1 - v0) * t;
+      return Math.abs(Math.log(Math.max(1e-6, v) / Math.max(1e-6, want))) < 0.4;
+    });
+    if (ok) return `saw.${exp ? 'rangex' : 'range'}(${numStr(sig2(v0))}, ${numStr(sig2(v1))}).slow(${nb})`;
+  }
+  return `"${barsText(samples.map((v) => ({ text: numStr(sig2(v)), w: 1 })))}"`;
+}
+
+/** Automation of a track inside [a, b) as const suffix (filter sweeps / held cutoffs). */
+function sectionAutomation(track, a, b, bpb) {
+  let out = '';
+  for (const fl of filterLanes(track)) {
+    const e = laneExpr(fl.points, a, b, bpb, { neutral: NEUTRAL[fl.method] });
+    if (e) out += `.${fl.method}(${e})`;
+  }
+  return out;
+}
+
+/** Volume lane -> per-bar gain pattern for the whole song ("<.9@32 1.1@16 …>"), or null. */
+function volumeRide(track, totalBeats, bpb, active) {
+  const lane = (track.automation || []).find((l) => l.target === 'volume' && l.enabled !== false && l.points?.length);
+  if (!lane) return null;
+  const nb = Math.max(1, Math.round(totalBeats / bpb));
+  const vals = [];
+  for (let i = 0; i < nb; i++) vals.push(Math.round((valueAt(lane.points, i * bpb + 0.01, track.volume ?? DEFAULT_VOL) / DEFAULT_VOL) * 50) / 50);
+  // bars where the track is silent take their neighbour's value (fewer, longer steps)
+  for (let i = 0; i < nb; i++) if (!active(i)) vals[i] = null;
+  let prev = vals.find((v) => v !== null) ?? 1;
+  for (let i = 0; i < nb; i++) { if (vals[i] === null) vals[i] = prev; else prev = vals[i]; }
+  const segs = [];
+  for (const v of vals) {
+    const lastSeg = segs[segs.length - 1];
+    if (lastSeg && Math.abs(lastSeg.v - v) < 0.021) lastSeg.w++;
+    else segs.push({ v, w: 1 });
+  }
+  if (segs.length === 1) return { static: segs[0].v };
+  return { mini: alternation(segs.map((s) => ({ text: numStr(s.v), w: s.w }))) };
+}
+
+/** Master volume lane -> `all(x => x.postgain(…))` (fades), or ''. */
+function masterRide(project, totalBeats, bpb) {
+  const lane = (project.master?.automation || []).find((l) => l.target === 'volume' && l.enabled !== false && l.points?.length >= 2);
+  if (!lane) return '';
+  const base = project.master.volume || 1;
+  const nb = Math.max(1, Math.round(totalBeats / bpb));
+  const f = (beat) => clamp(valueAt(lane.points, beat, base) / base, 0, 2);
+  // the common case: a fade out at the end
+  const pts = lane.points;
+  const fadeStart = pts[pts.length - 2].beat, fadeEnd = pts[pts.length - 1].beat;
+  if (pts[pts.length - 1].value <= 1e-3 && Math.abs(f(fadeStart) - 1) < 0.02 && pts.slice(0, -1).every((p) => Math.abs(p.value / base - 1) < 0.02)) {
+    const k = Math.max(1, Math.round((fadeEnd - fadeStart) / bpb));
+    const a = Math.max(0, Math.round(fadeStart / bpb));
+    const rest = nb - a - k;
+    const parts = [];
+    if (a > 0) parts.push(`[${a}, "1"]`);
+    parts.push(`[${k}, isaw.slow(${k})]`);
+    if (rest > 0) parts.push(`[${rest}, "0"]`);
+    return `all(x => x.postgain(arrange(${parts.join(', ')})))  // master fade-out`;
+  }
+  const segs = Array.from({ length: nb }, (_, i) => ({ text: numStr(Math.round(f(i * bpb + 0.01) * 50) / 50), w: 1 }));
+  const runs = [];
+  for (const s of segs) { const l = runs[runs.length - 1]; if (l && l.text === s.text) l.w++; else runs.push({ ...s }); }
+  return runs.length > 1 ? `all(x => x.postgain("${alternation(runs)}"))  // master volume automation` : '';
+}
+
+/** Quantized-note signature used to spot repeated / transposed patterns. */
+function partSig(target, shift = 0) {
+  return target.map((n) => `${n.pitch - shift}@${n.start}@${round(n.dur, 3)}@${n.vel}`).join(';');
+}
+
+const KIT_BANK = {
+  '808': 'RolandTR808', '909': 'RolandTR909', trap: 'RolandTR808', reggaeton: 'RolandTR808', phonk: 'RolandTR808',
+  house: 'RolandTR909', techno: 'RolandTR909', hardstyle: 'RolandTR909', industrial: 'RolandTR909', garage: 'RolandTR909',
+  lofi: 'AkaiMPC60', breaks: 'AkaiMPC60', dnb: 'AkaiMPC60', chip: 'CasioRZ1', acoustic: 'RolandR8', rock: 'RolandR8',
+  jazz: 'RolandR8', latin: 'RolandR8', afro: 'RolandR8', cinematic: 'RolandR8',
+};
+/** Drum kit -> Strudel sample bank (tidal-drum-machines names, so the code plays on strudel.cc). */
+export const kitBank = (kit) => KIT_BANK[String(kit || '').toLowerCase()] || kit;
+
+/** DAW preset -> a Strudel sound that exists on strudel.cc (export flavour). */
+export function strudelSound(track) {
+  const inst = track.instrument || {};
+  const id = String(inst.preset || inst.params?.instrument || '').toLowerCase();
+  const has = (...ws) => ws.some((w) => id.includes(w));
+  if (inst.type === 'soundfont' && inst.params?.instrument) return `gm_${String(inst.params.instrument).replace(/^gm_/, '')}`;
+  if (has('supersaw')) return 'supersaw';
+  if (has('rhodes', 'epiano', 'electric-piano', 'wurli')) return 'gm_epiano1';
+  if (has('piano', 'keys')) return 'piano';
+  if (has('organ')) return 'gm_drawbar_organ';
+  if (has('string')) return 'gm_string_ensemble_1';
+  if (has('flute')) return 'gm_flute';
+  if (has('bell', 'mallet', 'marimba', 'vibes')) return 'gm_vibraphone';
+  if (has('guitar', 'pluck')) return has('pluck') ? 'gm_pizzicato_strings' : 'gm_electric_guitar_clean';
+  if (has('brass', 'horn')) return 'gm_brass_section';
+  if (has('choir', 'vox', 'voice')) return 'gm_choir_aahs';
+  if (has('sub', 'sine', '808')) return 'sine';
+  if (has('square', 'chip', 'pulse')) return 'square';
+  if (has('tri', 'pad', 'warm')) return has('pad') ? 'sawtooth' : 'triangle';
+  return 'sawtooth';
+}
+
+/** Comma-separated arrange() entries wrapped over lines of at most `width` characters. */
+function arrangeCall(entries, prefix, width = 100) {
+  const one = `${prefix}arrange(${entries.join(', ')})`;
+  if (one.length <= width) return one;
+  const lines = [];
+  let line = '';
+  for (const e of entries) {
+    const piece = `${e},`;
+    if (line && (`  ${line} ${piece}`).length > width) { lines.push(line); line = piece; } else line = line ? `${line} ${piece}` : piece;
+  }
+  if (line) lines.push(line);
+  return `${prefix}arrange(\n${lines.map((l) => `  ${l}`).join('\n')}\n)`;
+}
+
+/** Appends track-level controls, moving them to an indented continuation line when the line gets long. */
+function withTail(body, tail, width = 100) {
+  if (!tail) return body;
+  const lastLine = body.slice(body.lastIndexOf('\n') + 1);
+  if (lastLine.length + tail.length <= width) return body + tail;
+  // split the tail at top-level method calls over continuation lines
+  const calls = [];
+  let depth = 0, cur = '';
+  for (const c of tail) {
+    if (c === '.' && depth === 0 && cur) { calls.push(cur); cur = ''; }
+    if ('([{'.includes(c)) depth++;
+    else if (')]}'.includes(c)) depth--;
+    cur += c;
+  }
+  if (cur) calls.push(cur);
+  const lines = [];
+  let line = '';
+  for (const c of calls) {
+    if (line && (`  ${line}${c}`).length > width) { lines.push(line); line = c; } else line += c;
+  }
+  if (line) lines.push(line);
+  return `${body}\n${lines.map((l) => `  ${l}`).join('\n')}`;
+}
+
+const fmtTime = (sec) => `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
+const scaleTitle = (s) => String(s || 'major').replace(/-/g, ' ');
+
 /**
  * Renders the project as Strudel code.
- * @returns {{code: string, mode: string, blocks: object[], labels: object}}
- *   blocks: [{ kind: 'header'|'instrument'|'code'|'audio', trackId, label, name, color, start, end,
- *              title, muted, consts: {constName: patternId}, mutedLabels, addedLabel }]
+ * opts.export: strudel.cc flavour (Strudel sound names, no DAW editing hints).
+ * @returns {{code: string, mode: string, blocks: object[], labels: object, sections: object[], stats: object}}
+ *   mode: 'song' when the project has an arrangement (clips) — the whole song is written —, else 'pattern'.
+ *   blocks: [{ kind: 'header'|'section'|'instrument'|'code'|'audio', trackId, label, name, color, start, end,
+ *              title, muted, consts: {constName: {patterns: [{id, transpose}], suffix}}, entries, mutedLabels, addedLabel }]
  */
-export function songToCode(project) {
+export function songToCode(project, opts = {}) {
+  const exp = !!opts.export;
   const bpb = beatsPerBar(project);
-  const mode = project.mode === 'song' ? 'song' : 'pattern';
+  const arranged = hasArrangement(project);
+  const mode = arranged ? 'song' : 'pattern';
   const spell = noteSpeller(project);
+  const key = project.key ? { root: project.key.root ?? 0, scale: project.key.scale || 'major' } : null;
   const used = new Set();
   const blocks = [];
-  let code = '';
-  const push = (text) => { code += text; };
-
   const tracks = project.tracks || [];
   const playable = tracks.filter((t) => t.type === 'instrument' || t.type === 'code');
-  push(`// ${project.name || 'Untitled project'} — the whole project as Strudel code (${mode} mode).\n`);
+  const totalBeats = songLengthBeats(project);
+  const stats = { parts: 0, verified: 0, humanized: 0, forms: {} };
+
+  // ---- per-track parts
+  const instTracks = tracks.filter((t) => t.type === 'instrument');
+  const labelOf = new Map();
+  for (const t of tracks) if (t.type !== 'audio') labelOf.set(t.id, labelFor(t.name, used));
+  const sections = arranged ? songSections(project, totalBeats, used) : [];
+  const sectionAt = (beat) => sections.filter((s) => s.start <= beat + EPS).pop() || sections[0];
+  const constNames = new Set([...used, ...sections.map((s) => s.label)]);
+  const render = (pat, kind) => {
+    const r = renderPart(pat?.notes || [], pat?.length || bpb, { kind, bpb, spell, key, spellKey: spell.key });
+    stats.parts++;
+    if (r.verified) stats.verified++;
+    stats.forms[r.form] = (stats.forms[r.form] || 0) + 1;
+    if ((pat?.notes || []).some((n) => Math.abs(n.start - snapBeat(n.start)) > 0.002)) stats.humanized++;
+    return r;
+  };
+
+  const trackInfo = new Map(); // trackId -> { label, kind, consts, entries, body }
+  const sectionConsts = new Map(sections.map((s) => [s, []])); // section -> [{name, text}]
+  for (const track of instTracks) {
+    const isDrums = track.instrument?.type === 'drums';
+    const kind = isDrums ? 'drums' : 'melodic';
+    const label = labelOf.get(track.id);
+    const info = { label, kind, consts: {}, entries: [] };
+    trackInfo.set(track.id, info);
+    if (!arranged) continue;
+    const segs = trackSections(project, track, bpb, totalBeats);
+    const known = []; // [{name, sig, len, suffix, kind}]
+    const byPattern = new Map(); // patternId|suffix -> {name, transpose}
+    for (const s of segs) {
+      if (s.len <= EPS) continue;
+      const cyc = fmt(s.len / bpb, 4);
+      if (!s.patternId) { info.entries.push({ cycles: s.len / bpb, ref: 'silence', text: `[${cyc}, silence]` }); continue; }
+      const pat = project.patterns[s.patternId];
+      const suffix = sectionAutomation(track, s.start, s.start + s.len, bpb);
+      const pk = `${s.patternId}|${suffix}`;
+      let ref = byPattern.get(pk);
+      if (!ref) {
+        const r = render(pat, kind);
+        const L = pat.length || bpb;
+        const sig = partSig(r.target);
+        let found = known.find((k) => k.sig === sig && Math.abs(k.len - L) < EPS && k.suffix === suffix);
+        let transpose = 0;
+        if (!found && kind === 'melodic' && r.target.length) {
+          for (const k of known) {
+            if (Math.abs(k.len - L) > EPS || k.suffix !== suffix || !k.target.length || k.target.length !== r.target.length) continue;
+            const d = r.target[0].pitch - k.target[0].pitch;
+            if (d && Math.abs(d) <= 12 && partSig(r.target, d) === k.sig) { found = k; transpose = d; break; }
+          }
+        }
+        if (found) {
+          ref = { name: found.name, transpose };
+          info.consts[found.name].patterns.push({ id: s.patternId, transpose });
+        } else {
+          const sec = sectionAt(s.start);
+          const startsSection = Math.abs(sec.start - s.start) < EPS;
+          const name = labelFor(`${sec.label}_${label}${startsSection ? '' : '_in'}`, constNames);
+          used.add(name);
+          const core = r.expr;
+          known.push({ name, sig, len: L, suffix, target: r.target });
+          info.consts[name] = { patterns: [{ id: s.patternId, transpose: 0 }], suffix, core, form: r.form };
+          sectionConsts.get(sec).push({ name, core, suffix, trackId: track.id });
+          ref = { name, transpose: 0 };
+        }
+        byPattern.set(pk, ref);
+      }
+      let refText = ref.name + (ref.transpose ? `.transpose(${ref.transpose})` : '');
+      if (s.offset) refText += `.early(${fmt(s.offset / bpb, 4)})`;
+      info.entries.push({ cycles: s.len / bpb, ref: ref.name, transpose: ref.transpose, offset: s.offset || 0, text: `[${cyc}, ${refText}]` });
+    }
+  }
+
+  // ---- header
+  let code = '';
+  const push = (text) => { code += text; };
+  const keyName = key ? `${rootName(key.root)} ${scaleTitle(key.scale)}` : '';
+  const bars = Math.round(totalBeats / bpb);
+  const facts = [keyName, `${fmt(project.bpm)} BPM`, project.genre, arranged ? `${bars} bars (${fmtTime((totalBeats * 60) / (project.bpm || 120))})` : 'loop'].filter(Boolean);
+  push(`// ${project.name || 'Untitled project'} — ${facts.join(' · ')}\n`);
+  const grooveId = project.genre ? safeGroove(project.genre) : null;
+  if (stats.humanized) push(`// groove: ${grooveId || 'humanized'} — timing & velocity humanization is quantized here (1/16 grid, accents ±0.1);\n//   the project keeps its exact feel.\n`);
   if (!playable.length) {
     push('// This project has no tracks yet. Add some in the Rack or Piano Roll and they appear here,\n');
     push('// or write a labelled pattern below and press Ctrl+Enter to create tracks from it, e.g.\n');
-    push('//   drums: s("bd*4, ~ cp, hh*8").bank("808")\n');
-    push('//   bass: note("<c2 c2 eb2 g1>*2").s("saw-bass")\n');
-  } else {
-    push(mode === 'song'
-      ? '// Edit a pattern (const) or a track\'s gain/pan, then press Ctrl+Enter to apply it to the project.\n'
+    push('//   drums: s("bd*4, ~ cp, hh*8").bank("RolandTR808")\n');
+    push('//   bass: n("<0 0 3 -2>*2").scale("C2:minor").s("saw-bass")\n');
+  } else if (!exp) {
+    push(arranged
+      ? '// Edit a section pattern (const) or an arrange([bars, pattern], …) line, then Ctrl+Enter applies it.\n'
       : '// Edit any block and press Ctrl+Enter to apply it to the project (one undo step).\n');
-  }
+  } else push('// Exported from daW³ — paste into strudel.cc. 1 cycle = 1 bar.\n');
   push(`setcpm(${fmt(project.bpm)}/${fmt(bpb)})\n`);
   if (project.swing > 0) push(`all(x => x.swingBy(${fmt(project.swing / 2)}, ${fmt(bpb * 2)}))\n`);
+  const mr = arranged ? masterRide(project, totalBeats, bpb) : '';
+  if (mr) push(mr + '\n');
   blocks.push({ kind: 'header', start: 0, end: code.length });
 
-  const totalBeats = songLengthBeats(project);
+  // ---- sections: one const per (track, section) part, aligned
+  if (arranged) {
+    const firstUse = new Map();
+    for (const sec of sections) {
+      const list = sectionConsts.get(sec);
+      const nb = fmt((sec.end - sec.start) / bpb);
+      const start = code.length;
+      const prevUse = list.length ? '' : ' · repeats earlier parts';
+      push(`\n// —— ${sec.name} · ${nb} bar${nb === '1' ? '' : 's'}${prevUse} ——\n`);
+      const w = Math.max(0, ...list.map((c) => c.name.length));
+      for (const c of list) {
+        const head = `const ${c.name.padEnd(w)} = `;
+        push(`${head}${formatExpr(c.core + c.suffix, '', 100 - head.length)}\n`);
+        firstUse.set(c.name, sec);
+      }
+      blocks.push({ kind: 'section', name: sec.name, beat: sec.start, start, end: code.length });
+    }
+    push(`\n// —— Arrangement · arrange([bars, pattern], …) per track ——\n`);
+  }
+
+  // ---- tracks
   for (const track of tracks) {
-    const label = labelFor(track.name, used);
+    const label = labelOf.get(track.id);
     const muted = !audibleState(project, track);
     const start = code.length;
     const mutedNote = track.mute ? ' · muted' : muted ? ' · silenced by solo' : '';
     if (track.type === 'audio') {
-      push(`\n${header(`${track.name} · audio track (not expressible as code)`)}\n`);
+      push(`${arranged ? '' : '\n'}// ${track.name} · audio track (not expressible as code)\n`);
       blocks.push({ kind: 'audio', trackId: track.id, label: null, name: track.name, color: track.color, start, end: code.length });
       continue;
     }
@@ -592,46 +774,44 @@ export function songToCode(project) {
       continue;
     }
     if (track.type !== 'instrument') continue;
-    const isDrums = track.instrument?.type === 'drums';
-    const kind = isDrums ? 'drums' : 'melodic';
+    const info = trackInfo.get(track.id);
+    const isDrums = info.kind === 'drums';
     const desc = isDrums ? `drums${track.instrument?.preset ? ` (${track.instrument.preset} kit)` : ''}` : (track.instrument?.preset || track.instrument?.type || 'synth');
     const title = `${track.name} · ${desc}${mutedNote}`;
-    const tail = soundCall(track) + trackControls(track, project);
-    const consts = {};
-    let body = '';
-    if (mode === 'pattern') {
-      const pat = project.patterns?.[track.activePatternId];
-      body = `${muted ? '_' : ''}${label}: ${patternExpr(pat, { kind, bpb, spell })}${tail}`;
-    } else {
-      const secs = trackSections(project, track, bpb, totalBeats);
-      const constNames = new Map();
-      const usedConst = new Set([...used]);
-      for (const s of secs) {
-        if (!s.patternId || constNames.has(s.patternId)) continue;
-        const pat = project.patterns[s.patternId];
-        const base = `${label}_${labelFor(String(pat.name || 'pattern').replace(new RegExp(`^${track.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*[-–:]?\\s*`, 'i'), ''), new Set())}`;
-        const cname = labelFor(base, usedConst);
-        used.add(cname);
-        constNames.set(s.patternId, cname);
-        consts[cname] = s.patternId;
-        body += `const ${cname} = ${patternExpr(pat, { kind, bpb, spell })}\n`;
-      }
-      const args = secs.filter((s) => s.len > EPS).map((s) => {
-        const cyc = fmt(s.len / bpb, 4);
-        if (!s.patternId) return `[${cyc}, silence]`;
-        const off = s.offset ? `.early(${fmt(s.offset / bpb, 4)})` : '';
-        return `[${cyc}, ${constNames.get(s.patternId)}${off}]`;
-      });
-      const one = `arrange(${args.join(', ')})`;
-      const arr = !args.length ? 'silence' : one.length <= 90 ? one : `arrange(\n${args.map((a) => `  ${a},`).join('\n')}\n)`;
-      body += `${muted ? '_' : ''}${label}: ${arr}${tail}`;
+    let tail = soundCall(track, { export: exp });
+    // volume rides (song mode) replace the static gain
+    let ride = null;
+    if (arranged) {
+      const activeBars = new Set();
+      let pos = 0;
+      for (const e of info.entries) { if (e.ref !== 'silence') for (let b = Math.round(pos); b < Math.round(pos + e.cycles); b++) activeBars.add(b); pos += e.cycles; }
+      ride = volumeRide(track, totalBeats, bpb, (b) => activeBars.has(b));
     }
-    push(`\n${header(title)}\n${body}\n`);
-    blocks.push({ kind: 'instrument', trackId: track.id, label, name: track.name, color: track.color, title, start, end: code.length, muted, consts, drums: isDrums });
+    const automated = new Set(arranged ? filterLanes(track).map((f) => f.fxId) : []);
+    tail += trackControls(track, project, { ride, automated });
+    let body;
+    if (arranged) {
+      const entries = info.entries.map((e) => e.text);
+      body = !entries.length ? `${muted ? '_' : ''}${label}: silence` : arrangeCall(entries, `${muted ? '_' : ''}${label}: `);
+      push(`// ${title}\n`);
+    } else {
+      const pat = project.patterns?.[track.activePatternId];
+      const r = pat ? render(pat, info.kind) : null;
+      const expr = r ? r.expr : `${isDrums ? 's' : 'note'}("~")`;
+      body = `${muted ? '_' : ''}${label}: ${formatExpr(expr, '', 100 - label.length - 2)}`;
+      push(`\n// —— ${title} ——\n`);
+    }
+    body = withTail(body, tail);
+    push(`${body}\n`);
+    blocks.push({ kind: 'instrument', trackId: track.id, label, name: track.name, color: track.color, title, start, end: code.length, muted, consts: info.consts, entries: info.entries, drums: isDrums });
   }
   const labels = {};
   for (const b of blocks) if (b.label && b.kind === 'instrument') labels[b.label] = b.trackId;
-  return { code, mode, blocks, labels };
+  return { code, mode, blocks, labels, sections: sections.map((s) => ({ name: s.name, label: s.label, start: s.start, end: s.end })), stats };
+}
+
+function safeGroove(genre) {
+  try { return grooveFor(genre)?.id || null; } catch { return null; }
 }
 
 // ---------------------------------------------------------------------------- code -> project

@@ -2,7 +2,8 @@
 // playback (MixGraph + collectEvents) inside an OfflineAudioContext.
 import * as samplesIO from '../io/samples.js';
 import { beatsPerBar } from '../core/model.js';
-import { MixGraph } from './mixer.js';
+import { MixGraph, codeSoundOf } from './mixer.js';
+import { claimSuperdough } from './strudel-instrument.js';
 import { CodeCache, collectEvents, defaultEndBeat, isTrackAudible } from './scheduler.js';
 import { hasAutomation, hasControlAutomation } from '../core/automation.js';
 import { keySourcesFor } from '../core/patch.js';
@@ -86,6 +87,9 @@ export async function renderOffline(source, opts = {}) {
     tail: opts.tail ?? 2,
     cache: opts.sampleCache || new Map(),
     onError: opts.onError || ((e) => console.warn('[render]', e)),
+    // code tracks: 'strudel' / 'daw3' forces one sound engine for this render (default: each track's own)
+    codeSound: opts.codeSound || null,
+    onNotice: opts.onNotice || null,
   };
   await decodeAllSamples(project, cfg.cache, cfg.sampleRate);
 
@@ -113,6 +117,26 @@ export async function renderOffline(source, opts = {}) {
 }
 
 async function renderOnce(project, cfg) {
+  try {
+    return await renderOnceWith(project, cfg);
+  } catch (e) {
+    // superdough couldn't render offline: render the code tracks with daW³ instruments instead
+    if (!e?.strudelOffline || cfg.codeSound === 'daw3') throw e;
+    cfg.codeSound = 'daw3';
+    const msg = `Strudel sounds could not be rendered offline (${e.cause?.message || e.cause || 'unknown error'}) — code tracks were exported with daW³ instruments.`;
+    if (cfg.onNotice) cfg.onNotice(msg); else cfg.onError(new Error(msg));
+    return renderOnceWith(project, cfg);
+  }
+}
+
+/** Waits until every Strudel-engine code instrument of the graph has set up the sounds triggered so far. */
+function flushCode(graph) {
+  const insts = graph.strudelInstruments?.() || [];
+  return insts.length ? Promise.all(insts.map((i) => i.flush())) : Promise.resolve();
+}
+const flushAll = (graph) => Promise.all([flushPlugins(graph), flushCode(graph)]);
+
+async function renderOnceWith(project, cfg) {
   const { mode, startBeat, endBeat, sampleRate, tail, cache, onError } = cfg;
   const spb = 60 / project.bpm;
   const dur = (endBeat - startBeat) * spb;
@@ -130,12 +154,29 @@ async function renderOnce(project, cfg) {
     },
     onError,
     meters: false,
+    codeSound: cfg.codeSound,
   });
   graph.sync(project);
+  // code tracks with the Strudel sound engine: superdough renders into this context (see strudel-instrument.js)
+  const strudelInsts = graph.strudelInstruments();
+  let release = () => {};
+  if (strudelInsts.length) {
+    release = claimSuperdough(ctx);
+    try {
+      await Promise.all(strudelInsts.map((i) => i.whenReady()));
+    } catch (e) {
+      release();
+      throw Object.assign(new Error('Strudel offline render failed'), { strudelOffline: true, cause: e });
+    }
+    const broken = strudelInsts.find((i) => !i.ready && !i.fallback);
+    if (broken) { release(); throw Object.assign(new Error('Strudel offline render failed'), { strudelOffline: true, cause: broken.failed }); }
+  }
   // plugin instruments / effects (soundfont, faust, wam) load asynchronously: wait before scheduling
   await awaitPluginsReady(graph, project, onError);
   // code tracks playing library samples (Strudel drum machines, Dirt-Samples…): fetch + decode first
-  await prepareCodeSamples(ctx, project, codeCache, startBeat, endBeat, onError);
+  // (daW³-instrument code tracks only; superdough loads its own samples while the render waits in flushCode)
+  const daw3Code = { ...project, tracks: project.tracks.filter((t) => t.type !== 'code' || codeSoundOf(t, cfg.codeSound) === 'daw3') };
+  await prepareCodeSamples(ctx, daw3Code, codeCache, startBeat, endBeat, onError);
   graph.syncLfos(0);
 
   const schedule = (b0, b1, jump) => {
@@ -178,7 +219,7 @@ async function renderOnce(project, cfg) {
       ctx.suspend(t).then(() => {
         runStep(k, false);
         plan(k + 1);
-        flushPlugins(graph).then(() => ctx.resume()); // worklet plugins must receive their notes first
+        flushAll(graph).then(() => ctx.resume()); // worklet plugins / superdough must receive their notes first
       }, (e) => { onError(e); });
     };
     plan(1);
@@ -192,7 +233,7 @@ async function renderOnce(project, cfg) {
       ctx.suspend(k * chunkSec).then(() => {
         schedule(from, Math.min(endBeat, from + chunkBeats), false);
         plan(k + 1);
-        flushPlugins(graph).then(() => ctx.resume()); // worklet plugins must receive their notes first
+        flushAll(graph).then(() => ctx.resume()); // worklet plugins / superdough must receive their notes first
       }, (e) => { onError(e); });
     };
     plan(1);
@@ -200,8 +241,13 @@ async function renderOnce(project, cfg) {
     schedule(startBeat, endBeat, true);
   }
 
-  await flushPlugins(graph);
-  const buffer = await ctx.startRendering();
+  await flushAll(graph);
+  let buffer;
+  try {
+    buffer = await ctx.startRendering();
+  } finally {
+    release();
+  }
   try { graph.dispose(); } catch { /* */ }
   return buffer;
 }

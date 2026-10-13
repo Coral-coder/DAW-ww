@@ -15,6 +15,7 @@
 import { createEffect } from './effects.js';
 import { createInstrument } from './instruments.js';
 import * as codeInstrumentModule from './code-instrument.js';
+import { StrudelInstrument } from './strudel-instrument.js';
 import { scheduleClick } from './metronome.js';
 import { isTrackAudible } from './scheduler.js';
 import {
@@ -528,12 +529,18 @@ export class MixGraph {
         }
       }
     } else if (track.type === 'code') {
+      // sound engine: 'strudel' (default — superdough, Strudel's own) or 'daw3' (CodeInstrument)
+      const kind = codeSoundOf(track, this.o.codeSound);
+      if (e.code && e.codeKind !== kind) this._disposeSources(e);
+      const Ctor = codeInstrumentModule.CodeInstrument || codeInstrumentModule.default;
+      const daw3 = () => new Ctor(this.ctx, e.strip.input, {
+        getSampleBuffer: this.o.getSampleBuffer, getSampleByName: this.o.getSampleByName, getBpm: this.o.getBpm,
+      });
       if (!e.code) {
-        const Ctor = codeInstrumentModule.CodeInstrument || codeInstrumentModule.default;
+        e.codeKind = kind;
         try {
-          e.code = new Ctor(this.ctx, e.strip.input, {
-            getSampleBuffer: this.o.getSampleBuffer, getSampleByName: this.o.getSampleByName, getBpm: this.o.getBpm,
-          });
+          // (if the Strudel engine can't load, the StrudelInstrument plays through a CodeInstrument)
+          e.code = kind === 'strudel' ? new StrudelInstrument(this.ctx, e.strip.input, { onError: this.onError, fallback: daw3 }) : daw3();
         } catch (err) {
           this.onError(err);
         }
@@ -631,6 +638,11 @@ export class MixGraph {
     }
   }
 
+  /** The Strudel-engine code instruments of this graph (see strudel-instrument.js). */
+  strudelInstruments() {
+    return [...this.tracks.values()].map((e) => e.code).filter((c) => c instanceof StrudelInstrument);
+  }
+
   /** Instrument for live play (null for audio/code tracks). */
   getInstrument(trackId) { return this.tracks.get(trackId)?.instrument || null; }
 
@@ -643,7 +655,7 @@ export class MixGraph {
       const durSec = Math.max(0.005, ev.dur * spb);
       e.instrument?.trigger(time, ev.pitch, ev.vel, durSec, ev.x ? noteExtra(ev, durSec) : undefined);
     } else if (ev.type === 'code') {
-      e.code?.trigger(time, ev.value, Math.max(0.005, ev.dur * spb));
+      e.code?.trigger(time, ev.value, Math.max(0.005, ev.dur * spb), ev);
     } else if (ev.type === 'audio') {
       this._playAudioClip(e, ev, time, spb);
     }
@@ -727,4 +739,13 @@ export class MixGraph {
     this.sources.clear();
     try { this.out.disconnect(); this.clickOut.disconnect(); } catch { /* */ }
   }
+}
+
+/**
+ * Sound engine of a code track: track.codeSound 'strudel' (default) | 'daw3'. `force` (MixGraph option
+ * codeSound) overrides it, e.g. 'daw3' for exports when superdough can't render offline.
+ */
+export function codeSoundOf(track, force) {
+  if (force === 'daw3' || force === 'strudel') return force;
+  return track?.codeSound === 'daw3' ? 'daw3' : 'strudel';
 }

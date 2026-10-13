@@ -120,9 +120,41 @@ function setup() {
     registerSoundfonts: () => undefined,
     initAudio: () => undefined,
     initAudioOnFirstClick: () => undefined,
+    // strudel.cc page helpers: never touch daW³'s own page
+    backgroundImage: () => undefined,
+    cleanupUi: () => undefined,
+    getDrawContext: () => offscreenContext(),
+    // packages daW³ doesn't ship (their functions work as no-ops)
+    loadCsound: absorber(), loadCSound: absorber(), loadcsound: absorber(), loadOrc: absorber(),
+    midin: () => () => core.ref(() => 0),
+    sysex: () => undefined,
   });
   rebuildScope();
 }
+
+let offscreen = null;
+function offscreenContext() {
+  if (offscreen) return offscreen;
+  if (typeof document !== 'undefined') offscreen = document.createElement('canvas').getContext('2d');
+  else offscreen = absorber();
+  return offscreen;
+}
+
+/** A value that accepts anything: any property, call or `new` gives itself back (hydra, csound, Tone.js mocks). */
+export function absorber() {
+  const target = function absorbed() {};
+  const p = new Proxy(target, {
+    get: (t, k) => (k === 'then' ? undefined : k === Symbol.toPrimitive ? () => 0 : k === 'toString' ? () => '' : p),
+    apply: () => p,
+    construct: () => p,
+  });
+  return p;
+}
+// hydra (strudel.cc's @strudel/hydra): initHydra() makes hydra's sources/outputs global
+const HYDRA_NAMES = ['initHydra', 'H', 'osc', 'shape', 'noise', 'voronoi', 'src', 'solid', 'gradient', 'render',
+  'o0', 'o1', 'o2', 'o3', 's0', 's1', 's2', 's3'];
+// very old tunes use note names as variables (`seq(c3, eb3)`)
+const PSEUDO_NOTE = /(?<![\w$.'"`])([a-gA-G](?:#|b|s|f)?-?[0-9])(?![\w$'"`])/g;
 
 function rebuildScope() {
   scopeNames = Object.keys(scope).filter((k) => VALID_NAME.test(k) && !RESERVED.has(k));
@@ -228,6 +260,26 @@ function plainStrings(src, ast) {
   return chars.join('');
 }
 
+/** Is `name` used as a plain variable (not a property / key / declaration) somewhere in the program? */
+function isFreeIdentifier(ast, name) {
+  let found = false;
+  const visit = (node, parent, key) => {
+    if (found || !node || typeof node.type !== 'string') return;
+    if (node.type === 'Identifier' && node.name === name) {
+      const prop = parent && ((parent.type === 'MemberExpression' && key === 'property' && !parent.computed) || (parent.type === 'Property' && key === 'key' && !parent.computed));
+      if (!prop) found = true;
+      return;
+    }
+    for (const k of Object.keys(node)) {
+      const v = node[k];
+      if (Array.isArray(v)) v.forEach((x) => visit(x, node, k));
+      else if (v && typeof v === 'object' && typeof v.type === 'string') visit(v, node, k);
+    }
+  };
+  ast.body.forEach((n) => visit(n, null, null));
+  return found;
+}
+
 const errMsg = (e) => (e && e.message ? e.message : String(e));
 
 /**
@@ -276,10 +328,23 @@ export function evaluateStrudel(source) {
   const unknown = findUnknownNames(src, scope, core.Pattern.prototype);
   const extraNames = [];
   const extraValues = [];
+  if (/\binitHydra\b|\bH\s*\(/.test(src)) {
+    for (const name of HYDRA_NAMES) { extraNames.push(name); extraValues.push(absorber()); }
+    result.warnings.push('hydra visuals are not available in daW³ — ignored');
+  }
   for (const name of unknown.functions) {
+    if (extraNames.includes(name)) continue;
     extraNames.push(name);
-    extraValues.push((...args) => args.find((a) => a instanceof core.Pattern) ?? core.silence);
+    // (a plain function, so `new ToneSynth()` works too)
+    extraValues.push(function unknownFunction(...args) { return args.find((a) => a instanceof core.Pattern) ?? core.silence; });
     result.warnings.push(`${name}() is not available in daW³ — ignored`);
+  }
+  const declared = new Set(ast.body.flatMap((n) => (n.type === 'VariableDeclaration' ? n.declarations.map((d) => d.id?.name) : [n.id?.name])));
+  for (const m of src.matchAll(PSEUDO_NOTE)) {
+    const name = m[1];
+    if (scope[name] !== undefined || declared.has(name) || extraNames.includes(name) || !isFreeIdentifier(ast, name)) continue;
+    extraNames.push(name);
+    extraValues.push(name);
   }
   const addedMethods = [];
   for (const name of unknown.methods) {

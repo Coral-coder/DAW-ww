@@ -53,9 +53,10 @@ export class CodeCache {
   get(track) {
     const code = track.code || '';
     let e = this.entries.get(track.id);
-    if (e && e.code === code) return e;
+    const ver = strudel.codeEngineVersion?.() ?? 0;
+    if (e && e.code === code && e.ver === ver) return e; // re-evaluate when the real Strudel engine arrives
     const prev = e;
-    e = { code, evaluated: prev?.evaluated || null, error: null };
+    e = { code, ver, evaluated: prev?.evaluated || null, error: null };
     let res;
     try {
       res = strudel.evaluate(code);
@@ -172,6 +173,7 @@ function collectCode(out, project, track, b0, b1, bpb, opts) {
   if (!entry?.evaluated) return;
   const c0 = b0 / bpb;
   const c1 = b1 / bpb;
+  const cps = project.bpm / 60 / bpb;
   const evs = strudel.queryEvents(entry.evaluated, c0, c1) || [];
   for (const ev of evs) {
     const begin = Number(ev.begin);
@@ -180,7 +182,8 @@ function collectCode(out, project, track, b0, b1, bpb, opts) {
     const value = ev.value ?? {};
     const legato = Number(value.legato) > 0 ? Number(value.legato) : 1;
     const durCycles = isFinite(end) && end > begin ? end - begin : 0.25;
-    out.push({ type: 'code', trackId: track.id, beat: begin * bpb, dur: durCycles * bpb * legato, value });
+    // cycle / cps / hapDur (cycles, Strudel's hap.duration) feed the Strudel sound engine (superdough)
+    out.push({ type: 'code', trackId: track.id, beat: begin * bpb, dur: durCycles * bpb * legato, value, cycle: begin, cps, hapDur: ev.duration ?? durCycles * legato });
   }
 }
 

@@ -9,6 +9,8 @@ import { getGenre } from './genres.js';
 export const ROLE_TRIM_DB = { drums: -2.5, bass: -4.5, chords: -7, pad: -10, lead: -8, arp: -12, fx: -12 };
 /** Global fader offset: leaves the master limiter ~1 dB of work at most (measured, see report). */
 export const MIX_HEADROOM_DB = -2;
+/** Genres whose arrangements leave more peak headroom (sparser / less transient-stacked) sit closer to unity (dB). */
+const HEADROOM_BY_FAMILY = { techno: 1.5, house: 0.5, trance: 0.5, dnb: 0.5, garage: 0.5, breaks: 0.5, soul: -0.5, chill: -0.5, rock: -0.5, latin: -0.5, jazz: -0.5 };
 /** Sub-heavy basses read low on a K-weighted meter but carry most of the energy: anchor them a little lower. */
 const SUB_BASSES = new Set(['808-bass', 'sub-bass', 'reese-bass', 'wobble-bass', 'dub-bass']);
 
@@ -132,7 +134,7 @@ export function mixTrack(track, ctx) {
     + (role === 'bass' && sidechain ? 2 : 0) // the ducker takes ~2 dB out on average
     + (role === 'bass' && sf ? -3 : 0) // sampled basses sustain (walking / finger lines) and read hot in the mix
     + (role === 'drums' && ['cinematic', 'ambient'].includes(g.family) ? -4 : 0); // orchestral percussion supports, it doesn't lead
-  track.volume = Math.round(clamp(0.8 * dbToGain(trim + MIX_HEADROOM_DB), 0.02, 1.5) * 1000) / 1000;
+  track.volume = Math.round(clamp(0.8 * dbToGain(trim + (HEADROOM_BY_FAMILY[g.family] ?? MIX_HEADROOM_DB)), 0.02, 1.5) * 1000) / 1000;
   const fx = [];
   const sends = {};
   const [rev, dly] = ctx.buses || [];

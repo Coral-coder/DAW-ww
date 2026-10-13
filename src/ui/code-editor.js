@@ -7,6 +7,8 @@
 //        setMarks([{start, end, cls?}]), getBlockAt(pos), getCursor(),
 //        setHighlights([{start, end, color, alpha}]),   live token boxes (Strudel-style; cheap, per frame)
 //        setBlockBars([{line0, line1, color, alpha}]),   gutter colour bars per labelled block (0-based lines)
+//        setWidgets([{from, to, value, min, max, step, onInput(v), onChange(v)}]),  slider() widgets: a range
+//          input at the end of the slider's line (Strudel REPL style); from/to = the value literal's range
 //        lineOfOffset(offset), visibleLines() -> [first, last] }
 // The root element has class `code-editor` (keyboard.js ignores global shortcuts inside it).
 import { h } from './dom.js';
@@ -143,9 +145,10 @@ export function createCodeEditor(opts = {}) {
   const hlLayer = h('div.ce-hl', { 'aria-hidden': 'true' });
   const barLayer = h('div.ce-bars', { 'aria-hidden': 'true' });
   const flash = h('div.ce-flash');
+  const widgetLayer = h('div.ce-widgets');
   const ta = h('textarea.ce-input', { spellcheck: false, autocapitalize: 'off', autocomplete: 'off', wrap: 'off', placeholder, 'aria-label': 'Code editor' });
   ta.setAttribute('autocorrect', 'off');
-  const stage = h('div.ce-stage', band, flash, hl, marks, hlLayer, ta);
+  const stage = h('div.ce-stage', band, flash, hl, marks, hlLayer, ta, widgetLayer);
   gutter.appendChild(barLayer);
   const el = h('div.code-editor', gutter, stage);
 
@@ -167,6 +170,7 @@ export function createCodeEditor(opts = {}) {
   function renderHighlight() {
     computeLines();
     hl.innerHTML = highlightCode(ta.value) + '\n ';
+    placeWidgets();
     renderMarks();
     renderGutter();
     syncScroll();
@@ -186,7 +190,7 @@ export function createCodeEditor(opts = {}) {
   }
   function syncScroll() {
     const x = ta.scrollLeft, y = ta.scrollTop;
-    hl.style.transform = marks.style.transform = hlLayer.style.transform = `translate(${-x}px, ${-y}px)`;
+    hl.style.transform = marks.style.transform = hlLayer.style.transform = widgetLayer.style.transform = `translate(${-x}px, ${-y}px)`;
     gutterInner.style.transform = barLayer.style.transform = `translateY(${-y}px)`;
     if (errorLine) band.style.transform = `translateY(${PAD_T + (errorLine - 1) * LINE_H - y}px)`;
   }
@@ -408,6 +412,45 @@ export function createCodeEditor(opts = {}) {
     barUsed = n;
   }
 
+  // ---- slider widgets ----
+  let widgets = [];
+  let widgetKey = '';
+  function placeWidgets() {
+    if (!widgets.length) return;
+    if (!metrics) metrics = measure();
+    if (!metrics) return;
+    const { cw, padL, padT } = metrics;
+    for (const w of widgets) {
+      const l = lineOfOffset(w.from);
+      const end = l + 1 < lineStarts.length ? lineStarts[l + 1] - 1 : ta.value.length;
+      w.el.style.left = `${(padL + (colOf(l, end) + 2) * cw).toFixed(1)}px`;
+      w.el.style.top = `${padT + l * LINE_H + 2}px`;
+    }
+  }
+  function setWidgets(list) {
+    list = list || [];
+    const key = list.map((w) => `${w.from}|${w.to}|${w.min}|${w.max}|${w.step}`).join(';');
+    if (key === widgetKey) {
+      // same widgets: only follow value changes made in the text
+      list.forEach((w, i) => { const cur = widgets[i]; if (cur && document.activeElement !== cur.input && String(cur.input.value) !== String(w.value)) cur.input.value = w.value; });
+      return;
+    }
+    widgetKey = key;
+    widgetLayer.replaceChildren();
+    widgets = list.map((w) => {
+      const min = Number(w.min ?? 0), max = Number(w.max ?? 1);
+      const step = w.step != null ? Number(w.step) : (max - min) / 1000;
+      const input = h('input.ce-slider', { type: 'range', min, max, step, value: Number(w.value), title: `slider(${w.value}, ${min}, ${max}) — drag to change it live` });
+      input.addEventListener('input', () => w.onInput?.(Number(input.value)));
+      input.addEventListener('change', () => w.onChange?.(Number(input.value)));
+      input.addEventListener('pointerdown', (e) => e.stopPropagation());
+      const el = h('div.ce-widget', input);
+      widgetLayer.appendChild(el);
+      return { ...w, el, input };
+    });
+    placeWidgets();
+  }
+
   function setValue(text) {
     if (ta.value === text) return;
     const s = ta.selectionStart, y = ta.scrollTop;
@@ -456,6 +499,7 @@ export function createCodeEditor(opts = {}) {
     refresh: renderHighlight,
     setHighlights,
     setBlockBars,
+    setWidgets,
     lineOfOffset,
     visibleLines,
     get scrollTop() { return ta.scrollTop; },

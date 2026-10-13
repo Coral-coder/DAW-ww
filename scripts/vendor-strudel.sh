@@ -59,7 +59,7 @@ import * as esbuild from 'esbuild';
 const out = process.argv[2];
 const common = { bundle: true, format: 'esm', minify: true, target: 'es2020', platform: 'neutral',
   mainFields: ['module', 'main'], conditions: ['import', 'module', 'default'], legalComments: 'none',
-  define: { 'import.meta.env': '{}' }, logLevel: 'warning' };
+  define: { 'import.meta.env': '{}', 'process.env.NODE_ENV': '"production"' }, logLevel: 'warning' };
 // one build, two entry points: code shared by both (the pattern engine) lands in a common chunk, so
 // strudel-audio.mjs and strudel-core.mjs share a single Pattern class / sound registry
 // daW³ renders code tracks offline (WAV export) with superdough in an OfflineAudioContext while the

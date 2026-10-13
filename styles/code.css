@@ -221,6 +221,13 @@
 .ce-gutter .ce-bars { position: absolute; top: 0; left: 0; width: 6px; height: 0; pointer-events: none; will-change: transform; }
 .ce-bar { position: absolute; left: 0; border-radius: 0 3px 3px 0; background: var(--bar); box-shadow: 0 0 8px color-mix(in srgb, var(--bar) 60%, transparent); transition: opacity .08s linear, width .08s; }
 
+/* ---------- slider() widgets (Strudel REPL style), at the end of their line ---------- */
+.ce-widgets { position: absolute; top: 0; left: 0; width: 0; height: 0; will-change: transform; z-index: 3; }
+.ce-widget { position: absolute; height: 16px; display: flex; align-items: center; pointer-events: auto; }
+.ce-slider { width: 120px; height: 14px; margin: 0; accent-color: var(--accent-2); cursor: ew-resize; opacity: .9; }
+.ce-slider:hover { opacity: 1; }
+.code-sound { max-width: 150px; }
+
 /* ---------- song (live) entry ---------- */
 .code-list-pinned { padding: 4px 4px 2px; border-bottom: 1px solid var(--line); }
 .code-song { padding: 7px 6px; }

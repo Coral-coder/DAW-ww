@@ -10,7 +10,7 @@
 //   - setPosition(beat) works while playing (re-anchors, cuts sounding notes) and also sets
 //     the return point.
 import { Emitter } from '../core/util.js';
-import { MixGraph } from './mixer.js';
+import { MixGraph, codeSoundOf } from './mixer.js';
 import { Scheduler, CodeCache } from './scheduler.js';
 import { renderOffline as renderOfflineImpl, decodeSampleData, findSampleIdByName } from './render.js';
 import { prefetchCodeSamples } from './code-instrument.js';
@@ -40,7 +40,8 @@ export class AudioEngine extends Emitter {
       this._codeStatus.set(trackId, res);
       if (res.ok) this.emit('code-ok', { trackId, cps: res.cps });
       // start loading the library samples this code plays (Strudel drum machines, Dirt-Samples…)
-      if (res.ok) prefetchCodeSamples(this.ctx, this.codeCache.entries.get(trackId)?.evaluated).catch(() => {});
+      // (daW³-instrument code tracks; the Strudel sound engine loads its own samples)
+      if (res.ok && this._daw3Code(trackId)) prefetchCodeSamples(this.ctx, this.codeCache.entries.get(trackId)?.evaluated).catch(() => {});
       else this.emit('code-error', { trackId, error: res.error });
     });
     this._unsubs = [
@@ -51,6 +52,8 @@ export class AudioEngine extends Emitter {
   }
 
   get project() { return this.store.get(); }
+  /** Does this code track play through daW³ instruments (not the Strudel sound engine)? */
+  _daw3Code(trackId) { return codeSoundOf(this.project.tracks.find((t) => t.id === trackId)) === 'daw3'; }
   get isPlaying() { return this._playing; }
   get currentTime() { return this.ctx ? this.ctx.currentTime : 0; }
 
@@ -84,7 +87,7 @@ export class AudioEngine extends Emitter {
         onTick: (project) => this._automateTick(project),
       });
       try { this.graph.sync(this.project); } catch (e) { this._error(e); }
-      for (const e of this.codeCache.entries.values()) prefetchCodeSamples(ctx, e.evaluated).catch(() => {});
+      for (const [id, e] of this.codeCache.entries) if (this._daw3Code(id)) prefetchCodeSamples(ctx, e.evaluated).catch(() => {});
       if (ctx.state === 'suspended') ctx.resume().catch(() => {});
       this._sampleKeys = '';
       this._syncSamples(this.project);
