@@ -40,6 +40,7 @@ Project {
 }
 Track { id, name, type:'instrument'|'audio'|'code', color, volume, pan, mute, solo, arm,
         fx: Effect[], sends:{busId: 0..1}, instrument: Instrument|null, code?: string,
+        codeSound?: 'strudel'|'daw3' (code tracks: sound engine, default 'strudel'),
         activePatternId, role?, automation: AutomationLane[], patch?: Patch }
 Patch   { enabled, nodes: PatchNode[], cables: Cable[] }            (plugboard — see below)
 PatchNode { id, kind:'fx', fxId, x, y } | { id, kind:'split'|'mix', x, y }
@@ -264,9 +265,36 @@ limits: no m2 below C4, no M2 below G3, no 3rds below F3, no m9 between voices),
 * `assistant.js`: `getRecommendations(project, context) -> [{id, level:'tip'|'warn'|'idea', title, text, action?: {label, kind, payload}}]`
   (context = { selectedTrackId, selectedPatternId, view }). Actions are applied by the UI via `applyAssistantAction`.
 
-## Code engine (`src/code/*.js`) — pure, Strudel-compatible subset
+## Code engine (`src/code/*.js`) — the real Strudel, behind a small facade
 
-* `evaluate(source) -> { patterns: Pattern[], entries: [{name, pattern, muted, block}], labels: [{name, muted, start, end}], cps, error }`
+Code is evaluated by the **real Strudel engine** (strudel.cc, AGPL-3.0-or-later), vendored as prebuilt ESM in
+`vendor/strudel/` (`strudel-core.mjs`: @strudel/core + mini + tonal + transpiler + draw, Node-importable;
+`strudel-audio.mjs`: superdough + @strudel/webaudio + soundfonts, browser only; a shared chunk; exact versions and
+every bundled license in `vendor/strudel/VERSION` + `licenses/`). `scripts/vendor-strudel.sh` rebuilds it with
+esbuild (build time only; it applies three small, checked superdough patches — see the script).
+
+* `src/code/strudel.js` is the facade everything imports (`evaluate`, `queryEvents`, `dslNames`, `splitTopLevel`, …).
+  In a browser the first `evaluate()` lazy-loads the vendored engine (`loadStrudel()`); until it is ready — or if it
+  can't load — the built-in reimplementation (`evaluateBuiltin`, `pattern.js`, `mini.js`) stands in (results carry
+  `engine: 'strudel'|'builtin'`, `pending: true` while loading). `codeEngineVersion()` changes when the engine
+  changes — caches of evaluate() results include it (scheduler `CodeCache`, Code view). In Node nothing loads unless
+  `await loadStrudel()` is called; `useBuiltinEngine(true)` forces the fallback.
+* `src/code/strudel-real.js` evaluates like Strudel's REPL: Strudel's transpiler (labels → `.p()`, located
+  mini-notation for double-quoted/backtick strings, `slider()` → `sliderWithID()`), every exported function in
+  scope (as `Function` parameters — no globals are written), `all/each/hush/setcps/setcpm/samples/aliasBank`.
+  Deliberate differences, so a track evaluates synchronously: top-level `await` is dropped (sample maps load in the
+  background), labelled patterns stay separate `entries` (per-block highlighting / song view) with `all()` applied to
+  each, names from Strudel packages we don't ship (midi, osc, hydra, csound, Tone.js-era helpers) degrade to
+  pass-throughs with a warning, strudel.cc page helpers (`backgroundImage`, visualisations drawing on a full-page
+  canvas: `pianoroll`, `scope`, …) are no-ops — the Code view draws its own. `slider()` widgets: `res.widgets`
+  ([{id, from, to, value, min, max, step}]); `setSliderValue(id, v)` changes the sound live (the pattern reads it at
+  query time); the editor shows a range input at the end of the line and writes the value into the code on release.
+* Compatibility corpus: `tests/fixtures/strudel-tunes/` (the REPL's example tunes, every `@example` of the function
+  reference, every MiniRepl tune of the workshop/learn pages — AGPL like Strudel; rebuilt by
+  `scripts/collect-strudel-tunes.mjs`); `node tests/strudel-compat.mjs` prints the pass rate,
+  `tests/strudel-compat.test.js` requires 100%.
+
+* `evaluate(source) -> { patterns: Pattern[], entries: [{name, pattern, muted, block}], labels: [{name, muted, start, end}], cps, error, warnings, widgets?, engine }`
   — supports `$:` / `name:` labelled patterns (`_name:` muted; a label's block ends at the next label or the
   next top-level statement such as `const x = …`), `setcps/setcpm`, `stack/cat/seq/arrange/...`, method chains.
   `samples(url | map, base)` calls the injectable loader (`setSampleLoader(fn)`; in a browser it defaults to
@@ -277,7 +305,8 @@ limits: no m2 below C4, no M2 below G3, no 3rds below F3, no m9 between voices),
   crush, shape, attack, decay, sustain, release, legato, bank, speed, orbit, ...` — `note` is normalized to MIDI.
   `locations: [{start, end}]` are absolute source offsets of the mini-notation tokens that produced the event
   (mini.js tags every atom; Pattern ops merge `hap.context.locations` like Strudel; the transform passes each
-  string literal's offset) — used for Strudel-style live highlighting.
+  string literal's offset) — used for Strudel-style live highlighting. Real-Strudel events also carry `duration`
+  (cycles, Strudel's `hap.duration`: `clip`/`legato` applied).
 * `convert.js`: `codeToPatterns(source, {cycles, beatsPerCycle}) -> [{name, kind:'drums'|'melodic', notes, sound}]`
   and `patternsToCode(project) -> string` (compact export of the active patterns).
 * `song-code.js` ("Song as code", shown pinned as "Song (live)" in the Code view, regenerated ~250 ms after any
@@ -339,3 +368,30 @@ values:{address: value}}`, wam `{name, url, state}`.
   `isSoundfontReady(def)`. `src/audio/plugin-fx.js` builds plugin effects (pass-through until loaded).
 * UI: `src/ui/plugins-dialog.js` (Catalog / GitHub link / Faust editor), `src/ui/plugin-device.js`
   (device-panel status + retry, Faust knobs, WAM GUI), `styles/plugins.css`.
+
+## Code tracks: sound engines (`src/audio/strudel-instrument.js`, `code-instrument.js`)
+
+`track.codeSound` picks how a code track sounds (Code view toolbar ▸ "Sound"); either way the sound enters the
+track's channel strip, so mixer, inserts, sends, automation and the plugboard apply.
+* `'strudel'` (default) — `StrudelInstrument`: superdough, Strudel's own engine, exactly as strudel.cc (synths, ZZFX,
+  General MIDI soundfonts, samples, effects, orbits). strudel.cc's prebake runs once (`loadStrudelAudio()`: synths,
+  ZZFX, soundfonts, dough-samples maps: tidal-drum-machines, piano, Dirt-Samples, EmuSP12, VCSL, mridangam, the
+  drum-machine aliases); `samples('github:…')` in code registers more. Each instrument owns a superdough audio
+  controller whose output feeds the strip (so orbits — superdough's delay/reverb buses — are per track) and selects
+  its context + controller right before each `superdough()` call. AudioWorklets are added per context (never waited
+  on for more than 6 s). Scheduler code events carry `cycle`, `cps`, `hapDur` for it. If the vendored engine can't
+  load, it plays through a `CodeInstrument`.
+* `'daw3'` — `CodeInstrument`: daW³'s own synths, drum kits, presets and the sample library.
+* Offline (WAV export, stems): superdough renders into the `OfflineAudioContext` (`render.js`): the render claims
+  superdough (`claimSuperdough`, realtime Strudel sounds pause), waits for the instruments (`whenReady`) and, while the
+  context is suspended between chunks, for every triggered sound to set up its nodes incl. sample loading
+  (`flushCode`). If superdough can't render, the render is redone with `codeSound: 'daw3'` and `onNotice` reports it
+  (the export shows a one-time toast).
+
+## Licensing
+
+daW³ is AGPL-3.0-or-later (`LICENSE`), because it ships Strudel (AGPL-3.0-or-later; © Strudel contributors,
+https://codeberg.org/uzu/strudel). Third-party licenses of the vendored bundles: `vendor/strudel/licenses/` and
+`vendor/strudel/VERSION`. AGPL §13: the app offers its source to every user — main menu ▸ "About / credits & source
+code" and the Help dialog link to `SOURCE_URL` (`src/ui/actions.js`); keep that link pointing at the deployed code.
+

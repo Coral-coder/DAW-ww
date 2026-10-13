@@ -16,10 +16,10 @@
 //   _lead: …                                      muted (or silenced by another track's solo)
 //   // ── code track "Groove" ──                   code tracks verbatim (setcpm/all lines disabled)
 import { DRUM_PADS, beatsPerBar, songLengthBeats, createTrack, createPattern, createNote, createClip, createEffect } from '../core/model.js';
-import { evaluate, queryEvents, splitTopLevel, stripComments, lastExpressionStart } from './strudel.js';
+import { evaluate, queryEvents, splitTopLevel, stripComments, lastExpressionStart, codeEngineVersion } from './strudel.js';
 import { drumPitch } from './convert.js';
 import {
-  renderPart, verifyExpr, snapBeat as snapBeatQ, qVel as qVelQ, alternation, barsText, rootName, compactSteps, weightedSeq, mergeRests, chooseRes, barGroups,
+  renderPart, verifyExpr, detectSwing, swingCall, snapBeat as snapBeatQ, qVel as qVelQ, alternation, barsText, rootName, compactSteps, weightedSeq, mergeRests, chooseRes, barGroups,
 } from './idioms.js';
 import { valueAt, parseTarget } from '../core/automation.js';
 import { grooveFor } from '../gen/groove.js';
@@ -226,6 +226,37 @@ export function formatExpr(expr, indent = '', width = 100) {
   return expr.replace(/"(<[^"]*>)"/g, (m, mini) => (mini.length > 60 ? strLit(mini, indent) : m));
 }
 
+/** Top-level method-call pieces of an expression: 'n("…").scale("…").lpf(…)' -> ['n("…")', '.scale("…")', '.lpf(…)'] */
+function chainPieces(expr) {
+  const out = [];
+  let depth = 0, cur = '';
+  for (let i = 0; i < expr.length; i++) {
+    const c = expr[i];
+    if (c === '"' || c === '`' || c === "'") { const j = expr.indexOf(c, i + 1); if (j < 0) return [expr]; cur += expr.slice(i, j + 1); i = j; continue; }
+    if ('([{'.includes(c)) depth++;
+    else if (')]}'.includes(c)) depth--;
+    if (c === '.' && depth === 0 && cur && /[)\]`"]$/.test(cur)) { out.push(cur); cur = ''; }
+    cur += c;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/** Wraps a method chain over continuation lines (indented by 2) when a line would exceed `width`. */
+export function wrapChain(expr, startCol = 0, width = 100) {
+  const pieces = chainPieces(expr);
+  if (pieces.length < 2) return expr;
+  let out = '';
+  let col = startCol;
+  for (const p of pieces) {
+    const firstLine = p.split('\n')[0];
+    if (out && col + firstLine.length > width) { out += '\n  '; col = 2; }
+    out += p;
+    col = p.includes('\n') ? p.length - p.lastIndexOf('\n') - 1 : col + p.length;
+  }
+  return out;
+}
+
 /** Index of the parenthesis closing the one at `open` (strings skipped), or -1. */
 function matchParen(s, open) {
   let depth = 0;
@@ -314,6 +345,8 @@ export function trackControls(track, project, { ride = null, automated = null } 
         const t = fxParam(fx, 'type', 'lowpass');
         const fn = t === 'highpass' ? 'hpf' : t === 'bandpass' ? 'bpf' : t === 'lowpass' ? 'lpf' : null;
         if (!fn || mixv < 0.5) break;
+        // a wide-open lowpass / closed highpass does nothing (e.g. the filter an automation sweep opens)
+        if ((fn === 'lpf' && fxParam(fx, 'cutoff', 2000) >= 19000) || (fn === 'hpf' && fxParam(fx, 'cutoff', 2000) <= 25)) break;
         out += `.${fn}(${Math.round(fxParam(fx, 'cutoff', 2000))})`;
         const q = fxParam(fx, 'resonance', 1);
         if (Math.abs(q - 1) > 0.05 && fn !== 'bpf') out += `.${fn === 'lpf' ? 'lpq' : 'hpq'}(${num(q, 2)})`;
@@ -610,6 +643,17 @@ function masterRide(project, totalBeats, bpb) {
   return runs.length > 1 ? `all(x => x.postgain("${alternation(runs)}"))  // master volume automation` : '';
 }
 
+const reuseMemo = new Map();
+/** Does an earlier section's expression play this part faithfully? (memoised per engine) */
+function reuseOk(core, target, L, bpb, kind) {
+  const k = `${codeEngineVersion()}|${core}|${L}|${partSig(target)}|${target.map((n) => n.vel0).join(',')}`;
+  if (!reuseMemo.has(k)) {
+    if (reuseMemo.size > 4000) reuseMemo.clear();
+    reuseMemo.set(k, verifyExpr(core, target, { cycles: L / bpb, bpb, kind }));
+  }
+  return reuseMemo.get(k);
+}
+
 /** Onsets + pitches only (velocities / lengths aside). */
 const partShape = (target) => target.map((n) => `${n.pitch}@${n.start}`).join(';');
 
@@ -663,28 +707,11 @@ function arrangeCall(entries, prefix, width = 100) {
   return `${prefix}arrange(\n${lines.map((l) => `  ${l}`).join('\n')}\n)`;
 }
 
-/** Appends track-level controls, moving them to an indented continuation line when the line gets long. */
+/** Appends track-level controls to the last line, continuing on indented lines when it gets long. */
 function withTail(body, tail, width = 100) {
   if (!tail) return body;
   const lastLine = body.slice(body.lastIndexOf('\n') + 1);
-  if (lastLine.length + tail.length <= width) return body + tail;
-  // split the tail at top-level method calls over continuation lines
-  const calls = [];
-  let depth = 0, cur = '';
-  for (const c of tail) {
-    if (c === '.' && depth === 0 && cur) { calls.push(cur); cur = ''; }
-    if ('([{'.includes(c)) depth++;
-    else if (')]}'.includes(c)) depth--;
-    cur += c;
-  }
-  if (cur) calls.push(cur);
-  const lines = [];
-  let line = '';
-  for (const c of calls) {
-    if (line && (`  ${line}${c}`).length > width) { lines.push(line); line = c; } else line += c;
-  }
-  if (line) lines.push(line);
-  return `${body}\n${lines.map((l) => `  ${l}`).join('\n')}`;
+  return body + wrapChain(`x${tail}`, lastLine.length - 1, width).slice(1);
 }
 
 const fmtTime = (sec) => `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
@@ -692,7 +719,7 @@ const scaleTitle = (s) => String(s || 'major').replace(/-/g, ' ');
 
 /**
  * Renders the project as Strudel code.
- * opts.export: strudel.cc flavour (Strudel sound names, no DAW editing hints).
+ * opts.export: strudel.cc flavour (Strudel sound names, no DAW editing hints); opts.trackIds: only these tracks.
  * @returns {{code: string, mode: string, blocks: object[], labels: object, sections: object[], stats: object}}
  *   mode: 'song' when the project has an arrangement (clips) — the whole song is written —, else 'pattern'.
  *   blocks: [{ kind: 'header'|'section'|'instrument'|'code'|'audio', trackId, label, name, color, start, end,
@@ -707,7 +734,7 @@ export function songToCode(project, opts = {}) {
   const key = project.key ? { root: project.key.root ?? 0, scale: project.key.scale || 'major' } : null;
   const used = new Set();
   const blocks = [];
-  const tracks = project.tracks || [];
+  const tracks = (project.tracks || []).filter((t) => !opts.trackIds || opts.trackIds.includes(t.id));
   const playable = tracks.filter((t) => t.type === 'instrument' || t.type === 'code');
   const totalBeats = songLengthBeats(project);
   const stats = { parts: 0, verified: 0, humanized: 0, forms: {} };
@@ -719,8 +746,19 @@ export function songToCode(project, opts = {}) {
   const sections = arranged ? songSections(project, totalBeats, used) : [];
   const sectionAt = (beat) => sections.filter((s) => s.start <= beat + EPS).pop() || sections[0];
   const constNames = new Set([...used, ...sections.map((s) => s.label)]);
-  const render = (pat, kind) => {
-    const r = renderPart(pat?.notes || [], pat?.length || bpb, { kind, bpb, spell, key, spellKey: spell.key });
+  // swing / push per track (the generator bakes the genre's groove into the notes)
+  const prior = project.genre ? safeGrooveSwing(project.genre) : null;
+  const grooves = new Map();
+  for (const t of tracks.filter((x) => x.type === 'instrument')) {
+    const pats = arranged ? [...new Set(project.clips.filter((c) => c.trackId === t.id).map((c) => c.patternId))] : [t.activePatternId];
+    const notes = pats.flatMap((id) => project.patterns?.[id]?.notes || []);
+    const humanized = notes.filter((n) => Math.abs(n.start - Math.round(n.start * 24) / 24) > 0.002).length > notes.length * 0.1;
+    if (!humanized) continue;
+    const sw = detectSwing(notes, prior);
+    grooves.set(t.id, sw);
+  }
+  const render = (pat, kind, trackId) => {
+    const r = renderPart(pat?.notes || [], pat?.length || bpb, { kind, bpb, spell, key, spellKey: spell.key, groove: grooves.get(trackId) || null });
     stats.parts++;
     if (r.verified) stats.verified++;
     stats.forms[r.form] = (stats.forms[r.form] || 0) + 1;
@@ -743,13 +781,13 @@ export function songToCode(project, opts = {}) {
     for (const s of segs) {
       if (s.len <= EPS) continue;
       const cyc = fmt(s.len / bpb, 4);
-      if (!s.patternId) { info.entries.push({ cycles: s.len / bpb, ref: 'silence', text: `[${cyc}, silence]` }); continue; }
+      if (!s.patternId) { info.entries.push({ cycles: s.len / bpb, ref: 'silence', transpose: 0, offset: 0, text: `[${cyc}, silence]` }); continue; }
       const pat = project.patterns[s.patternId];
       const suffix = sectionAutomation(track, s.start, s.start + s.len, bpb);
       const pk = `${s.patternId}|${suffix}`;
       let ref = byPattern.get(pk);
       if (!ref) {
-        const r = render(pat, kind);
+        const r = render(pat, kind, track.id);
         const L = pat.length || bpb;
         const sig = partSig(r.target);
         let found = known.find((k) => k.sig === sig && Math.abs(k.len - L) < EPS && k.suffix === suffix);
@@ -757,7 +795,7 @@ export function songToCode(project, opts = {}) {
         if (!found) {
           const shape = partShape(r.target);
           found = known.find((k) => k.shape === shape && Math.abs(k.len - L) < EPS && k.suffix === suffix
-            && verifyExpr(k.core, r.target, { cycles: L / bpb, bpb, kind }));
+            && reuseOk(k.core, r.target, L, bpb, kind));
         }
         let transpose = 0;
         if (!found && kind === 'melodic' && r.target.length) {
@@ -785,7 +823,7 @@ export function songToCode(project, opts = {}) {
       }
       let refText = ref.name + (ref.transpose ? `.transpose(${ref.transpose})` : '');
       if (s.offset) refText += `.early(${fmt(s.offset / bpb, 4)})`;
-      info.entries.push({ cycles: s.len / bpb, ref: ref.name, transpose: ref.transpose, offset: s.offset || 0, text: `[${cyc}, ${refText}]` });
+      info.entries.push({ cycles: s.len / bpb, ref: ref.name, transpose: ref.transpose, offset: (s.offset || 0) / bpb, text: `[${cyc}, ${refText}]` });
     }
   }
 
@@ -826,7 +864,7 @@ export function songToCode(project, opts = {}) {
       const w = Math.max(0, ...list.map((c) => c.name.length));
       for (const c of list) {
         const head = `const ${c.name.padEnd(w)} = `;
-        push(`${head}${formatExpr(c.core + c.suffix, '', 100 - head.length)}\n`);
+        push(`${head}${wrapChain(formatExpr(c.core + c.suffix, '', 100 - head.length), head.length)}\n`);
         firstUse.set(c.name, sec);
       }
       blocks.push({ kind: 'section', name: sec.name, beat: sec.start, start, end: code.length });
@@ -857,7 +895,7 @@ export function songToCode(project, opts = {}) {
     const isDrums = info.kind === 'drums';
     const desc = isDrums ? `drums${track.instrument?.preset ? ` (${track.instrument.preset} kit)` : ''}` : (track.instrument?.preset || track.instrument?.type || 'synth');
     const title = `${track.name} · ${desc}${mutedNote}`;
-    let tail = soundCall(track, { export: exp });
+    let tail = soundCall(track, { export: exp }) + swingCall(grooves.get(track.id), bpb);
     // volume rides (song mode) replace the static gain
     let ride = null;
     if (arranged) {
@@ -875,9 +913,9 @@ export function songToCode(project, opts = {}) {
       push(`// ${title}\n`);
     } else {
       const pat = project.patterns?.[track.activePatternId];
-      const r = pat ? render(pat, info.kind) : null;
+      const r = pat ? render(pat, info.kind, track.id) : null;
       const expr = r ? r.expr : `${isDrums ? 's' : 'note'}("~")`;
-      body = `${muted ? '_' : ''}${label}: ${formatExpr(expr, '', 100 - label.length - 2)}`;
+      body = `${muted ? '_' : ''}${label}: ${wrapChain(formatExpr(expr, '', 100 - label.length - 2), label.length + 2)}`;
       push(`\n// —— ${title} ——\n`);
     }
     body = withTail(body, tail);
@@ -887,6 +925,10 @@ export function songToCode(project, opts = {}) {
   const labels = {};
   for (const b of blocks) if (b.label && b.kind === 'instrument') labels[b.label] = b.trackId;
   return { code, mode, blocks, labels, sections: sections.map((s) => ({ name: s.name, label: s.label, start: s.start, end: s.end })), stats };
+}
+
+function safeGrooveSwing(genre) {
+  try { const g = grooveFor(genre); return g ? { s8: g.swing8 ?? 0.5, s16: g.swing16 ?? 0.5 } : null; } catch { return null; }
 }
 
 function safeGroove(genre) {
@@ -1015,12 +1057,13 @@ const sameNotes = (a, b) => {
 /** Writes Strudel controls back onto a track's mixer / effects. Returns change descriptions. */
 function applyControls(track, r, gen, project) {
   const out = [];
+  // only what changed relative to the generated code is written back (gain rides, sends, automation stay)
+  const g = gen && gen.ctrl ? gen : null;
   const vol = round(clamp(r.gain * DEFAULT_VOL, 0, 1.5), 3);
-  if (Math.abs(vol - (track.volume ?? DEFAULT_VOL)) > 0.002) { track.volume = vol; out.push(`volume ${vol}`); }
+  if ((!g || Math.abs(r.gain - g.gain) > 1e-3) && Math.abs(vol - (track.volume ?? DEFAULT_VOL)) > 0.002) { track.volume = vol; out.push(`volume ${vol}`); }
   const pan = round(clamp(r.pan * 2 - 1, -1, 1), 3);
-  if (Math.abs(pan - (track.pan || 0)) > 0.002) { track.pan = pan; out.push(`pan ${pan}`); }
-  // effects: only those whose code changed relative to what we generated
-  const genCtl = gen || {};
+  if ((!g || Math.abs(r.pan - g.pan) > 1e-3) && Math.abs(pan - (track.pan || 0)) > 0.002) { track.pan = pan; out.push(`pan ${pan}`); }
+  const genCtl = g ? g.ctrl : gen || {};
   const c = r.ctrl;
   const fxOf = (type, pred = () => true) => (track.fx || []).find((f) => f.type === type && pred(f));
   const ensureFx = (type, params) => {
@@ -1042,6 +1085,16 @@ function applyControls(track, r, gen, project) {
   const simple = (key, type, param, map = (x) => x, label = type) => {
     if (c[key] === genCtl[key]) return;
     const f = fxOf(type);
+    // .room() / .delay() of a track without such an insert are its send to the reverb / delay bus
+    if (!f && (type === 'reverb' || type === 'delay')) {
+      const bus = (project?.buses || []).find((b) => (b.fx || []).some((x) => x.type === type && x.enabled !== false));
+      if (bus && (track.sends?.[bus.id] !== undefined || c[key] !== undefined)) {
+        const v = round(clamp(c[key] ?? 0, 0, 1), 3);
+        track.sends = { ...(track.sends || {}), [bus.id]: v };
+        out.push(`${bus.name || type} send ${v}`);
+        return;
+      }
+    }
     if (c[key] === undefined) { if (f && f.enabled !== false) { f.enabled = false; out.push(`${label} off`); } return; }
     if (f) { f.enabled = true; f.params = { ...f.params, [param]: map(c[key]) }; } else ensureFx(type, { [param]: map(c[key]) });
     out.push(`${label} ${round(map(c[key]), 3)}`);
@@ -1110,6 +1163,103 @@ export function codeSections(code) {
   return out;
 }
 
+/** `raw` without a trailing `suffix` (compared ignoring whitespace / comments), or null when it doesn't end with it. */
+function stripTail(raw, suffix) {
+  const want = normCode(suffix);
+  let j = want.length;
+  let i = raw.length;
+  while (j > 0) {
+    i--;
+    if (i < 0) return null;
+    if (/\s/.test(raw[i])) continue;
+    if (raw[i] !== want[j - 1]) return null;
+    j--;
+  }
+  return raw.slice(0, i);
+}
+
+/**
+ * The arrange([bars, pattern], …) of a track's labelled block -> [{cycles, ref, transpose, offset}] (offset in
+ * cycles), or null when the block isn't a plain arrange() of named patterns.
+ */
+export function parseArrange(text) {
+  const src = stripComments(String(text));
+  const m = /^\s*_?[\w$]+\s*:\s*arrange\s*\(/.exec(src);
+  if (!m) return null;
+  const open = m.index + m[0].length - 1;
+  const close = matchParen(src, open);
+  if (close < 0) return null;
+  const out = [];
+  for (const arg of splitArgs(src.slice(open + 1, close))) {
+    const a = arg.trim();
+    if (!a) continue;
+    const e = /^\[\s*([\d.]+(?:\s*\/\s*[\d.]+)?)\s*,\s*([A-Za-z_$][\w$]*)((?:\s*\.\s*(?:transpose|early)\s*\(\s*-?[\d.]+\s*\))*)\s*\]$/.exec(a);
+    if (!e) return null;
+    const cycles = e[1].includes('/') ? Number(e[1].split('/')[0]) / Number(e[1].split('/')[1]) : Number(e[1]);
+    if (!(cycles > 0)) return null;
+    const tr = /\.\s*transpose\s*\(\s*(-?[\d.]+)\s*\)/.exec(e[3]);
+    const ea = /\.\s*early\s*\(\s*(-?[\d.]+)\s*\)/.exec(e[3]);
+    out.push({ cycles, ref: e[2], transpose: tr ? Math.round(Number(tr[1])) : 0, offset: ea ? Number(ea[1]) : 0 });
+  }
+  return out;
+}
+
+const sameEntries = (a, b) => a.length === b.length && a.every((x, i) => Math.abs(x.cycles - b[i].cycles) < 1e-6 && x.ref === b[i].ref
+  && (x.transpose || 0) === (b[i].transpose || 0) && Math.abs((x.offset || 0) - (b[i].offset || 0)) < 1e-4);
+
+/**
+ * Rebuilds a track's clips from an edited arrange(): one clip per [bars, pattern] entry, end to end. Patterns come
+ * from the track's section consts (a transposed reference gets its own transposed copy), or from a const the user
+ * added (a new pattern). Returns a short description or null.
+ */
+function applyArrangement(project, track, entries, ctx) {
+  const { b, src, editedDecls, genDecls, bpb, kind, report } = ctx;
+  const created = new Map(); // const name -> patternId (new consts)
+  const resolve = (e) => {
+    const meta = b.consts?.[e.ref];
+    if (meta) {
+      const hit = meta.patterns.find((x) => x.transpose === e.transpose && project.patterns[x.id]);
+      if (hit) return hit.id;
+      const base = meta.patterns.find((x) => project.patterns[x.id]);
+      if (!base) return null;
+      const bp = project.patterns[base.id];
+      const d = kind === 'drums' ? 0 : e.transpose - base.transpose;
+      const np = createPattern(track.id, { name: `${bp.name} ${d >= 0 ? '+' : ''}${d}`, length: bp.length, color: bp.color, notes: bp.notes.map((n) => createNote(n.pitch + d, n.start, n.dur, n.vel)) });
+      project.patterns[np.id] = np;
+      meta.patterns.push({ id: np.id, transpose: e.transpose });
+      return np.id;
+    }
+    // a const the user wrote (or one of another track): render it into a new pattern of this track
+    if (created.has(e.ref)) return created.get(e.ref);
+    const d = editedDecls.get(e.ref);
+    if (!d) { report.warnings.push(`${track.name}: unknown pattern "${e.ref}" in arrange() — skipped`); return null; }
+    const expr = src.slice(d.exprStart, d.end);
+    const r1 = evaluate(`setcpm(1)\n${expr}`);
+    if (r1.error || !r1.entries.length) { report.warnings.push(`${e.ref}: ${r1.error || 'no pattern'}`); return null; }
+    const out = patternToNotes(r1.entries[0].pattern, { bpb, kind, prefer: [bpb * Math.max(1, Math.round(e.cycles))], text: expr });
+    if (out.complex) { report.warnings.push(`${e.ref}: ${out.complex} — skipped`); return null; }
+    const np = createPattern(track.id, { name: `${track.name} – ${e.ref}`, length: out.length, color: track.color, notes: out.notes.map((n) => createNote(n.pitch, n.start, n.dur, n.vel)) });
+    project.patterns[np.id] = np;
+    created.set(e.ref, np.id);
+    void genDecls;
+    return np.id;
+  };
+  const sections = (project.markers || []).slice().sort((x, y) => x.beat - y.beat);
+  const nameAt = (beat) => sections.filter((m) => m.beat <= beat + EPS).pop()?.name || '';
+  const clips = [];
+  let pos = 0;
+  for (const e of entries) {
+    const len = e.cycles * bpb;
+    if (e.ref !== 'silence') {
+      const pid = resolve(e);
+      if (pid) clips.push(createClip(track.id, { patternId: pid, start: round(pos, 6), length: round(len, 6), offset: round((e.offset || 0) * bpb, 6), name: nameAt(pos) }));
+    }
+    pos += len;
+  }
+  project.clips = project.clips.filter((c) => c.trackId !== track.id || c.type === 'audio').concat(clips);
+  return `${clips.length} clip${clips.length === 1 ? '' : 's'}, ${fmt(pos / bpb)} bars`;
+}
+
 /**
  * Applies edited song code to `project` (mutates it; call inside ONE store.transact).
  * opts: { presets, kits, keepComplexAsCode: boolean | Set(labels), dryRun }
@@ -1138,11 +1288,12 @@ export function applySongCode(project, code, opts = {}) {
 
   // controls as generated (so only what the user changed is written back)
   let genRes = null;
-  const genCtl = (label) => {
+  const songCycles = Math.max(1, songLengthBeats(project) / bpb);
+  const genInfo = (label) => {
     if (!genRes) { try { genRes = evaluate(gen.code); } catch { genRes = { entries: [] }; } }
     const e = (genRes.entries || []).find((x) => x.name === label);
-    if (!e) return {};
-    try { return eventsToNotes(e.pattern, { cycles: Math.max(1, songLengthBeats(project) / bpb), bpb, kind: 'melodic' }).ctrl; } catch { return {}; }
+    if (!e) return null;
+    try { return eventsToNotes(e.pattern, { cycles: songCycles, bpb, kind: 'melodic' }); } catch { return null; }
   };
   const genSections = codeSections(gen.code);
   const sections = codeSections(src);
@@ -1195,33 +1346,48 @@ export function applySongCode(project, code, opts = {}) {
     const kind = b.drums ? 'drums' : 'melodic';
     const changedLabel = !git || normCode(itemText(src, it)).replace(/^_/, '') !== normCode(itemText(gen.code, git)).replace(/^_/, '');
     const entry = entryByName.get(b.label);
-    // song mode: patterns live in consts
+    // song mode: section patterns live in consts, the arrangement in the track's arrange([...])
     if (mode === 'song') {
-      for (const [cname, patId] of Object.entries(b.consts || {})) {
+      for (const [cname, meta] of Object.entries(b.consts || {})) {
         const d = editedDecls.get(cname);
         const gd = genDecls.get(cname);
         if (!d || !gd) continue;
         const txt = itemText(src, d);
         if (normCode(txt) === normCode(itemText(gen.code, gd))) continue;
-        const expr = src.slice(d.exprStart, d.end);
+        let expr = src.slice(d.exprStart, d.end);
+        // the section's automation (filter sweeps) stays in the automation lanes
+        if (meta.suffix) {
+          const cut = stripTail(expr, meta.suffix);
+          if (cut !== null) expr = cut;
+          else report.warnings.push(`${cname}: automation edits (${meta.suffix.slice(1, 40)}…) aren't applied — edit the lanes in the Arrange view.`);
+        }
         const r1 = evaluate(`setcpm(1)\n${expr}`);
         if (r1.error || !r1.entries.length) { report.warnings.push(`${cname}: ${r1.error || 'no pattern'}`); continue; }
-        const pat = project.patterns[patId];
-        const out = patternToNotes(r1.entries[0].pattern, { bpb, kind, prefer: [pat?.length || bpb], text: expr });
-        if (out.complex) { report.complex.push({ label: cname, reason: out.complex, text: txt, trackId: t.id, patternId: patId }); continue; }
-        if (pat && !(sameNotes(pat.notes, out.notes) && Math.abs(pat.length - out.length) < EPS)) {
-          pat.notes = mergeNotes(pat.notes, out.notes);
+        const first = project.patterns[meta.patterns[0]?.id];
+        const out = patternToNotes(r1.entries[0].pattern, { bpb, kind, prefer: [first?.length || bpb], text: expr });
+        if (out.complex) { report.complex.push({ label: cname, reason: out.complex, text: txt, trackId: t.id, patternId: meta.patterns[0]?.id }); continue; }
+        for (const { id, transpose } of meta.patterns) {
+          const pat = project.patterns[id];
+          if (!pat) continue;
+          const notes = kind === 'drums' || !transpose ? out.notes : out.notes.map((n) => ({ ...n, pitch: n.pitch + transpose }));
+          if (sameNotes(pat.notes, notes) && Math.abs(pat.length - out.length) < EPS) continue;
+          pat.notes = mergeNotes(pat.notes, notes);
           pat.length = out.length;
-          report.changes.push(`${t.name}: pattern "${pat.name}" (${out.notes.length} notes)`);
+          report.changes.push(`${t.name}: pattern "${pat.name}" (${notes.length} notes)`);
         }
       }
       if (changedLabel && entry) {
-        if (stripTrackLevel(itemText(src, it)) !== stripTrackLevel(itemText(gen.code, git))) {
-          report.warnings.push(`${t.name}: arrangement edits aren't applied in song mode — change clips in the Arrange view, or switch to pattern mode to edit the playing patterns.`);
+        const labelText = itemText(src, it);
+        const parsed = parseArrange(labelText);
+        if (!parsed) {
+          if (!/^_?[\w$]+:\s*silence\b/.test(labelText.trim())) report.warnings.push(`${t.name}: write the arrangement as arrange([bars, pattern], …) to apply it to the clips.`);
+        } else if (!sameEntries(parsed, b.entries || [])) {
+          const res = applyArrangement(project, t, parsed, { b, gen, src, editedDecls, genDecls, bpb, kind, report });
+          if (res) report.changes.push(`${t.name}: arrangement — ${res}`);
         }
-        const r = eventsToNotes(entry.pattern, { cycles: Math.max(1, songLengthBeats(project) / bpb), bpb, kind });
+        const r = eventsToNotes(entry.pattern, { cycles: songCycles, bpb, kind });
         if (r.count) {
-          const ctl = applyControls(t, r, genCtl(b.label), project);
+          const ctl = applyControls(t, r, genInfo(b.label), project, opts);
           if (ctl.length) report.changes.push(`${t.name}: ${ctl.join(', ')}`);
         }
       }
@@ -1236,8 +1402,9 @@ export function applySongCode(project, code, opts = {}) {
     }
     if (out.skipped?.length) report.warnings.push(`${t.name}: ignored unknown sounds ${out.skipped.map((s) => `"${s}"`).join(', ')}`);
     // instrument changes via .s() / .bank()
+    const g0 = genInfo(b.label);
     if (kind === 'drums') {
-      const kit = out.ctrl.bank ? kitFor(out.ctrl.bank, opts.kits) : null;
+      const kit = out.ctrl.bank && out.ctrl.bank !== g0?.ctrl?.bank ? kitFor(out.ctrl.bank, opts.kits) : null;
       if (kit && kit !== t.instrument?.preset) { t.instrument = { ...t.instrument, preset: kit }; report.changes.push(`${t.name}: kit ${kit}`); }
     } else if (out.sound && opts.presets?.[out.sound] && out.sound !== t.instrument?.preset) {
       t.instrument = { type: opts.presets[out.sound].instrument?.type || 'synth', preset: out.sound, params: {} };
@@ -1254,7 +1421,7 @@ export function applySongCode(project, code, opts = {}) {
       target.length = out.length;
       report.changes.push(`${t.name}: ${out.notes.length} notes, ${fmt(out.length / bpb)} bar${out.length === bpb ? '' : 's'}`);
     }
-    const ctl = applyControls(t, out, genCtl(b.label), project);
+    const ctl = applyControls(t, out, g0, project, opts);
     if (ctl.length) report.changes.push(`${t.name}: ${ctl.join(', ')}`);
   }
 
@@ -1297,7 +1464,7 @@ export function applySongCode(project, code, opts = {}) {
     project.patterns[pat.id] = pat;
     if (mode === 'song') project.clips.push(createClip(t.id, { patternId: pat.id, start: 0, length: songLengthBeats(project) }));
     if (project.scenes?.[0]) project.scenes[0].slots[t.id] = pat.id;
-    applyControls(t, out, {}, project);
+    applyControls(t, out, null, project);
     report.created.push(t.id);
     report.changes.push(`new ${isDrums ? 'drum' : 'instrument'} track "${t.name}" (${out.notes.length} notes)`);
   }

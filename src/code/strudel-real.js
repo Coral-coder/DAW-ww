@@ -210,6 +210,25 @@ function topLabels(ast) {
   return out;
 }
 
+/** slider(value, min, max, step) calls — what Strudel's transpiler reports as widgets (same ids). */
+function sliderWidgets(ast) {
+  const out = [];
+  const visit = (node) => {
+    if (!node || typeof node.type !== 'string') return;
+    if (node.type === 'CallExpression' && node.callee.type === 'Identifier' && node.callee.name === 'slider' && node.arguments[0]) {
+      const [v, min, max, step] = node.arguments;
+      out.push({ type: 'slider', id: `slider_${v.start}`, from: v.start, to: v.end, value: v.raw ?? String(v.value), min: min?.value ?? 0, max: max?.value ?? 1, step: step?.value });
+    }
+    for (const k of Object.keys(node)) {
+      const x = node[k];
+      if (Array.isArray(x)) x.forEach(visit);
+      else if (x && typeof x === 'object' && typeof x.type === 'string') visit(x);
+    }
+  };
+  ast.body.forEach(visit);
+  return out.sort((a, b) => a.from - b.from);
+}
+
 /** Removes top-level `await` (not inside functions) from generated code. */
 function stripTopLevelAwait(code) {
   if (!/\bawait\b/.test(code)) return code;
@@ -309,15 +328,16 @@ export function evaluateStrudel(source) {
   try {
     let t;
     try {
-      t = transpiler.transpiler(src, { wrapAsync: false, addReturn: true, emitMiniLocations: true, emitWidgets: true });
+      // (emitMiniLocations would re-parse every mini-notation string — the haps carry their locations anyway)
+      t = transpiler.transpiler(src, { wrapAsync: false, addReturn: true, emitMiniLocations: false });
     } catch (e) {
       // Strudel insists on a final expression; code ending in a declaration still evaluates here
       // (appending after the code keeps every offset)
       if (!/without body expression/.test(errMsg(e))) throw e;
-      t = transpiler.transpiler(`${src}\n;undefined\n`, { wrapAsync: false, addReturn: true, emitMiniLocations: true, emitWidgets: true });
+      t = transpiler.transpiler(`${src}\n;undefined\n`, { wrapAsync: false, addReturn: true, emitMiniLocations: false });
     }
     out = t.output;
-    result.widgets = (t.widgets || []).map((w) => (w.type === 'slider' ? { ...w, id: `slider_${w.from}` } : w));
+    result.widgets = sliderWidgets(ast);
   } catch (e) {
     result.error = errMsg(e);
     return result;

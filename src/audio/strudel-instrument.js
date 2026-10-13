@@ -18,19 +18,23 @@ import { loadStrudelAudio, strudelSoundsReady } from '../code/strudel-real.js';
 
 const isOfflineCtx = (ctx) => typeof OfflineAudioContext !== 'undefined' && ctx instanceof OfflineAudioContext;
 let owner = null; // OfflineAudioContext currently rendering with superdough (realtime triggers pause)
+const live = new Set(); // realtime instruments
 let ControllerClass = null;
-let workletChain = Promise.resolve();
 const workletCtx = new WeakMap(); // ctx -> Promise (worklets added)
+const WORKLET_TIMEOUT = 6000;
 
+/**
+ * Adds superdough's AudioWorklet modules (supersaw, pulse, crush, shape, distort, djf, ladder filter, …)
+ * to `ctx`. Never blocks for long: if a browser stalls on addModule, Strudel still plays everything that
+ * doesn't need a worklet.
+ */
 function ensureWorklets(sd, ctx) {
   if (!workletCtx.has(ctx)) {
-    // superdough.loadWorklets() works on its current context: serialise per context
-    const p = workletChain.then(async () => {
-      sd.setAudioContext(ctx);
-      try { await sd.loadWorklets(); } catch (e) { console.warn('[strudel] AudioWorklets unavailable:', e?.message || e); }
-    });
-    workletChain = p.catch(() => {});
-    workletCtx.set(ctx, p);
+    const urls = typeof sd.daw3WorkletUrls === 'function' ? sd.daw3WorkletUrls() : [];
+    const load = Promise.all(urls.map((u) => ctx.audioWorklet?.addModule(u))).catch((e) => console.warn('[strudel] AudioWorklets unavailable:', e?.message || e));
+    let timer;
+    const timeout = new Promise((resolve) => { timer = setTimeout(() => { console.warn('[strudel] AudioWorklets are taking long to load — continuing without waiting'); resolve(); }, WORKLET_TIMEOUT); });
+    workletCtx.set(ctx, Promise.race([load, timeout]).finally(() => clearTimeout(timer)));
   }
   return workletCtx.get(ctx);
 }
@@ -65,6 +69,7 @@ export class StrudelInstrument {
     this.bus.connect(output);
     this.pending = new Set();
     this.ready = false;
+    if (!isOfflineCtx(ctx)) live.add(this);
     this.failed = null;
     this.readyPromise = loadStrudelAudio().then(async (mod) => {
       this.sd = mod.superdough;
@@ -145,6 +150,7 @@ export class StrudelInstrument {
   }
 
   dispose() {
+    live.delete(this);
     this.fallback?.dispose();
     this.allNotesOff();
     this.disposed = true;
@@ -153,10 +159,17 @@ export class StrudelInstrument {
   }
 }
 /**
- * Offline renders: superdough belongs to `ctx` until the returned release() is called
- * (realtime Strudel sounds pause meanwhile).
+ * Offline renders: superdough belongs to `ctx` until release() is called (realtime Strudel sounds pause
+ * meanwhile). Resolves release() once the realtime sounds still being set up (sample loads) are done, so
+ * they don't build their nodes on the offline context.
  */
-export function claimSuperdough(ctx) {
+export async function claimSuperdough(ctx) {
   owner = ctx;
-  return () => { if (owner === ctx) owner = null; };
+  await Promise.all([...live].map((i) => i.flush(3000)));
+  return () => {
+    if (owner !== ctx) return;
+    owner = null;
+    const rt = [...live].find((i) => i.ready);
+    if (rt) rt._select(); // the ambient context goes back to the realtime one
+  };
 }

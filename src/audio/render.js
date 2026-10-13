@@ -161,7 +161,7 @@ async function renderOnceWith(project, cfg) {
   const strudelInsts = graph.strudelInstruments();
   let release = () => {};
   if (strudelInsts.length) {
-    release = claimSuperdough(ctx);
+    release = await claimSuperdough(ctx);
     try {
       await Promise.all(strudelInsts.map((i) => i.whenReady()));
     } catch (e) {

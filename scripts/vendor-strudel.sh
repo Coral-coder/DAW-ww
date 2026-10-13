@@ -62,18 +62,33 @@ const common = { bundle: true, format: 'esm', minify: true, target: 'es2020', pl
   define: { 'import.meta.env': '{}', 'process.env.NODE_ENV': '"production"' }, logLevel: 'warning' };
 // one build, two entry points: code shared by both (the pattern engine) lands in a common chunk, so
 // strudel-audio.mjs and strudel-core.mjs share a single Pattern class / sound registry
-// daW³ renders code tracks offline (WAV export) with superdough in an OfflineAudioContext while the
+// Three small patches of superdough's dist (both checked; the build fails if they stop applying):
+// 1. daW³ renders code tracks offline (WAV export) with superdough in an OfflineAudioContext while the
 // realtime context lives on. superdough pools audio nodes per type, not per context, so a pooled node
 // of one context could be handed to the other ("cannot connect to a different context"): only reuse
 // pooled nodes of the context daW³ is currently triggering (globalThis.__daw3SuperdoughCtx).
+// 2. export daw3WorkletUrls() — the AudioWorklet modules superdough needs on each context.
+// 3. webAudioTimeout() builds its helper node on the context it is given (not the ambient one).
 import { readFile } from 'node:fs/promises';
 const patchSuperdough = { name: 'patch-superdough', setup(b) {
   b.onLoad({ filter: /superdough[\\/]dist[\\/]index\.mjs$/ }, async (a) => {
-    const src = await readFile(a.path, 'utf8');
+    let src = await readFile(a.path, 'utf8');
     const re = /if \((\w+) = (\w+)\.pop\(\)\?\.deref\(\), \1 != null && (\w+)\(\1\)\)/;
     if (!re.test(src)) throw new Error('superdough node-pool patch did not apply — review it for this version');
-    return { loader: 'js', contents: src.replace(re, (_, o, n, g) =>
-      `if (${o} = ${n}.pop()?.deref(), ${o} != null && ${g}(${o}) && (!globalThis.__daw3SuperdoughCtx || ${o}.context === globalThis.__daw3SuperdoughCtx))`) };
+    src = src.replace(re, (_, o, n, g) =>
+      `if (${o} = ${n}.pop()?.deref(), ${o} != null && ${g}(${o}) && (!globalThis.__daw3SuperdoughCtx || ${o}.context === globalThis.__daw3SuperdoughCtx))`);
+    // expose the AudioWorklet module URLs, so daW³ can add them to every context it renders with
+    // (superdough's loadWorklets() shares one in-flight promise across contexts)
+    const wl = /const (\w+) = (\w+)\(\), (\w+) = (\w+)\.concat\(\[(\w+)\]\);\n(\s*)\w+ = Promise\.all\(\3\.map\(\(\w+\) => \1\.audioWorklet\.addModule/;
+    const m = wl.exec(src);
+    if (!m) throw new Error('superdough worklet-url patch did not apply — review it for this version');
+    src += `\nexport const daw3WorkletUrls = () => ${m[4]}.concat([${m[5]}]);\n`;
+    // webAudioTimeout(ctx, …) (runs when a sound ends) builds its muted gain on the *ambient* context:
+    // build it on the context it was given
+    const to = /const (\w+) = new ConstantSourceNode\((\w+)\), (\w+) = (\w+)\(0\);\n(\s*)return \3\.connect\(\2\.destination\)/;
+    if (!to.test(src)) throw new Error('superdough webAudioTimeout patch did not apply — review it for this version');
+    src = src.replace(to, (all, a, e, c, g) => all.replace(`${g}(0)`, `new GainNode(${e}, { gain: 0 })`));
+    return { loader: 'js', contents: src };
   });
 } };
 await esbuild.build({ ...common, plugins: [patchSuperdough], entryPoints: { 'strudel-core': 'entry-core.mjs', 'strudel-audio': 'entry-audio.mjs' },

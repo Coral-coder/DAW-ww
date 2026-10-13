@@ -57,13 +57,126 @@ export function snapBeat(b) {
   return Math.round(b * 24) / 24;
 }
 
-/** Notes -> quantized notes inside [0, L): {pitch, start, dur, vel, vel0} (vel0 = the original velocity). */
-export function quantizePart(notes, L, { snap = snapBeat } = {}) {
+/** Continuous swing warp of a time in beats (as src/gen/groove.js bakes it into notes; beats are fixed points). */
+export function swingWarp(t, s8 = 0.5, s16 = 0.5) {
+  const b = Math.floor(t + 1e-4);
+  let x = Math.max(0, t - b);
+  if (s8 !== 0.5) x = x < 0.5 ? (x * s8) / 0.5 : s8 + ((x - 0.5) * (1 - s8)) / 0.5;
+  else if (s16 !== 0.5) {
+    const h = x < 0.5 ? 0 : 0.5;
+    const y = (x - h) / 0.5;
+    x = h + (y < 0.5 ? (y * s16) / 0.5 : s16 + ((y - 0.5) * (1 - s16)) / 0.5) * 0.5;
+  }
+  return b + x;
+}
+
+const LATE_MAX = 0.075; // humanised notes sit at most this late (beats) behind their grid step
+/**
+ * Snaps a humanised onset to its 16th: the step just before it (late-only micro-timing and strums), or null
+ * when no step is close (triplets, rolls, 32nds).
+ */
+export function grooveSnap(t, { early = 0.012, late = LATE_MAX } = {}) {
+  const base = Math.floor(t * 4) / 4;
+  let best = null;
+  for (const g of [base - 0.25, base, base + 0.25]) {
+    const d = t - g;
+    if (d >= -early && d <= late && (best === null || Math.abs(d) < best.d)) best = { g, d: Math.abs(d) };
+  }
+  return best ? best.g : null;
+}
+
+/** Snaps to the coarsest fine grid (8ths of a beat, triplets, 64ths, 1/24) within a few ms; else snapBeat. */
+export function snapFine(t) {
+  for (const r of [8, 6, 12, 16, 24]) {
+    const g = Math.round(t * r) / r;
+    if (t - g >= -0.006 && t - g <= 0.014) return g;
+  }
+  return snapBeat(t);
+}
+
+/**
+ * Swing as Strudel's swingBy(x, n) plays it: in every slice of h beats (h = 1: 8th swing, 0.5: 16th swing) the
+ * second half is delayed by d beats. unswing(t) maps a played time back to the straight time the code writes.
+ */
+export function unswing(t, groove) {
+  if (!groove || !(groove.d > 0)) return t;
+  const h = groove.h;
+  const s0 = Math.floor(t / h + 1e-9) * h;
+  const q = t - s0;
+  return q >= h / 2 + groove.d - 0.012 ? t - groove.d : t;
+}
+
+/**
+ * The swing a part was played with: {h, d} (d = 0: straight) — candidates from the genre's groove and a sweep;
+ * chosen when it puts clearly more onsets on the 16th grid than straight timing does.
+ */
+export function detectSwing(notes, prior = null) {
+  const starts = (notes || []).map((n) => n.start).filter((t) => Number.isFinite(t));
+  const none = { h: 1, d: 0 };
+  if (starts.length < 8) return none;
+  const onGridCount = (g) => starts.filter((t) => grooveSnap(unswing(t, g)) !== null).length;
+  const cands = [];
+  if (prior) {
+    if (prior.s8 && prior.s8 !== 0.5) cands.push({ h: 1, d: round(prior.s8 - 0.5, 3) });
+    else if (prior.s16 && prior.s16 !== 0.5) cands.push({ h: 0.5, d: round((prior.s16 - 0.5) * 0.5, 3) });
+  }
+  for (let v = 0.04; v <= 0.205; v += 0.02) cands.push({ h: 1, d: round(v, 2) });
+  for (let v = 0.02; v <= 0.105; v += 0.01) cands.push({ h: 0.5, d: round(v, 2) });
+  let best = none, bestN = onGridCount(none);
+  // notes the swing explains: off the straight grid, on it once un-swung
+  const moved = (g) => starts.filter((t) => grooveSnap(t) === null && unswing(t, g) !== t && grooveSnap(unswing(t, g)) !== null).length;
+  for (const c of cands) {
+    const n = onGridCount(c);
+    if (n > bestN + Math.max(3, starts.length * 0.1) && moved(c) >= Math.max(4, starts.length * 0.15)) { best = c; bestN = n; }
+  }
+  return best;
+}
+
+/**
+ * Notes -> quantized notes inside [0, L): {pitch, start, dur, vel, vel0} (vel0 = the original velocity).
+ * groove {h, d}: onsets are un-swung, then humanised onsets snap to the 16th they were pushed from.
+ */
+export function quantizePart(notes, L, { groove = null } = {}) {
+  const snapStart = (t) => {
+    if (!groove) return snapBeat(t);
+    if (!(groove.d > 0)) return grooveSnap(t, { late: 0.012 }) ?? snapFine(t) ?? snapBeat(t);
+    // code time c plays at c (first half of a swing slice) or c + d (second half): pick the closest
+    const { h, d } = groove;
+    const second = (c) => c - Math.floor(c / h + 1e-9) * h >= h / 2 - 1e-9;
+    const real = (c) => (second(c) ? c + d : c);
+    let best = null;
+    for (const u of [t, t - d]) {
+      for (const [c, grid] of [[grooveSnap(u), true], [snapFine(u), false]]) {
+        if (c === null) continue;
+        const off = t - real(c);
+        // the 16th grid with late-only humanisation first; finer grid positions only when nothing else fits
+        const cost = (off >= -0.012 ? Math.abs(off) : Math.abs(off) * 3 + 0.05) + (grid ? 0 : 0.08);
+        if (!best || cost < best.cost - 1e-9) best = { c, cost };
+      }
+    }
+    return best.c;
+  };
   return (notes || [])
-    .map((n) => ({ pitch: n.pitch, start: snap(n.start), dur: n.dur > 0 ? n.dur : 0.25, vel: qVel(n.vel ?? DEFAULT_VEL), vel0: n.vel ?? DEFAULT_VEL }))
+    .map((n) => {
+      const st = snapStart(n.start);
+      const end = n.start + (n.dur > 0 ? n.dur : 0.25);
+      // the end snaps with the start (pushed grid); otherwise the played length stays
+      let dur = n.dur > 0 ? n.dur : 0.25;
+      if (groove) { const ge = grooveSnap(unswing(end, groove), { early: 0.06, late: 0.06 }); if (ge !== null && ge > st && Math.abs(ge - st - dur) < 0.13) dur = ge - st; } else dur = end - st;
+      return { pitch: n.pitch, start: st, dur: dur > 0 ? dur : 0.25, vel: qVel(n.vel ?? DEFAULT_VEL), vel0: n.vel ?? DEFAULT_VEL };
+    })
     .filter((n) => n.start >= -EPS && n.start < L - EPS)
     .map((n) => ({ ...n, start: Math.max(0, n.start), dur: Math.max(1 / 24, Math.min(Math.round(n.dur * 24) / 24 || 1 / 24, L - n.start)) }))
-    .sort((a, b) => a.start - b.start || a.pitch - b.pitch);
+    .sort((a, b) => a.start - b.start || a.pitch - b.pitch || b.dur - a.dur)
+    // notes that land on the same step (a roll squeezed by the grid) play once
+    .filter((n, i, a) => !(i > 0 && a[i - 1].pitch === n.pitch && Math.abs(a[i - 1].start - n.start) < 1e-9));
+}
+
+/** Strudel swing for a detected groove: '.swingBy(x, n)' ('' when straight). */
+export function swingCall(groove, bpb) {
+  if (!groove || !(groove.d > 0)) return '';
+  const x = round((2 * groove.d) / groove.h, 3);
+  return `.swingBy(${velStr(x) === '1' && x !== 1 ? x : String(x).replace(/^0\./, '.')}, ${round(bpb / groove.h, 3)})`;
 }
 
 // ------------------------------------------------------------------------------------ mini-notation writer
@@ -112,8 +225,19 @@ export function euclidOf(tokens) {
   return `${hits[0]}(${k},${n})`;
 }
 
+const stepsMemo = new Map();
 /** Compact mini-notation for a grid of one-step tokens (drum hits / velocities). */
-export function compactSteps(tokens, { rests = true, euclid = true } = {}) {
+export function compactSteps(tokens, opts = {}) {
+  const k = `${opts.rests !== false ? 1 : 0}${opts.euclid !== false ? 1 : 0}|${tokens.join(' ')}`;
+  let r = stepsMemo.get(k);
+  if (r === undefined) {
+    r = compactStepsRaw(tokens, opts);
+    if (stepsMemo.size > 20000) stepsMemo.clear();
+    stepsMemo.set(k, r);
+  }
+  return r;
+}
+function compactStepsRaw(tokens, { rests = true, euclid = true } = {}) {
   if (rests) tokens = reduceRests(tokens);
   const n = tokens.length;
   if (n === 0) return '~';
@@ -161,6 +285,14 @@ export function weightedSeq(items) {
   const g = items.reduce((a, it) => gcd(a, it.w), 0) || 1;
   const ws = items.map((it) => it.w / g);
   if (ws.every((w) => w === 1)) return compactSteps(items.map((it) => it.tok), { rests: false, euclid: false });
+  const n = items.length;
+  // periodic: "x@3 ~ x@3 ~" -> "[x@3 ~]*2"
+  for (let p = 1; p <= n / 2; p++) {
+    if (n % p) continue;
+    let ok = true;
+    for (let i = p; i < n && ok; i++) ok = items[i].tok === items[i - p].tok && ws[i] === ws[i - p];
+    if (ok) return `${wrap(weightedSeq(items.slice(0, p).map((it, i) => ({ tok: it.tok, w: ws[i] }))))}*${n / p}`;
+  }
   return items.map((it, i) => (ws[i] === 1 ? it.tok : `${wrap(it.tok)}@${ws[i]}`)).join(' ');
 }
 
@@ -175,10 +307,12 @@ export function mergeRests(items) {
 }
 
 /** Plain alternation of segments [{text, w}] -> "<a b@2 c!2>" (periodic lists collapse to their period). */
-export function alternation(segs) {
+export function alternation(segs, { collapse = true } = {}) {
   if (!segs.length) return '~';
   const key = (s) => `${s.text}@${s.w}`;
-  for (let p = 1; p < segs.length; p++) {
+  // (a period of nested alternations can't collapse: they advance once per selection)
+  if (segs.some((s) => s.text.includes('<'))) collapse = false;
+  for (let p = 1; collapse && p < segs.length; p++) {
     if (segs.length % p) continue;
     let ok = true;
     for (let i = p; i < segs.length && ok; i++) ok = key(segs[i]) === key(segs[i - p]);
@@ -215,7 +349,7 @@ export function barsText(segs) {
         for (let i = j; i < N; i += P) col.push({ text: segs[i].text, w: 1 });
         cols.push({ text: alternation(col), w: 1 });
       }
-      const t = alternation(cols);
+      const t = alternation(cols, { collapse: false });
       if (t.length < best.length) best = t;
     }
   }
@@ -226,20 +360,18 @@ export function barsText(segs) {
 
 /** Splits [0, bars) into groups so no note crosses a group boundary. -> [[barStart, barEnd]] */
 export function barGroups(notes, bars, barLen) {
+  // every note joins the bars it sounds in (start bar .. bar of its end) into one group
+  const reach = new Array(bars).fill(0).map((_, i) => i + 1);
+  for (const n of notes) {
+    const b0 = Math.floor(n.start / barLen + 1e-9);
+    if (b0 < 0 || b0 >= bars) continue;
+    const b1 = Math.min(bars, Math.max(b0 + 1, Math.ceil((n.start + n.dur) / barLen - 1e-4)));
+    if (b1 > reach[b0]) reach[b0] = b1;
+  }
   const groups = [];
-  let b = 0;
-  while (b < bars) {
-    let end = b + 1;
-    for (let changed = true; changed;) {
-      changed = false;
-      for (const n of notes) {
-        if (n.start >= b * barLen - EPS && n.start < end * barLen - EPS && n.start + n.dur > end * barLen + 1e-4) {
-          end = Math.min(bars, Math.ceil((n.start + n.dur) / barLen - 1e-4));
-          changed = true;
-        }
-      }
-      if (end >= bars) { end = bars; break; }
-    }
+  for (let b = 0; b < bars;) {
+    let end = reach[b];
+    for (let k = b + 1; k < end; k++) end = Math.max(end, reach[k]);
     groups.push([b, end]);
     b = end;
   }
@@ -510,7 +642,7 @@ export function verifyExpr(expr, target, { cycles, bpb, kind, tol = VEL_TOL }) {
     if (!list?.length) return false;
     const g = list.pop();
     if (Math.abs(g.start - t.start) > 1e-3) return false;
-    if (kind !== 'drums' && Math.abs(g.dur - t.dur) > Math.max(0.13, t.dur * 0.05) + 1e-6) return false;
+    if (kind !== 'drums' && Math.abs(g.dur - t.dur) > Math.max(0.13, t.dur * 0.05) + 1e-6 && !(t.dur < 0.25 && g.dur <= 0.25 + 1e-6)) return false;
     if (Math.abs(g.vel - (t.vel0 ?? t.vel)) > tol + 0.03) return false;
   }
   return true;
@@ -573,30 +705,45 @@ function motifCandidate(st, root, sc) {
 }
 
 /**
- * Rhythm × harmony: every bar repeats one pitch set (a chord comped in a rhythm, a pedal bass) ->
- * n("<chords>").struct("<rhythm>") with the rhythm and the harmony compressed on their own.
+ * Rhythm × harmony: the bars comp chords (or pedal a note) in a rhythm -> n("<chords>").struct("<rhythm>"),
+ * each compressed on its own. The harmony may change inside a bar (pushed chords: "[A@15 B]"): struct samples it
+ * at every hit.
  */
 function structCandidate(st, ctx, degCtxs) {
-  if (st.layers.length !== 1) return [];
-  const gs = st.layers[0].groups;
-  if (gs.some((g) => g.w !== 1)) return [];
-  const sets = [];
+  const G = st.layers[0].groups.length;
+  for (let i = 0; i < G; i++) {
+    const g0 = st.layers[0].groups[i];
+    if (g0.w !== 1 || st.layers.some((l) => l.groups[i].S !== g0.S)) return [];
+  }
   let multi = false;
-  for (const g of gs) {
-    const evs = g.items.filter((it) => it.ps);
-    if (!evs.length) { sets.push(null); continue; }
-    const k = evs[0].ps.join(',');
-    if (evs.some((it) => it.ps.join(',') !== k)) return [];
-    if (evs.length > 1) multi = true;
-    sets.push(evs[0].ps);
+  const bars = []; // per bar: [{ps, w}] harmony runs (no rests) | null
+  for (let i = 0; i < G; i++) {
+    const S = st.layers[0].groups[i].S;
+    const evs = [];
+    for (const l of st.layers) {
+      let pos = 0;
+      for (const it of l.groups[i].items) { if (it.ps) evs.push({ s0: pos, ps: it.ps, k: it.ps.join(',') }); pos += it.w; }
+    }
+    evs.sort((x, y) => x.s0 - y.s0);
+    const runs = [];
+    for (const e of evs) {
+      const last = runs[runs.length - 1];
+      if (last && last.k === e.k) { multi = true; continue; }
+      if (last && last.s0 === e.s0) return []; // two different chords at once: not one harmony
+      runs.push({ k: e.k, ps: e.ps, s0: e.s0 });
+    }
+    if (!runs.length) { bars.push(null); continue; }
+    runs[0].s0 = 0;
+    runs.forEach((r, j) => { r.w = (j + 1 < runs.length ? runs[j + 1].s0 : S) - r.s0; });
+    bars.push(runs);
   }
   if (!multi) return [];
-  const rhythm = barsText(gs.map((g) => {
+  const rhythm = st.layers.map((l) => barsText(l.groups.map((g) => {
     const items = g.items.map((it) => ({ tok: it.ps ? 'x' : '~', w: it.w }));
     return { text: items.every((x) => x.tok === '~') ? '~' : weightedSeq(mergeRests(items)), w: 1 };
-  }));
+  }))).join(', ');
   const out = [];
-  const harmText = (tok) => barsText(sets.map((ps) => ({ text: ps ? tok(ps) : '~', w: 1 })));
+  const harmText = (tok) => barsText(bars.map((runs) => ({ text: runs ? weightedSeq(runs.map((r) => ({ tok: tok(r.ps), w: r.w }))) : '~', w: 1 })));
   for (const { sc, roots } of degCtxs) {
     for (const root of roots) out.push({ expr: `n(${q(harmText(degTok(root, sc)))}).struct(${q(rhythm)}).scale(${q(scaleLabel(root, sc))})`, penalty: -3 });
   }
@@ -629,6 +776,7 @@ function arpCandidate(st, root, sc) {
   return [`n(${q(barsText(chordSegs))}).arp(${q(barsText(idxSegs))})`];
 }
 
+const chordMemo = new Map();
 /** Chord symbols with the engine's voicing() — only kept when the engine voices them exactly like the part. */
 function chordSymbolCandidate(st) {
   if (st.layers.length !== 1) return null;
@@ -636,7 +784,9 @@ function chordSymbolCandidate(st) {
   let chords = 0;
   const tok = (ps) => {
     if (ps.length < 3) return null;
-    const c = detectChord(ps);
+    const ck = ps.join(',');
+    if (!chordMemo.has(ck)) chordMemo.set(ck, detectChord(ps));
+    const c = chordMemo.get(ck);
     if (!c || !c.exact) return null;
     chords++;
     return strudelChordName(c);
@@ -753,8 +903,9 @@ const CACHE_MAX = 3000;
 export function renderPart(notes, L, ctx) {
   const { kind = 'melodic', bpb = 4, key = null, verify = true } = ctx;
   L = Math.max(EPS, L || bpb);
-  const clean = quantizePart(notes, L);
-  const ck = `${codeEngineVersion()}|${kind}|${bpb}|${L}|${key ? `${key.root}:${key.scale}` : '-'}|${ctx.spellKey || ''}|${verify}|${clean.map((n) => `${n.pitch},${n.start},${n.dur},${n.vel0}`).join(';')}`;
+  const groove = ctx.groove || null;
+  const clean = quantizePart(notes, L, { groove });
+  const ck = `${codeEngineVersion()}|${groove ? `${groove.h}:${groove.d}` : '-'}|${kind}|${bpb}|${L}|${key ? `${key.root}:${key.scale}` : '-'}|${ctx.spellKey || ''}|${verify}|${clean.map((n) => `${n.pitch},${n.start},${n.dur},${n.vel0}`).join(';')}`;
   if (cache.has(ck)) return cache.get(ck);
   const { slow } = barLayout(L, bpb);
   let res;
