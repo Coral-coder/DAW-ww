@@ -1,4 +1,5 @@
 // Performance expression (src/gen/expression.js) + the instrument source map (src/audio/library/instrument-map.js).
+import { songFaith } from './lib/song-faith.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateSong } from '../src/gen/song.js';
@@ -135,35 +136,11 @@ test('expression notes -> scheduler events -> trigger extras', () => {
   assert.deepEqual(noteExtra({ pitch: 60, x: {} }, 1), {});
 });
 
+// Same faithfulness check as the song-code tests (onset windows allow swing / humanisation).
 function roundTrip(p) {
-  const bpb = beatsPerBar(p);
   const { code, blocks } = songToCode(p);
-  const r = evaluate(code);
-  assert.equal(r.error, null, r.error);
-  const end = Math.max(...p.clips.map((c) => c.start + c.length));
-  const want = collectEvents({ ...p, swing: 0 }, 0, end, { mode: p.mode }).filter((e) => e.type === 'note');
-  const label2track = Object.fromEntries(blocks.filter((b) => b.label).map((b) => [b.label, b.trackId]));
-  const drums = new Set(p.tracks.filter((t) => t.instrument?.type === 'drums').map((t) => t.id));
-  const key = (tid, pitch, beat) => `${tid}|${pitch}|${Math.round(snapBeat(beat) * 24)}`;
-  const got = new Map();
-  for (const e of queryEvents(r, 0, end / bpb)) {
-    const tid = label2track[e.name];
-    const pitch = drums.has(tid) ? (e.value.n >= 24 ? e.value.n : drumPitch(e.value.s)) : e.value.note;
-    const k = key(tid, pitch, e.begin * bpb);
-    if (!got.has(k)) got.set(k, []);
-    got.get(k).push({ dur: (e.end - e.begin) * bpb, vel: e.value.velocity ?? 0.8 });
-  }
-  let ok = 0;
-  for (const e of want) {
-    const list = got.get(key(e.trackId, e.pitch, e.beat));
-    if (!list?.length) continue;
-    let bi = 0;
-    list.forEach((x, i) => { if (Math.abs(x.dur - e.dur) < Math.abs(list[bi].dur - e.dur)) bi = i; });
-    const g = list.splice(bi, 1)[0];
-    const durOk = drums.has(e.trackId) || Math.abs(g.dur - e.dur) <= Math.max(0.126, 0.05 * e.dur) + 1e-6;
-    if (durOk && Math.abs(g.vel - e.vel) <= 0.1) ok++;
-  }
-  return { ok, total: want.length };
+  const labels = Object.fromEntries(blocks.filter((b) => b.label).map((b) => [b.label, b.trackId]));
+  return songFaith(p, code, labels);
 }
 
 test('expression: songs still round-trip through song code (>= 95%)', () => {
