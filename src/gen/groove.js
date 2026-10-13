@@ -23,6 +23,7 @@ const T = (o = {}) => ({
 });
 
 const DILLA = T({
+  swing8: 0.57, // MPC-style lazy 8ths (hats / keys), on top of the late snare
   drums: { snare: { late: 20, jit: 6 }, clap: { late: 16, jit: 5 }, rim: { late: 12, jit: 6 }, hihat: { late: 6, jit: 9 }, openhat: { late: 8, jit: 6 }, kick: { late: 0, jit: 7 }, shaker: { late: 4, jit: 8 } },
   hatAccents: [1, 0.55, 0.8, 0.62], ghosts: 0.35, bassLate: 14, chordLate: 9, leadLate: 8, jitter: 5, velJit: 0.07,
 });
@@ -121,11 +122,13 @@ export function applyGroove(notes, opts = {}) {
   if (drums && gr.ghosts > 0 && (opts.energy ?? 0.7) > 0.35) {
     const snares = notes.filter((n) => n.pitch === DRUM_PITCH.snare || n.pitch === DRUM_PITCH.clap);
     const backbeats = snares.filter((n) => n.vel >= 0.6 && onGrid(n.start, 1));
+    const busy = new Set(notes.filter((n) => n.pitch === DRUM_PITCH.snare || n.pitch === DRUM_PITCH.kick).map((n) => Math.round(n.start * 8)));
     for (const b of backbeats) {
       for (const off of [-0.25, 0.25, 0.75]) {
         const t = swingWarp(b.start + off, s8, s16);
         if (t <= 0 || t >= length - 0.05 || !rng.chance(gr.ghosts * (off === -0.25 ? 1 : 0.5))) continue;
-        if (notes.some((n) => (n.pitch === DRUM_PITCH.snare || n.pitch === DRUM_PITCH.kick) && Math.abs(n.start - t) < 0.12)) continue;
+        if (busy.has(Math.round(t * 8)) || busy.has(Math.round((t - 0.06) * 8)) || busy.has(Math.round((t + 0.06) * 8))) continue;
+        busy.add(Math.round(t * 8));
         notes.push({ ...b, id: `${b.id}g${Math.round(t * 1000)}`, pitch: DRUM_PITCH.snare, start: t, dur: 0.1, vel: 0.14 + rng() * 0.1 });
       }
     }

@@ -14,6 +14,7 @@ import { MixGraph } from './mixer.js';
 import { Scheduler, CodeCache } from './scheduler.js';
 import { renderOffline as renderOfflineImpl, decodeSampleData, findSampleIdByName } from './render.js';
 import { prefetchCodeSamples } from './code-instrument.js';
+import { activeLanes, automationOwner, valueAt } from '../core/automation.js';
 
 export class AudioEngine extends Emitter {
   constructor(store) {
@@ -34,6 +35,7 @@ export class AudioEngine extends Emitter {
     this._errTimes = new Map();
     this._codeStatus = new Map();
     this._sampleKeys = '';
+    this._overrides = new Set(); // `${ownerId}|${target}` lanes the user is currently writing (automation recording)
     this.codeCache = new CodeCache((trackId, res) => {
       this._codeStatus.set(trackId, res);
       if (res.ok) this.emit('code-ok', { trackId, cps: res.cps });
@@ -198,6 +200,7 @@ export class AudioEngine extends Emitter {
   // that window get them) and effect params at the audible position on every tick.
   _automateWindow(project, b0, b1, t0, spb, jump) {
     if (project.mode !== 'song') { this._endAutomation(project); return; }
+    project = this._withoutOverrides(project);
     this._autoActive = true;
     this.graph.automateMixer(project, b0, b1, t0, spb, jump);
     // after play/seek effect params jump straight to the automated value (no glide from static)
@@ -206,8 +209,72 @@ export class AudioEngine extends Emitter {
 
   _automateTick(project) {
     if (project.mode !== 'song' || !this._autoActive) return;
+    project = this._withoutOverrides(project);
     const beat = this.scheduler.getPosition();
     if (beat != null) this.graph.applyControl(project, beat, { inst: false, fx: true });
+  }
+
+  /**
+   * Automation write (recording): while a target is overridden its lane is ignored by playback, so the
+   * live (store) value the user is moving is heard instead. ownerId: track id | bus id | 'master'.
+   */
+  setAutomationOverride(ownerId, target, on) {
+    const k = `${ownerId}|${target}`;
+    if (!!on === this._overrides.has(k)) return;
+    if (on) this._overrides.add(k); else this._overrides.delete(k);
+    // apply right away (mixer AudioParams follow on the next scheduler window, ~25 ms)
+    if (this._playing && this._autoActive && this.graph && this.project.mode === 'song') {
+      const beat = this.scheduler.getPosition();
+      if (beat != null) { try { this.graph.applyControl(this._withoutOverrides(this.project), beat, { inst: true, fx: true }); } catch (e) { this._error(e); } }
+    }
+  }
+
+  clearAutomationOverrides() {
+    const had = this._overrides.size;
+    this._overrides.clear();
+    if (had && this._playing && this._autoActive && this.graph && this.project.mode === 'song') {
+      const beat = this.scheduler.getPosition();
+      if (beat != null) { try { this.graph.applyControl(this.project, beat, { inst: true, fx: true }); } catch (e) { this._error(e); } }
+    }
+  }
+
+  isAutomationOverridden(ownerId, target) { return this._overrides.has(`${ownerId}|${target}`); }
+
+  /** The project as automation playback sees it: lanes of overridden targets removed (shallow copies). */
+  _withoutOverrides(project) {
+    if (!this._overrides.size) return project;
+    const ov = this._overrides;
+    const strip = (id, o) => {
+      if (!o?.automation?.length || !o.automation.some((l) => ov.has(`${id}|${l.target}`))) return o;
+      return { ...o, automation: o.automation.filter((l) => !ov.has(`${id}|${l.target}`)) };
+    };
+    return {
+      ...project,
+      master: strip('master', project.master),
+      buses: (project.buses || []).map((b) => strip(b.id, b)),
+      tracks: project.tracks.map((t) => strip(t.id, t)),
+    };
+  }
+
+  /**
+   * Current automated value (lane number, see core/automation encodeParam) of a target at the audible
+   * position, or null when it is not automated right now (stopped, pattern mode, no active lane, or
+   * being written by the user). ownerId: track id | bus id | 'master'.
+   */
+  getAutomatedValue(ownerId, target) {
+    if (!this._playing || this.project.mode !== 'song' || this._overrides.has(`${ownerId}|${target}`)) return null;
+    const lane = activeLanes(automationOwner(this.project, ownerId)).find((l) => l.target === target);
+    return lane ? valueAt(lane.points, this.getAudiblePosition()) : null;
+  }
+
+  /** Transport beat the listener hears right now (position minus output latency). */
+  getAudiblePosition() {
+    if (this._playing && this.ctx && this.scheduler) {
+      const lat = (this.ctx.outputLatency || 0) + (this.ctx.baseLatency || 0);
+      const b = this.scheduler.beatAt(this.ctx.currentTime - lat);
+      if (b != null) return Math.max(0, b);
+    }
+    return this.getPosition();
   }
 
   _endAutomation(project = this.project) {

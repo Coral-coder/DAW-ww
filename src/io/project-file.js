@@ -1,7 +1,7 @@
-// Project save / load (JSON file format `heroic-daw-project`).
+// Project save / load (JSON file format `dawww-project`).
 import { PROJECT_FORMAT, normalizeProject } from '../core/model.js';
 
-export const PROJECT_EXTENSION = '.heroic.json';
+export const PROJECT_EXTENSION = '.daW3';
 
 /** Pretty JSON including samples (base64). */
 export function serializeProject(project) {
@@ -27,7 +27,8 @@ export function parseProjectFile(input) {
   }
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Not a valid project file (expected a JSON object).');
   const warnings = [];
-  if (data.format !== PROJECT_FORMAT) {
+  // Projects saved under earlier names of the app ("*-daw-project") are the same format.
+  if (data.format !== PROJECT_FORMAT && !/-daw-project$/.test(String(data.format || ''))) {
     const looksLikeProject = Array.isArray(data.tracks) || (data.patterns && typeof data.patterns === 'object') || typeof data.bpm === 'number';
     if (!looksLikeProject) throw new Error('Not a daWWW project (missing format, tracks and patterns).');
     warnings.push(data.format ? `Unknown format "${data.format}" — loaded as best effort.` : 'File has no format marker — loaded as best effort.');
@@ -72,7 +73,7 @@ export function safeFileName(name, fallback = 'project') {
   return s || fallback;
 }
 
-/** Download the project as `<name>.heroic.json`. */
+/** Download the project as `<name>.daW3`. */
 export function downloadProject(project, filename) {
   let name = filename || `${safeFileName(project.name, 'project')}${PROJECT_EXTENSION}`;
   if (!name.endsWith('.json')) name += PROJECT_EXTENSION;

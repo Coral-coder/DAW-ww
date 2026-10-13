@@ -19,6 +19,7 @@ import { mixTrack, createSongBuses, createSongMaster } from './mix.js';
 import { writeMelody, makeMotif, varyMotif } from './melody.js';
 import { DRUM_STYLES, resolveDrumStyle } from './drums.js';
 import { createEffect } from '../core/model.js';
+import { addRides } from './rides.js';
 
 const ROLE_INFO = {
   drums: { name: 'Drums', color: TRACK_COLORS[0], volume: 0.85, pan: 0 },
@@ -253,6 +254,7 @@ export function generateSong(opts = {}) {
   const roles = ROLES.filter((r) => used.has(r) && (r === 'drums' || g.presets?.[r]));
   const sections = planSections(g, { bpb, available: new Set(roles) });
   const hplan = planSectionHarmony({ genre: g, root, scale, rng: createRng(hash(seed, 'harm')), main: mainId || mainLoop.map((c) => c.roman), sections });
+  const progCache = new Map();
   const progs = sections.map((s) => {
     const src = hplan[s.type] || mainId;
     // the chorus re-uses the main loop's exact colours; other sections are voiced / coloured on their own
@@ -261,7 +263,10 @@ export function generateSong(opts = {}) {
       for (let off = 0; off < s.bars * bpb; off += loopBeats) for (const c of mainLoop) if (off + c.startBeat < s.bars * bpb) out.push({ ...c, startBeat: off + c.startBeat, durBeats: Math.min(c.durBeats, s.bars * bpb - off - c.startBeat) });
       return out;
     }
-    return generateProgression({ key: root, scale, genre: g.id, bars: s.bars, beatsPerBar: bpb, rng: createRng(hash(seed, s.type)), progression: src });
+    // same type & length -> the same chords (deterministic), so repeats share one progression
+    const ck = `${s.type}|${s.bars}`;
+    if (!progCache.has(ck)) progCache.set(ck, generateProgression({ key: root, scale, genre: g.id, bars: s.bars, beatsPerBar: bpb, rng: createRng(hash(seed, s.type)), progression: src }));
+    return progCache.get(ck);
   });
   const pcsOfKey = keyPitchClasses(root, scale);
 
@@ -297,14 +302,17 @@ export function generateSong(opts = {}) {
   const patternHarmony = {};
   const auto = new Map(tracks.map((t) => [t.id, new AutomationBuilder()]));
   const filterFx = new Map(); // trackId -> filter effect (added on demand for sweeps)
-  const sweep = (t, a, b, from, to) => {
+  const ensureFilter = (t) => {
     if (!filterFx.has(t.id)) {
       const fx = createEffect('filter', { type: 'lowpass', cutoff: 20000, resonance: 1.1, slope: '12', depth: 0, mix: 1 });
       filterFx.set(t.id, fx);
       t.fx.unshift(fx);
     }
-    auto.get(t.id).add(`fx:${filterFx.get(t.id).id}:cutoff`, filterSweepPoints(a, b, from, to));
+    return filterFx.get(t.id);
   };
+  const sweep = (t, a, b, from, to) => auto.get(t.id).add(`fx:${ensureFilter(t).id}:cutoff`, filterSweepPoints(a, b, from, to));
+  const sectionNotes = sections.map(() => ({}));
+  const padCache = new Map();
   const electronic = ELECTRONIC.has(g.family) || ['synthwave', 'kpop', 'pop', 'future-bass', 'chillwave', 'eurobeat'].includes(g.id);
   let best = { energy: -1, start: 0 };
   const sectionSlots = [];
@@ -341,19 +349,22 @@ export function generateSong(opts = {}) {
         const style = calm ? 'whole' : g.chordStyle;
         notes = progressionToNotes(progression, { style, rng: rrng, beatsPerBar: bpb, length: len, vel: 0.58 + s.energy * 0.22 });
       } else if (role === 'pad') {
-        let prev = [];
-        const padProg = progression.map((c) => {
-          const v = c.chord?.type === '5' ? c.notes.map((n) => (n < 52 ? n + 12 : n)) : voiceChord(c.chord, { prev, range: PAD_RANGE, maxVoices: 4, context: c.notes, center: 63 });
-          prev = v;
-          return { ...c, notes: v.length ? v : c.notes };
-        });
+        if (!padCache.has(progression)) {
+          let prev = [];
+          padCache.set(progression, progression.map((c) => {
+            const v = c.chord?.type === '5' ? c.notes.map((n) => (n < 52 ? n + 12 : n)) : voiceChord(c.chord, { prev, range: PAD_RANGE, maxVoices: 4, context: c.notes, center: 63 });
+            prev = v;
+            return { ...c, notes: v.length ? v : c.notes };
+          }));
+        }
+        const padProg = padCache.get(progression);
         notes = progressionToNotes(padProg, { style: 'whole', rng: rrng, beatsPerBar: bpb, length: len, vel: 0.5 + s.energy * 0.15 });
       } else if (role === 'lead') {
         if (melodyMode === 'classic' || s.name.toLowerCase() === 'solo') {
           notes = generateRoleNotes('lead', { genre: g.id, key: root, scale, progression, bars: s.bars, beatsPerBar: bpb, energy: s.energy, kind: s.kind, rng: rrng, melodyStyle: s.name.toLowerCase() === 'solo' ? 'lead' : undefined });
         } else {
           const chorusLike = s.kind === 'main';
-          const breakLike = s.kind === 'break' || s.kind === 'intro' || s.kind === 'outro';
+          const breakLike = (s.kind === 'break' && s.type !== 'bridge') || s.kind === 'intro' || s.kind === 'outro';
           let motif = chorusLike ? motifs.chorus : s.type === 'bridge' ? motifs.bridge : breakLike ? motifs.chorus : motifs.verse;
           if (breakLike) motif = varyMotif(motif, 'augment', rrng);
           if (s.kind === 'build') motif = varyMotif(motifs.verse, 'fragment', rrng);
@@ -376,6 +387,7 @@ export function generateSong(opts = {}) {
         applyGroove(notes, { genre: g.id, groove, role, bpm, rng: rrng, length: len, strum: strumFor(track.instrument), tripletGrid: role === 'drums' && tripletDrums, energy: s.energy });
         shapeDynamics(notes, { length: len, bpb, energy: s.energy, rise, fall, role });
       }
+      sectionNotes[si][role] = notes;
       const pat = createPattern(track.id, { name: `${ROLE_INFO[role].name} – ${s.label}`, length: len, notes: notes.map((n) => createNote(n.pitch, n.start, n.dur, n.vel)), color: track.color });
       patterns[pat.id] = pat;
       if (role !== 'drums' && role !== 'fx') patternHarmony[pat.id] = { harmony: harmonyOut, length: len };
@@ -399,6 +411,7 @@ export function generateSong(opts = {}) {
     const fadeBars = Math.min(8, outro.bars);
     master.automation.push({ id: uid('aut'), target: 'volume', enabled: true, points: [{ beat: songEnd - fadeBars * bpb, value: master.volume }, { beat: songEnd, value: 0 }] });
   }
+  addRides({ genre: g, tracks, sections, bpb, auto, notesBy: (i, role) => sectionNotes[i]?.[role], buses: [reverbBus, delayBus], electronic, rng: createRng(hash(seed, 'rides')), ensureFilter });
   for (const t of tracks) t.automation = auto.get(t.id).lanes();
   for (const t of tracks) {
     const top = sectionSlots.filter((x) => x.slots[t.id]).sort((a, b) => b.s.energy - a.s.energy)[0];

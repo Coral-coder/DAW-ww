@@ -234,11 +234,22 @@ function checkSong(s, label) {
   assert.ok(s.tracks.length >= 3, label);
   for (const t of s.tracks) {
     assert.ok(t.role, `${label}: role`);
-    assert.ok(t.instrument && t.instrument.preset, `${label}: instrument preset`);
-    if (t.role === 'drums') assert.equal(t.instrument.type, 'drums');
-    else assert.ok(G.ALL_PRESET_IDS.includes(t.instrument.preset), `${label}: ${t.instrument.preset}`);
+    assert.ok(t.instrument, `${label}: instrument`);
+    if (t.role === 'drums') {
+      assert.equal(t.instrument.type, 'drums');
+      assert.ok(G.DRUM_KIT_IDS.includes(t.instrument.preset) && t.instrument.params.kit === t.instrument.preset, `${label}: synth kit fallback`);
+    } else if (t.instrument.type === 'soundfont') {
+      // GM SoundFont with the closest synth preset as fallback
+      assert.ok(t.instrument.params.instrument && G.ALL_PRESET_IDS.includes(t.instrument.fallbackPreset), `${label}: soundfont fallback`);
+    } else assert.ok(G.ALL_PRESET_IDS.includes(t.instrument.preset), `${label}: ${t.instrument.preset}`);
     assert.ok(t.activePatternId && s.patterns[t.activePatternId], `${label}: active pattern`);
-    assert.deepEqual(t.sends, {});
+    // the generated mix sends only to the song's own buses
+    const busIds = new Set((s.buses || []).map((b) => b.id));
+    for (const [bus, v] of Object.entries(t.sends)) assert.ok(busIds.has(bus) && v > 0 && v <= 1, `${label}: send ${bus}`);
+    for (const lane of t.automation || []) {
+      assert.ok(lane.points.length >= 2 && lane.points.length <= 64, `${label}: sparse automation`);
+      if (lane.target.startsWith('fx:')) assert.ok(t.fx.some((f) => lane.target.startsWith(`fx:${f.id}:`)), `${label}: automation target exists`);
+    }
   }
   for (const [id, p] of Object.entries(s.patterns)) {
     assert.equal(p.id, id);

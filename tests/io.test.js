@@ -45,7 +45,7 @@ test('parseProjectFile validates and normalizes', () => {
   assert.throws(() => parseProjectFile(''), /empty/);
   assert.throws(() => parseProjectFile('[1,2]'), /JSON object/);
   assert.throws(() => parseProjectFile('{"hello":1}'), /Not a daWWW project/);
-  assert.throws(() => parseProjectFile('{"format":"heroic-daw-project","tracks":5}'), /tracks/);
+  assert.throws(() => parseProjectFile('{"format":"dawww-project","tracks":5}'), /tracks/);
   const partial = parseProjectFile(JSON.stringify({ bpm: 90, tracks: [{ id: 't1', name: 'X', type: 'instrument' }], clips: [{ id: 'c', trackId: 'gone' }] }));
   assert.equal(partial.bpm, 90);
   assert.equal(partial.format, PROJECT_FORMAT);
@@ -59,7 +59,7 @@ test('browser-only helpers are safe in Node', async () => {
   assert.equal(downloadBlob(new Blob(['x']), 'x.txt'), false);
   assert.equal(downloadProject(demoProject()), false);
   assert.equal(downloadStrudel('s("bd")', 'beat'), false);
-  const file = new File([serializeProject(demoProject())], 'demo.heroic.json');
+  const file = new File([serializeProject(demoProject())], 'demo.daW3');
   const p = await readFileAsProject(file);
   assert.equal(p.name, 'Demo');
 });

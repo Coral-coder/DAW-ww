@@ -224,7 +224,7 @@ export function createPatchView(app) {
         list.appendChild(h('div.pb-pal-cat', c));
         for (const type of items) {
           const it = h('div.pb-pal-item', { draggable: 'true', title: `${EFFECT_DEFS[type].description}\nDrag onto the board (or onto a cable to insert it) — click to add at the end of the chain` }, h('span.pb-pal-dot'), EFFECT_DEFS[type].name);
-          it.addEventListener('dragstart', (e) => { e.dataTransfer.setData('application/x-heroic-effect', type); e.dataTransfer.effectAllowed = 'copy'; });
+          it.addEventListener('dragstart', (e) => { e.dataTransfer.setData('application/x-dawww-effect', type); e.dataTransfer.effectAllowed = 'copy'; });
           it.addEventListener('click', () => addDevice(type));
           list.appendChild(it);
         }
@@ -880,7 +880,7 @@ export function createPatchView(app) {
   // ---------------------------------------------------------------- drop from the palette / browser
   stage.addEventListener('dragover', (e) => {
     if (mode !== 'patch' || !isPatchActive(curTrack())) return;
-    if (![...(e.dataTransfer?.types || [])].includes('application/x-heroic-effect')) return;
+    if (![...(e.dataTransfer?.types || [])].includes('application/x-dawww-effect')) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('[data-cable-id]');
@@ -889,7 +889,7 @@ export function createPatchView(app) {
   });
   stage.addEventListener('dragleave', () => canvas.querySelectorAll('.pb-cable.drop').forEach((x) => x.classList.remove('drop')));
   stage.addEventListener('drop', (e) => {
-    const type = e.dataTransfer?.getData('application/x-heroic-effect');
+    const type = e.dataTransfer?.getData('application/x-dawww-effect');
     if (!type || !EFFECT_DEFS[type]) return;
     e.preventDefault();
     const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('[data-cable-id]');

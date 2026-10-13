@@ -14,3 +14,4 @@ export * from './groove.js';
 export * from './arrange.js';
 export * from './mix.js';
 export * from './sound.js';
+export * from './rides.js';

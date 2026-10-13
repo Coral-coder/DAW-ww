@@ -1,9 +1,9 @@
-// IndexedDB persistence of projects in the browser ('heroic-daw' db, 'projects' store).
+// IndexedDB persistence of projects in the browser ('dawww' db, 'projects' store).
 // In environments without IndexedDB (Node), list/load/delete resolve to empty results and
 // saveLocal rejects with a readable error.
 import { uid } from '../core/util.js';
 
-const DB_NAME = 'heroic-daw';
+const DB_NAME = 'dawww';
 const STORE = 'projects';
 const DB_VERSION = 1;
 
@@ -65,9 +65,44 @@ export async function saveLocal(project) {
   return { id, name: record.name, modifiedAt: record.modifiedAt };
 }
 
+/**
+ * One-time migration: copy projects from databases created by earlier versions of the app
+ * (named "<old-name>-daw" with the same 'projects' store) into the current database.
+ */
+let migrated = null;
+function migrateLegacy() {
+  if (migrated) return migrated;
+  migrated = (async () => {
+    if (typeof indexedDB.databases !== 'function') return;
+    const dbs = await indexedDB.databases().catch(() => []);
+    for (const { name } of dbs) {
+      if (!name || name === DB_NAME || !/-daw$/.test(name)) continue;
+      const old = await new Promise((res) => {
+        const r = indexedDB.open(name);
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => res(null);
+      });
+      if (!old || !old.objectStoreNames.contains(STORE)) { old?.close(); continue; }
+      const records = await new Promise((res) => {
+        const req = old.transaction(STORE, 'readonly').objectStore(STORE).getAll();
+        req.onsuccess = () => res(req.result || []);
+        req.onerror = () => res([]);
+      });
+      old.close();
+      for (const rec of records) {
+        const exists = await run('readonly', (st) => st.get(rec.id));
+        if (!exists) await run('readwrite', (st) => st.put(rec));
+      }
+      indexedDB.deleteDatabase(name);
+    }
+  })().catch(() => {});
+  return migrated;
+}
+
 /** [{ id, name, modifiedAt }] newest first. Resolves [] when IndexedDB is unavailable. */
 export async function listLocal() {
   if (!isAutosaveAvailable()) return [];
+  await migrateLegacy();
   const all = (await run('readonly', (s) => s.getAll())) || [];
   return all
     .map((r) => ({ id: r.id, name: r.name, modifiedAt: r.modifiedAt, savedAt: r.savedAt }))

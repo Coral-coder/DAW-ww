@@ -48,7 +48,7 @@ Or follow the signal → **[coral-coder.github.io/DAW-ww](https://coral-coder.gi
 
 ### ⟁ on leaving
 
-What you make here can be carried out — as `.heroic.json`, as `.wav`, as `.mid`, as code.
+What you make here can be carried out — as `.daW3`, as `.wav`, as `.mid`, as code.
 What you carry out can be brought back. It will remember where you left off.
 
 ### ⟁ for those who must know how

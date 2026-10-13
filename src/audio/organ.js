@@ -13,11 +13,19 @@ const VIBRATO = {
 };
 const ROTARY_RATES = { off: [0, 0], slow: [0.8, 0.67], fast: [6.7, 5.8] }; // [horn, drum] Hz
 
-function drawbarWave(ctx, levels) {
-  const key = 'organ:' + levels.map((l) => Math.round(l)).join('');
+// Hammond tonewheels stop at ~5.9 kHz: higher drawbar pitches fold back an octave ("foldback").
+const TOP_WHEEL_HZ = 5920;
+function drawbarWave(ctx, levels, f0 = 0) {
+  const fold = DRAWBAR_HARMONICS.map((h) => {
+    let hh = h;
+    while (f0 > 0 && hh > 1 && (f0 / 2) * hh > TOP_WHEEL_HZ && hh % 2 === 0) hh /= 2;
+    return hh;
+  });
+  const key = 'organ:' + levels.map((l) => Math.round(l)).join('') + ':' + fold.join(',');
   return getPeriodicWave(ctx, key, () => {
     const real = new Float32Array(17), imag = new Float32Array(17);
-    levels.forEach((l, i) => { imag[DRAWBAR_HARMONICS[i]] += (clamp(Math.round(l), 0, 8) / 8) * 0.32; });
+    // tonewheel drawbar steps are ~3 dB apart (level 8 = 0 dB, 1 = -21 dB), not linear
+    levels.forEach((l, i) => { const lv = clamp(Math.round(l), 0, 8); if (lv) imag[fold[i]] += Math.pow(10, (-3 * (8 - lv)) / 20) * 0.32; });
     return { real, imag, normalize: false };
   });
 }
@@ -109,8 +117,7 @@ export class OrganInstrument extends BaseInstrument {
     const key = lv.map((l) => Math.round(l)).join('');
     if (key !== this._lastKey && this.voices) {
       this._lastKey = key;
-      const w = drawbarWave(this.ctx, lv);
-      for (const v of this.voices) if (!v.done && v.osc) { try { v.osc.setPeriodicWave(w); } catch { /* */ } }
+      for (const v of this.voices) if (!v.done && v.osc) { try { v.osc.setPeriodicWave(drawbarWave(this.ctx, lv, v.f0)); } catch { /* */ } }
     }
   }
 
@@ -131,9 +138,9 @@ export class OrganInstrument extends BaseInstrument {
     v.pitch = pitch; v.vel = vel; v.start = t; v.envs = [];
     const f = midiToFreq(pitch + num(p.transpose, 0, -48, 48));
     const osc = v.src(ctx.createOscillator());
-    osc.setPeriodicWave(drawbarWave(ctx, this._levels()));
+    osc.setPeriodicWave(drawbarWave(ctx, this._levels(), f));
     osc.frequency.value = f / 2;
-    v.osc = osc;
+    v.osc = osc; v.f0 = f;
     const amp = v.node(ctx.createGain());
     amp.gain.value = 0;
     osc.connect(amp);
@@ -143,7 +150,9 @@ export class OrganInstrument extends BaseInstrument {
     v.ampSt = envNote(amp.gain, t, tOff, { a: num(p.attack, 0.004, 0.001, 5), d: 1, s: 1, r: num(p.release, 0.03, 0.005, 10) }, peak, 0);
     v.envs.push([amp.gain, v.ampSt]);
     // percussion: single decaying harmonic
-    if (p.perc) {
+    // Hammond percussion is single-trigger: it only fires when no other key is already held
+    const held = [...this.voices].some((o) => !o.done && o !== v && o.start < t - 0.002 && (o.ampSt?.tOff == null || o.ampSt.tOff > t));
+    if (p.perc && !held) {
       const po = v.src(ctx.createOscillator());
       po.type = 'sine';
       po.frequency.value = clamp(f * (p.percHarmonic === 'second' ? 2 : 3), 1, ctx.sampleRate / 2);

@@ -1,7 +1,12 @@
 // Automation lanes — pure helpers (Node-safe). See docs/ARCHITECTURE.md "Automation".
 //
 //   AutomationLane { id, target, points:[{beat, value}], enabled }
-//   target: 'volume' | 'pan' | 'send:<busId>' | 'inst:<paramKey>' | 'fx:<fxId>:<paramKey>'
+//   target: 'volume' | 'pan' | 'mute' | 'send:<busId>' | 'inst:<paramKey>' | 'fx:<fxId>:<paramKey>'
+//           | 'fxen:<fxId>' (effect on/bypass, step lane) | 'cable:<cableId>' (plugboard cable gain)
+//   inst / fx param keys may be nested: 'inst:pads.<padKey>.<param>' (drum pads), 'inst:values.<address>' /
+//   'fx:<fxId>:values.<address>' (Faust plugin controls). enum / bool params are encoded as numbers
+//   (option index / 0|1, see encodeParam / decodeParam) and play as steps.
+// Owners: tracks, buses (bus.automation) and the master (project.master.automation) — automationOwner().
 //
 // Points are kept sorted by beat. Between points the value is interpolated linearly; before the
 // first point the first value is held, after the last point the last value is held.
@@ -12,18 +17,23 @@ export const MIXER_TARGETS = {
   volume: { key: 'volume', label: 'Volume', type: 'number', min: 0, max: 1.5, default: 0.8, step: 0.01, curve: 'lin' },
   pan: { key: 'pan', label: 'Pan', type: 'number', min: -1, max: 1, default: 0, step: 0.01, curve: 'lin' },
   send: { key: 'send', label: 'Send', type: 'number', min: 0, max: 1, default: 0, step: 0.01, curve: 'lin' },
+  mute: { key: 'mute', label: 'Mute', type: 'number', min: 0, max: 1, default: 0, step: 1, curve: 'lin', stepped: true },
+  fxen: { key: 'enabled', label: 'On / bypass', type: 'number', min: 0, max: 1, default: 1, step: 1, curve: 'lin', stepped: true },
+  cable: { key: 'gain', label: 'Cable gain', type: 'number', min: 0, max: 2, default: 1, step: 0.01, curve: 'lin' },
 };
 
 /** 'fx:fx_1:cutoff' -> { kind:'fx', fxId:'fx_1', key:'cutoff' }; unknown -> null. */
 export function parseTarget(target) {
   if (typeof target !== 'string' || !target) return null;
-  if (target === 'volume' || target === 'pan') return { kind: target, key: target };
+  if (target === 'volume' || target === 'pan' || target === 'mute') return { kind: target, key: target };
   const i = target.indexOf(':');
   if (i < 0) return null;
   const kind = target.slice(0, i);
   const rest = target.slice(i + 1);
   if (kind === 'send' && rest) return { kind: 'send', busId: rest, key: rest };
   if (kind === 'inst' && rest) return { kind: 'inst', key: rest };
+  if (kind === 'fxen' && rest) return { kind: 'fxen', fxId: rest, key: 'enabled' };
+  if (kind === 'cable' && rest) return { kind: 'cable', cableId: rest, key: rest };
   if (kind === 'fx') {
     const j = rest.indexOf(':');
     if (j > 0 && j < rest.length - 1) return { kind: 'fx', fxId: rest.slice(0, j), key: rest.slice(j + 1) };
@@ -34,6 +44,9 @@ export function parseTarget(target) {
 export const targetString = {
   volume: () => 'volume',
   pan: () => 'pan',
+  mute: () => 'mute',
+  fxen: (fxId) => `fxen:${fxId}`,
+  cable: (cableId) => `cable:${cableId}`,
   send: (busId) => `send:${busId}`,
   inst: (key) => `inst:${key}`,
   fx: (fxId, key) => `fx:${fxId}:${key}`,
@@ -115,18 +128,119 @@ export function controlOverrides(track, beat) {
     const t = parseTarget(l.target);
     if (t.kind === 'inst') { (inst ||= {})[t.key] = valueAt(l.points, beat); }
     else if (t.kind === 'fx') { fx ||= {}; (fx[t.fxId] ||= {})[t.key] = valueAt(l.points, beat); }
+    else if (t.kind === 'fxen') { fx ||= {}; (fx[t.fxId] ||= {})[FX_ENABLE_KEY] = valueAt(l.points, beat); }
   }
   return { inst, fx };
 }
 
-/** Does the project contain inst:/fx: automation that needs control-rate evaluation? */
-export function hasControlAutomation(project) {
-  return (project?.tracks || []).some((t) => activeLanes(t).some((l) => { const k = parseTarget(l.target).kind; return k === 'inst' || k === 'fx'; }));
+/** Key used inside a controlOverrides().fx[fxId] map for the effect's on/bypass lane ('fxen:'). */
+export const FX_ENABLE_KEY = '__en';
+
+/** Plugboard cable-gain overrides of a track at `beat`: {cableId: gain} | null. */
+export function cableOverrides(track, beat) {
+  let out = null;
+  for (const l of activeLanes(track)) {
+    const t = parseTarget(l.target);
+    if (t.kind === 'cable') (out ||= {})[t.cableId] = valueAt(l.points, beat);
+  }
+  return out;
 }
 
-/** Is any automation (incl. master) active in the project? */
+/** Every automation owner of a project: tracks, buses, master. */
+export function automationOwners(project) {
+  return [...(project?.tracks || []), ...(project?.buses || []), ...(project?.master ? [project.master] : [])];
+}
+
+/** Owner by id: a track id, a bus id or 'master'. */
+export function automationOwner(project, id) {
+  if (!project) return null;
+  if (id === 'master') return project.master || null;
+  return project.tracks?.find((t) => t.id === id) || project.buses?.find((b) => b.id === id) || null;
+}
+
+const CONTROL_KINDS = new Set(['inst', 'fx', 'fxen', 'cable']);
+/** Does the project contain inst:/fx:/fxen:/cable: automation that needs control-rate evaluation? */
+export function hasControlAutomation(project) {
+  return automationOwners(project).some((o) => activeLanes(o).some((l) => CONTROL_KINDS.has(parseTarget(l.target).kind)));
+}
+
+/** Is any automation (tracks, buses, master) active in the project? */
 export function hasAutomation(project) {
-  return activeLanes(project?.master).length > 0 || (project?.tracks || []).some((t) => activeLanes(t).length > 0);
+  return automationOwners(project).some((o) => activeLanes(o).length > 0);
+}
+
+/** Does a track/bus have an active 'mute' lane? (muted tracks with one keep playing in song mode) */
+export function hasMuteLane(owner) {
+  return activeLanes(owner).some((l) => l.target === 'mute');
+}
+
+// ---------------------------------------------------------------------------- enum / bool / nested params
+/** Numeric lane def for a ParamDef: enum -> option index 0..n-1 (stepped), bool -> 0/1 (stepped). */
+export function laneDef(def) {
+  if (!def) return { min: 0, max: 1, step: 0.01, curve: 'lin', type: 'number' };
+  if (def.type === 'enum') return { ...def, type: 'number', min: 0, max: Math.max(1, (def.options?.length || 1) - 1), step: 1, curve: 'lin', stepped: true, enumOptions: def.options || [] };
+  if (def.type === 'bool') return { ...def, type: 'number', min: 0, max: 1, step: 1, curve: 'lin', stepped: true, boolParam: true };
+  return def;
+}
+
+/** Raw param value -> lane number (enum: option index, bool: 0/1). null when not representable. */
+export function encodeParam(def, raw) {
+  if (def?.type === 'enum') {
+    const i = (def.options || []).findIndex((o) => o.value === raw || String(o.value) === String(raw));
+    return i >= 0 ? i : null;
+  }
+  if (def?.type === 'bool') return raw ? 1 : 0;
+  if (typeof raw === 'boolean') return raw ? 1 : 0;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Lane number -> raw param value (inverse of encodeParam). */
+export function decodeParam(def, v) {
+  if (def?.type === 'enum') {
+    const ops = def.options || [];
+    if (!ops.length) return v;
+    return ops[clamp(Math.round(Number(v) || 0), 0, ops.length - 1)].value;
+  }
+  if (def?.type === 'bool') return Number(v) >= 0.5;
+  return v;
+}
+
+/**
+ * params with automation overrides {key: value} merged in; nested keys are written into copies:
+ * 'pads.<padKey>.<param>' -> params.pads[padKey][param], 'values.<address>' -> params.values[address].
+ */
+export function mergeParamOverrides(params, ov) {
+  const out = { ...(params || {}) };
+  if (!ov) return out;
+  let padsCopied = false, valuesCopied = false;
+  for (const [k, v] of Object.entries(ov)) {
+    if (k.startsWith('pads.')) {
+      const rest = k.slice(5);
+      const j = rest.indexOf('.');
+      if (j <= 0 || j === rest.length - 1) continue;
+      const pad = rest.slice(0, j), key = rest.slice(j + 1);
+      if (!padsCopied) { out.pads = { ...(out.pads || {}) }; padsCopied = true; }
+      out.pads[pad] = { ...(out.pads[pad] || {}), [key]: v };
+    } else if (k.startsWith('values.') && k.length > 7) {
+      if (!valuesCopied) { out.values = { ...(out.values || {}) }; valuesCopied = true; }
+      out.values[k.slice(7)] = v;
+    } else out[k] = v;
+  }
+  return out;
+}
+
+/** Read a (possibly nested, see mergeParamOverrides) param key from a params object. */
+export function readParam(params, key) {
+  if (!params) return undefined;
+  if (key.startsWith('pads.')) {
+    const rest = key.slice(5);
+    const j = rest.indexOf('.');
+    if (j <= 0) return undefined;
+    return params.pads?.[rest.slice(0, j)]?.[rest.slice(j + 1)];
+  }
+  if (key.startsWith('values.')) return params.values?.[key.slice(7)];
+  return params[key];
 }
 
 // ---------------------------------------------------------------------------- value mapping

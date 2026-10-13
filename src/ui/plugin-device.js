@@ -11,7 +11,7 @@ export function setPluginDialogOpener(fn) { opener = fn; }
 /** openPluginDialog({tab, kind, type, trackId, onPickEffect}) — no-op until the dialog module is installed. */
 export function openPluginDialog(opts = {}) {
   if (opener) return opener(opts);
-  import('./plugins-dialog.js').then((m) => m.openPluginsDialog(window.heroic, opts)).catch((e) => console.warn('[plugins]', e));
+  import('./plugins-dialog.js').then((m) => m.openPluginsDialog(window.dawww, opts)).catch((e) => console.warn('[plugins]', e));
   return null;
 }
 

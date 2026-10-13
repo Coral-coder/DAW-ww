@@ -6,7 +6,7 @@ import { clamp, dbToGain } from '../core/util.js';
 import { getGenre } from './genres.js';
 
 /** Fader trims by role in dB (relative to 0.8 = unity-ish). Calibrated with the headless render QA (see report). */
-export const ROLE_TRIM_DB = { drums: 0, bass: -1.5, chords: -6, pad: -10, lead: -5, arp: -11, fx: -13 };
+export const ROLE_TRIM_DB = { drums: -3, bass: 2.5, chords: 2, pad: -5, lead: -1.5, arp: -2, fx: -10 };
 
 /** High-pass (Hz) per role: everything except kick & bass leaves the low end alone. */
 const ROLE_HPF = { chords: 140, pad: 190, lead: 200, arp: 260, fx: 300 };

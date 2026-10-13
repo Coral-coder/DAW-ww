@@ -4,7 +4,7 @@ import { uid } from './util.js';
 import { normalizeLane } from './automation.js';
 import { normalizePatch } from './patch.js';
 
-export const PROJECT_FORMAT = 'heroic-daw-project';
+export const PROJECT_FORMAT = 'dawww-project';
 export const PROJECT_VERSION = 1;
 
 export const TRACK_COLORS = [
@@ -98,7 +98,7 @@ export function createClip(trackId, opts = {}) {
 }
 
 export function createBus(name, fx = []) {
-  return { id: uid('bus'), name, volume: 0.8, pan: 0, mute: false, fx };
+  return { id: uid('bus'), name, volume: 0.8, pan: 0, mute: false, fx, automation: [] };
 }
 
 export function createScene(name, slots = {}) {
@@ -154,7 +154,7 @@ export function normalizeProject(p) {
   out.patterns = p.patterns || {};
   out.clips = p.clips || [];
   out.scenes = p.scenes?.length ? p.scenes : base.scenes;
-  out.buses = p.buses || base.buses;
+  out.buses = (p.buses || base.buses).map((b) => ({ ...b, fx: b.fx || [], automation: Array.isArray(b.automation) ? b.automation.map(normalizeLane) : [] }));
   out.samples = p.samples || {};
   out.markers = p.markers || [];
   return out;

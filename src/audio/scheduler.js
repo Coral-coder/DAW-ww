@@ -10,12 +10,24 @@
 //   { type:'click', beat, accent }
 import * as strudel from '../code/strudel.js';
 import { beatsPerBar } from '../core/model.js';
+import { hasMuteLane } from '../core/automation.js';
 
 export const EPS = 1e-7;
 const inWin = (x, b0, b1) => x >= b0 - EPS && x < b1 - EPS;
 
 export function isTrackAudible(project, track) {
   if (!track || track.mute) return false;
+  const anySolo = project.tracks.some((t) => t.solo);
+  return !anySolo || !!track.solo;
+}
+
+/**
+ * Should the scheduler collect this track's events? Like isTrackAudible, except that in song mode a
+ * muted track with an active 'mute' automation lane keeps playing (its mute gain follows the lane).
+ */
+export function isTrackPlayable(project, track, mode) {
+  if (isTrackAudible(project, track)) return true;
+  if (!track || mode !== 'song' || !track.mute || !hasMuteLane(track)) return false;
   const anySolo = project.tracks.some((t) => t.solo);
   return !anySolo || !!track.solo;
 }
@@ -110,7 +122,7 @@ export function collectEvents(project, b0, b1, opts = {}) {
   const swing = project.swing || 0;
   const bpb = beatsPerBar(project);
   for (const track of project.tracks) {
-    if (!isTrackAudible(project, track)) continue;
+    if (!isTrackPlayable(project, track, mode)) continue;
     try {
       if (track.type === 'code') {
         collectCode(out, project, track, b0, b1, bpb, opts);

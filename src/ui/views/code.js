@@ -12,10 +12,10 @@ import * as strudel from '../../code/strudel.js';
 import { songToCode, applySongCode } from '../../code/song-code.js';
 import { PRESETS, DRUM_KITS } from '../../audio/index.js';
 
-const LS_AUTO = 'heroic-code-autoapply';
-const LS_VIZ_H = 'heroic-code-viz-h';
-const LS_REF = 'heroic-code-ref-open';
-const LS_WIN = 'heroic-code-viz-window';
+const LS_AUTO = 'dawww-code-autoapply';
+const LS_VIZ_H = 'dawww-code-viz-h';
+const LS_REF = 'dawww-code-ref-open';
+const LS_WIN = 'dawww-code-viz-window';
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } };
 
