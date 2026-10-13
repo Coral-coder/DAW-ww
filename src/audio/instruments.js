@@ -48,16 +48,40 @@ export class Instrument {
     this.def = instrumentDef;
     // 'drums' with params.machine plays real drum-machine samples (src/audio/library) — same engine as 'drumsampler'
     const kind = usesDrumSampler(type, params) ? 'drumsampler' : type;
-    if (!this.engine || this.type !== type || this._kind !== kind) {
+    // A plugin that failed to load and was replaced by its fallback synth: rebuild only if the plugin settings change.
+    const pluginKeyJson = isPluginType(type) ? JSON.stringify(params) : null;
+    const retryPlugin = this.fallbackActive && pluginKeyJson !== this._pluginParamsJson;
+    if (this.fallbackActive && !retryPlugin && this.type === type) { this.def = instrumentDef; return; }
+    if (!this.engine || this.type !== type || this._kind !== kind || retryPlugin) {
       const old = this.engine;
       this._kind = kind;
+      this.fallbackActive = false;
+      this._fallbackReady = null;
       this.engine = isPluginType(type) ? new PluginInstrument(type, this.ctx, this.output, params, this.opts) : new ENGINES[kind](this.ctx, this.output, params, this.opts);
       if (old) { try { old.dispose(); } catch (e) { warn(e); } }
+      if (isPluginType(type)) {
+        this._pluginParamsJson = pluginKeyJson;
+        if (instrumentDef?.fallbackPreset) this._watchFallback(this.engine, instrumentDef.fallbackPreset);
+      }
     } else {
       try { this.engine.setParams(params); } catch (e) { warn(e); }
     }
     this.type = type;
     this.params = params;
+  }
+  /** If the plugin fails to load, swap in the built-in preset `fallbackPreset` so the track never goes silent. */
+  _watchFallback(engine, presetId) {
+    this._fallbackReady = Promise.resolve(engine.ready).then((ok) => {
+      if (ok || this.engine !== engine) return ok;
+      const fb = resolveInstrument({ preset: presetId, params: {} });
+      const Engine = ENGINES[fb.type];
+      if (!Engine) return false;
+      warn(`plugin failed (${engine.error || 'unknown error'}) — using preset "${presetId}" instead`);
+      this.engine = new Engine(this.ctx, this.output, fb.params, this.opts);
+      this.fallbackActive = true;
+      try { engine.dispose(); } catch (e) { warn(e); }
+      return true;
+    }, () => false);
   }
   trigger(time, pitch, vel, durSec, extra) {
     try { this.engine.trigger(time, pitch, vel, durSec, extra || {}); } catch (e) { warn(e); }
@@ -66,9 +90,9 @@ export class Instrument {
   noteOff(pitch, time) { try { this.engine.noteOff(pitch, time); } catch (e) { warn(e); } }
   allNotesOff(time) { try { this.engine.allNotesOff(time); } catch (e) { warn(e); } }
   /** Plugin instruments (soundfont/faust/wam): resolves true when playable, false on failure. Built-ins: null. */
-  get ready() { return this.engine?.ready ?? null; }
-  /** User-facing load error of a plugin instrument (null when fine). */
-  get error() { return this.engine?.error ?? null; }
+  get ready() { return this._fallbackReady || (this.engine?.ready ?? null); }
+  /** User-facing load error of a plugin instrument (null when fine or when the fallback preset is playing). */
+  get error() { return this.fallbackActive ? null : (this.engine?.error ?? null); }
   /** value -1..1 (synth only; others ignore). */
   pitchBend(value, time) { try { this.engine.pitchBend?.(value, time); } catch (e) { warn(e); } }
   /** Number of currently allocated voices (for meters/debug). */
