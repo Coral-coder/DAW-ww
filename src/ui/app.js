@@ -18,6 +18,7 @@ export const VIEWS = [
   { id: 'mixer', label: 'Mixer', icon: 'mixer', key: '5', module: './views/mixer.js', factory: 'createMixerView', help: 'Levels, panning, sends, inserts and buses.' },
   { id: 'code', label: 'Code', icon: 'code', key: '6', module: './views/code.js', factory: 'createCodeView', help: 'Strudel-style live coding; import & expand .strudel files.' },
   { id: 'patch', label: 'Plugboard', icon: 'plug', key: '7', module: './views/patch.js', factory: 'createPatchView', help: 'Plugboard: patch effects with cables — parallel chains, splits, sidechain ducking, whole-song routing.' },
+  { id: 'setlist', label: 'Setlist', icon: 'sparkles', key: '8', module: './views/setlist.js', factory: 'createSetlistView', help: 'Setlist: an endless DJ set — pick a genre and key, every layer loops and evolves phrase by phrase; energy arc, key moves, per-layer control.' },
 ];
 
 export async function createApp(rootEl) {
