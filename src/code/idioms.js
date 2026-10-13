@@ -591,7 +591,6 @@ export function velocityModel(evs, L, bpb, tol = VEL_TOL) {
       const segs = barList.map((list, b) => ({ text: !list.length ? '__' : fits[b] ? ptext : own[b], w: 1 }));
       if (segs.some((x) => x.text === null)) continue;
       cands.push(barsText(fill(segs)));
-      break;
     }
     for (const t of cands) if (best === null || t.length < best.length) best = t;
   }
