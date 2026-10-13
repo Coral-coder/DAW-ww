@@ -1,0 +1,17 @@
+{
+  "name": "daW³",
+  "short_name": "daW³",
+  "description": "A studio in a tab: sequencing, synths, drum machines, generative composition, live coding and an endless DJ setlist.",
+  "start_url": "../../?pwa",
+  "scope": "../../",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0e0f14",
+  "theme_color": "#0e0f14",
+  "categories": ["music", "entertainment", "productivity"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
