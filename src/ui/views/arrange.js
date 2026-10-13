@@ -608,9 +608,13 @@ export function createArrangeView(app) {
       if (headH) {
         ctx.fillStyle = theme.clipText;
         ctx.fillText(label, tx, y + headH / 2 + 0.5, Math.max(10, vx1 - tx - 4));
-      } else {
-        ctx.fillStyle = theme.text;
-        ctx.fillText(label, tx, y + hh / 2, Math.max(10, vx1 - tx - 4));
+      } else { // compact lanes: label on a chip so it stays readable over the preview
+        const maxW = Math.max(10, vx1 - tx - 6);
+        const tw = Math.min(ctx.measureText(label).width, maxW);
+        ctx.fillStyle = rgba(rgb, 0.92);
+        ctx.fillRect(tx - 3, y + hh / 2 - 7, tw + 6, 14);
+        ctx.fillStyle = theme.clipText;
+        ctx.fillText(label, tx, y + hh / 2 + 0.5, maxW);
       }
     }
     ctx.restore();

@@ -1,6 +1,7 @@
 // Instrument presets (pure data, Node-safe) + preset/def resolution.
 // PRESETS[id] = { name, category, roles[], genres[], instrument:{type, params} }
 import { getParamDefaults, sanitizeParams, INSTRUMENT_DEFS } from './defs.js';
+import { DRUM_KITS } from './kits.js';
 
 const synth = (params) => ({ type: 'synth', params });
 const fm = (params) => ({ type: 'fm', params });
@@ -394,7 +395,9 @@ export function resolveInstrumentDef(def) {
   const preset = d.preset ? PRESETS[d.preset] : null;
   let type = preset ? preset.instrument.type : d.type;
   if (!INSTRUMENT_DEFS[type]) type = 'synth';
-  const params = mergeParams(type, getParamDefaults(type), preset?.instrument.params, d.params);
+  let params = mergeParams(type, getParamDefaults(type), preset?.instrument.params, d.params);
+  // Drum tracks store their kit id in `preset`; an explicit params.kit still wins.
+  if (type === 'drums' && !d.params?.kit && d.preset && DRUM_KITS[d.preset]) params = { ...params, kit: d.preset };
   return { type, params: sanitizeParams(type, params) };
 }
 

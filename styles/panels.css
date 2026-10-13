@@ -69,7 +69,6 @@
 .as-tabs .tab-body { padding: 8px 10px 16px; }
 .as-badge { min-width: 15px; height: 15px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 10px; line-height: 15px; text-align: center; padding: 0 4px; }
 .as-badge.warn { background: var(--warn); color: #222; }
-.as-ctx { font-size: 11px; color: var(--text-3); text-transform: none; letter-spacing: 0; }
 .as-explain { margin: 4px 0 6px; font-size: 12px; color: var(--text-2); line-height: 1.45; }
 .as-section { margin: 0 0 14px; }
 .as-section-title { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-3); margin: 0 0 6px; padding-bottom: 3px; border-bottom: 1px solid var(--line); }

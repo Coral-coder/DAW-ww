@@ -229,11 +229,11 @@ export function keyName(root, scaleId = 'major') {
 
 /** Parse 'C major', 'F# minor', 'Am', 'Eb', 'D dorian' -> {root, scale} | null. */
 export function parseKey(text) {
-  const m = /^\s*([A-Ga-g][#♯b♭]?)\s*(m(?!aj)|min(?:or)?|maj(?:or)?)?\s*([a-z-]+)?\s*$/i.exec(String(text));
+  const m = /^\s*([A-Ga-g][#♯b♭]?)\s*(maj(?:or)?|min(?:or)?|m)?(?![a-z])\s*([a-z][a-z -]*)?\s*$/i.exec(String(text));
   if (!m) return null;
   const root = parsePitchClass(m[1]);
   let scale = 'major';
-  if (m[2] && /^m(in(or)?)?$/i.test(m[2])) scale = 'minor';
+  if (m[2] && /^m(in(or)?)?$/.test(m[2].toLowerCase()) && m[2] !== 'M') scale = 'minor';
   if (m[3]) scale = resolveScaleId(m[3]);
   return { root, scale };
 }

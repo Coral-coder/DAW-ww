@@ -67,7 +67,8 @@ test('scale notes, membership and snapping', () => {
   assert.equal(T.stepInScale(60, -1, 0, 'major'), 59);
   assert.equal(T.stepInScale(60, 7, 0, 'major'), 72);
   assert.equal(T.stepInScale(57, 2, 9, 'minor-pentatonic'), 62);
-  assert.equal(T.resolveScaleId('aeolian'), 'minor');
+  assert.equal(T.resolveScaleId('natural-minor'), 'minor');
+  assert.equal(T.resolveScaleId('Harmonic Minor'), 'harmonic-minor');
 });
 
 test('chord types: required set and spellings', () => {

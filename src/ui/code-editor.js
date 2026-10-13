@@ -46,7 +46,8 @@ export function highlightCode(src) {
     // line start `$:` / `name:` labels
     if ((c === '$' || /[A-Za-z_]/.test(c)) && (i === 0 || src[i - 1] === '\n' || /^[ \t]*$/.test(src.slice(src.lastIndexOf('\n', i - 1) + 1, i)))) {
       const lm = /^(\$|[A-Za-z_]\w*):(?!:)/.exec(rest);
-      if (lm && (lm[1] === '$' || !/^\w+:\s*\w+\s*[,}]/.test(rest))) {
+      const lineRest = rest.split('\n')[0];
+      if (lm && (lm[1] === '$' || (/^\w+:\s*[A-Za-z_$][\w$]*\s*\(/.test(lineRest) && !/,\s*$/.test(lineRest)))) {
         out += `<span class="tk-label">${esc(lm[0])}</span>`;
         i += lm[0].length; prevSig = ':';
         continue;

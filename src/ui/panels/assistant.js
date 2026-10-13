@@ -2,7 +2,7 @@
 // Friendly and educational — every suggestion explains *why*.
 import { h, icon } from '../dom.js';
 import { iconButton, button, tabs, select, toggle, toast } from '../components.js';
-import { beatsPerBar, patternsForTrack, createNote } from '../../core/model.js';
+import { beatsPerBar, createNote } from '../../core/model.js';
 import { createRng } from '../../core/util.js';
 import * as theory from '../../theory/index.js';
 import * as genres from '../../gen/genres.js';
@@ -96,8 +96,7 @@ export function createAssistantPanel(app) {
   // ---------------------------------------------------------------- shell
   const refreshBtn = iconButton('dice', () => { recsKey = ''; computeRecs(true); rerender(true); toast('Assistant refreshed', { timeout: 1200 }); }, 'Refresh suggestions');
   refreshBtn.firstChild.replaceWith(icon('loop', 15));
-  const header = h('div.panel-header', icon('bulb', 14), h('span.title', 'Assistant'), h('span.as-ctx'), h('div.spacer'), refreshBtn, iconButton('x', () => ui.set({ assistantOpen: false }), 'Hide assistant (A)'));
-  const ctxEl = header.querySelector('.as-ctx');
+  const header = h('div.panel-header', icon('bulb', 14), h('span.title', 'Assistant'), h('div.spacer'), refreshBtn, iconButton('x', () => ui.set({ assistantOpen: false }), 'Hide assistant (A)'));
   const tabItems = [
     { id: 'ideas', label: 'Ideas', icon: 'sparkles', render: renderIdeas },
     { id: 'theory', label: 'Theory', icon: 'music', render: renderTheory },
@@ -555,9 +554,6 @@ export function createAssistantPanel(app) {
     clearTimeout(timer);
     timer = setTimeout(() => {
       const recsChanged = computeRecs(false);
-      const t = selectedTrack();
-      ctxEl.textContent = '';
-      ctxEl.title = t ? `Selected: ${t.name}` : '';
       if (activeTab === 'ideas') { if (recsChanged) rerender(); }
       else {
         const s = theorySig();
