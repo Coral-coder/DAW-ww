@@ -8,7 +8,7 @@ import { SCALES, pitchClassName } from '../../theory/index.js';
 import { GENRES } from '../../gen/genres.js';
 import { PRESETS, DRUM_KITS } from '../../audio/index.js';
 import { SetlistRunner } from '../../live/setlist-runner.js';
-import { SECTIONS, keyMoveOptions, keyName, camelot, nextSection } from '../../live/setlist-engine.js';
+import { SECTIONS, keyMoveOptions, keyName, camelot, nextSection, soundInfo } from '../../live/setlist-engine.js';
 import { drawPatternNotes } from './arrange.js';
 
 const SECTION_BTNS = [
@@ -67,7 +67,12 @@ export function createSetlistView(app) {
   const energyDef = { key: 'energy', label: 'Energy', min: 0, max: 1, default: 0.7, step: 0.01 };
   const energyFader = fader({ def: energyDef, value: 0.7, vertical: false, length: 150, onChange: (v) => { runner.setEnergy(v); energyVal.textContent = Math.round(v * 100) + '%'; } });
   const energyVal = h('span.sl-energy-val', '70%');
-  const sections = h('div.sl-group', h('div.sl-glabel', 'Next section'), h('div.sl-row', ...secBtns, holdBtn), h('div.sl-row', h('span.sl-glabel', 'Energy'), energyFader, energyVal));
+  const freshDef = { key: 'freshness', label: 'Freshness', min: 0, max: 1, default: 0.5, step: 0.01 };
+  const freshVal = h('span.sl-energy-val', '50%');
+  const freshFader = fader({ def: freshDef, value: 0.5, vertical: false, length: 150, onChange: (v) => { runner.setFreshness(v); freshVal.textContent = Math.round(v * 100) + '%'; } });
+  freshFader.title = 'Freshness: how often layers rotate to a new sound and how far their settings drift (0 = static sounds, 100 % = twice as often, wider drift)';
+  const sections = h('div.sl-group', h('div.sl-glabel', 'Next section'), h('div.sl-row', ...secBtns, holdBtn), h('div.sl-row', h('span.sl-glabel', 'Energy'), energyFader, energyVal),
+    h('div.sl-row', h('span.sl-glabel', 'Freshness'), freshFader, freshVal));
 
   const keyBtns = h('div.sl-keymoves');
   const keyQueued = h('div.sl-keyq');
@@ -83,7 +88,7 @@ export function createSetlistView(app) {
     icon('sparkles', 40),
     h('h3', 'Setlist — an endless, evolving DJ set'),
     h('p', 'Pick a genre and a key, press Start. Every layer (drums, percussion, bass, chords, pad, lead, arp, fx…) loops while the next phrase is generated as a variation of what is playing. The energy arc brings layers in and out (intro → groove → build → drop → breakdown), and key moves glide to related keys on the next phrase.'),
-    h('p.muted', 'Per layer: lock a loop you love, regenerate a new idea, dial mutation and density, swap the sound. Edit a pattern in the piano roll and the set continues from your edit. Capture writes the set into the arrangement.'),
+    h('p.muted', 'Per layer: lock a loop you love, regenerate a new idea, dial mutation and density, swap the sound — or let it rotate through genre-fitting sounds while its settings drift (Freshness sets how much). Edit a pattern in the piano roll and the set continues from your edit. Capture writes the set into the arrangement.'),
     h('div.row.wrap', { style: { justifyContent: 'center' } }, button('Start a set', () => onStart(), { icon: 'play', primary: true }))));
   const body = h('div.sl-body', globalEl, scroll);
   const el = h('div.sl', toolbar, body, empty);
@@ -175,6 +180,14 @@ export function createSetlistView(app) {
       if (pid) ui.set({ selectedPatternId: pid });
       ui.set({ view: isDrumLayer(l) ? 'rack' : 'piano' });
     });
+    // sound freshness: rotate / keep, drift amount, what's queued next
+    const rotBtn = h('button.sl-rot', { type: 'button', title: 'Rotate: every few phrases this layer swaps to another sound that fits the genre (at a phrase boundary, level-matched) · Keep: stay on this sound' });
+    rotBtn.addEventListener('click', () => { const L = runner.layer(l.id); if (L?.sound) runner.setSound(l.id, { rotate: !L.sound.rotate }); });
+    const driftKnob = knob({ def: { key: 'drift', label: 'Drift', min: 0, max: 1, default: 0.5, step: 0.01 }, value: l.sound?.drift ?? 0.5, size: 24, label: 'Drift', onChange: (v) => runner.setSound(l.id, { drift: v }) });
+    driftKnob.title = 'Drift: how far filter / envelope / space / width settings wander across phrases (0 = static). A knob you move yourself stops drifting.';
+    const nowBtn = h('button.sl-regen', { type: 'button', title: 'Next sound now: swap to the queued sound at the next phrase' }, icon('refresh', 13));
+    nowBtn.addEventListener('click', () => { runner.nextSoundNow(l.id); nowBtn.classList.add('on'); });
+    const nextEl = h('div.sl-next.muted');
     const canvas = h('canvas.sl-prev');
     const head = h('div.sl-prev-head');
     const prevWrap = h('div.sl-prev-wrap', { title: 'The phrase playing now' }, canvas, head);
@@ -185,7 +198,9 @@ export function createSetlistView(app) {
       h('div.sl-row.c', modeBtn, muteBtn, soloBtn),
       h('div.sl-col-mid', vol, h('div.sl-knobs', mut, dens)),
       h('div.sl-row.c', lockBtn, regenBtn, editBtn),
-      soundBtn);
+      soundBtn,
+      h('div.sl-row.c', rotBtn, driftKnob, nowBtn),
+      nextEl);
     let drawnPat = null;
     const api = {
       el: colEl,
@@ -203,6 +218,18 @@ export function createSetlistView(app) {
         regenBtn.classList.toggle('on', !!L.regen);
         mut.setValue?.(L.mutate);
         dens.setValue?.(L.density);
+        const si = soundInfo(runner.state, l.id);
+        if (si) {
+          rotBtn.textContent = si.rotate ? '↻ Rotate' : 'Keep';
+          rotBtn.classList.toggle('on', si.rotate);
+          rotBtn.disabled = !si.canRotate;
+          nowBtn.disabled = !si.canRotate;
+          nowBtn.classList.toggle('on', !!L.sound.now);
+          driftKnob.setValue?.(si.drift);
+          driftKnob.style.opacity = si.canDrift ? '' : '0.4';
+          nextEl.textContent = si.next ? `next: ${si.next.name} in ${si.next.in} phrase${si.next.in === 1 ? '' : 's'}` : (L.lock ? 'locked' : si.rotate ? '' : 'sound kept');
+          nextEl.title = nextEl.textContent;
+        }
       },
       frame(pos) {
         const ph = runner.phraseAt(pos);
@@ -279,6 +306,8 @@ export function createSetlistView(app) {
     driftToggle.setValue(st.autoDrift);
     driftEvery.setValue(st.driftEvery);
     barsSel.setValue(runner.pendingBars || st.phraseBars);
+    freshFader.setValue?.(st.freshness ?? 0.5);
+    freshVal.textContent = Math.round((st.freshness ?? 0.5) * 100) + '%';
     statusEl.textContent = `${GENRES[st.genre]?.name || st.genre} · ${get().bpm} BPM · ${st.layers.length} layers${runner.lastError ? ' · error: ' + runner.lastError.message : ''}`;
   }
 
