@@ -4,10 +4,10 @@
 // there). Automatic placements are not undo steps (Ctrl+Z keeps undoing the user's own edits); "Capture" makes the
 // played set a normal, editable / exportable arrangement in one undo step.
 import { Emitter, uid, deepClone } from '../core/util.js';
-import { createProject, createPattern, createClip } from '../core/model.js';
+import { createProject, createPattern, createClip, createTrack } from '../core/model.js';
 import {
   createSetlist, planPhrase, prepareBeat, queueKeyMove, freshIdea, setPhraseBars, buildSweepPoints, keyName, SECTIONS,
-  soundKey, adoptSound, queueNextSound,
+  soundKey, adoptSound, queueNextSound, addLoopLayer, loopBarsFor, loopLevel,
 } from './setlist-engine.js';
 import { valueAt } from '../core/automation.js';
 
@@ -215,6 +215,17 @@ export class SetlistRunner extends Emitter {
       for (const l of st.layers) {
         const r = plan.layers[l.id];
         const t = tracks.get(l.id);
+        // audio-loop layer (no key shift): one audio clip per loop restart inside the phrase
+        if (l.sample && !l.sample.keyShift) {
+          if (!t || !r?.active || !r.segments?.length) continue;
+          for (const g of r.segments) {
+            const clip = createClip(l.id, { type: 'audio', sampleId: l.sample.sampleId, start: start + g.start, length: g.length, offset: g.offset, name: l.name });
+            p.clips.push(clip);
+            if (!ph.clips[l.id]) ph.clips[l.id] = clip.id;
+          }
+          ph.active.add(l.id);
+          continue;
+        }
         if (!t || !r || !r.active || !r.notes.length) continue;
         // unchanged (locked) layer continuing right after itself: extend its clip, no new pattern
         const prevClip = prev && p.clips.find((c) => c.id === prev.clips[l.id]);
@@ -312,6 +323,65 @@ export class SetlistRunner extends Emitter {
   /** Global freshness 0..1: scales rotation frequency + drift amount (0 = static sounds). */
   setFreshness(v) { if (this.state) { this.state.freshness = Math.max(0, Math.min(1, +v || 0)); this.emit('change', { kind: 'fresh' }); } }
   setAutoDrift(on, every) { if (!this.state) return; this.state.autoDrift = !!on; if (every) this.state.driftEvery = every; this.emit('change', { kind: 'drift' }); }
+
+  /**
+   * Add an audio loop (a project sample, already warped to `bpm` — the set tempo) as a layer of the running set.
+   * It joins at the next phrase boundary, loops on the phrase grid, follows the energy arc (role 'loop') and is
+   * level-matched (track volume from the sample's RMS). keyShift: re-pitch it with key moves (sampler track, one
+   * note per loop restart) instead of an audio track with audio clips. `beats` missing -> 1 / 2 / 4 / 8 bars from
+   * the sample length at the project tempo. Returns the layer.
+   */
+  async addSampleLayer({ sampleId, name, beats, bpm, key = null, keyShift = false, mode = 'auto' } = {}) {
+    const { store } = this.app;
+    if (!this.state) throw new Error('Start a set first, then add loops to it.');
+    const p = store.get();
+    const smp = p.samples?.[sampleId];
+    if (!smp) throw new Error('Unknown sample: ' + sampleId);
+    const bpb = this.state.bpb;
+    if (!(beats > 0)) beats = loopBarsFor(smp.duration || 2, p.bpm, bpb) * bpb;
+    name = name || String(smp.name || 'Loop').replace(/\.[^.]+$/, '');
+    const volume = loopLevel(await this._sampleRms(sampleId));
+    if (!this.state) throw new Error('The set stopped.');
+    const color = '#a9e34b';
+    const track = keyShift
+      ? createTrack({ name, role: 'loop', color, volume, instrument: { type: 'sampler', preset: null, params: { sampleId, rootNote: 60, attack: 0.002, sustain: 1, release: 0.01, velSens: 0 } } })
+      : createTrack({ type: 'audio', name, role: 'loop', color, volume });
+    store.transact('Add loop layer', (pp) => { pp.tracks.push(track); }, { undo: false });
+    const l = addLoopLayer(this.state, { id: track.id, name, sampleId, beats, bpm: bpm ?? p.bpm, key, keyShift, mode });
+    this.emit('change', { kind: 'layers', id: l.id });
+    return l;
+  }
+
+  /** RMS of a project sample (null when it can't be decoded, e.g. without an AudioContext). */
+  async _sampleRms(sampleId) {
+    try {
+      const buf = await this.app.engine.decodeSample?.(sampleId);
+      if (!buf?.length) return null;
+      let sum = 0, n = 0;
+      const step = Math.max(1, Math.floor(buf.length / 200000));
+      for (let c = 0; c < buf.numberOfChannels; c++) {
+        const d = buf.getChannelData(c);
+        for (let i = 0; i < d.length; i += step) { sum += d[i] * d[i]; n++; }
+      }
+      return n ? Math.sqrt(sum / n) : null;
+    } catch { return null; }
+  }
+
+  /** Remove a layer from the next phrase on: its future clips go; the track goes too when nothing of it was played. */
+  removeLayer(id) {
+    const st = this.state;
+    const l = this.layer(id);
+    if (!l) return;
+    st.layers = st.layers.filter((x) => x !== l);
+    const cur = this.phraseAt(this.app.engine.getPosition());
+    const cut = cur ? cur.start + cur.length : 0;
+    for (const ph of this.phrases) if (ph.start >= cut - 1e-6) { delete ph.clips[id]; delete ph.patterns[id]; ph.active.delete(id); }
+    this.app.store.transact('Remove layer', (p) => {
+      p.clips = p.clips.filter((c) => !(c.trackId === id && c.start >= cut - 1e-6));
+      if (!p.clips.some((c) => c.trackId === id)) p.tracks = p.tracks.filter((t) => t.id !== id);
+    }, { undo: false });
+    this.emit('change', { kind: 'layers', id });
+  }
 
   /** Write the played set into the arrangement as a finished song: markers per section, future phrases trimmed. */
   capture() {

@@ -8,7 +8,7 @@ import { SCALES, pitchClassName } from '../../theory/index.js';
 import { GENRES } from '../../gen/genres.js';
 import { PRESETS, DRUM_KITS } from '../../audio/index.js';
 import { SetlistRunner } from '../../live/setlist-runner.js';
-import { SECTIONS, keyMoveOptions, keyName, camelot, nextSection, soundInfo } from '../../live/setlist-engine.js';
+import { SECTIONS, keyMoveOptions, keyName, camelot, nextSection, soundInfo, loopBarsFor } from '../../live/setlist-engine.js';
 import { drawPatternNotes } from './arrange.js';
 
 const SECTION_BTNS = [
@@ -43,11 +43,14 @@ export function createSetlistView(app) {
   const startBtn = button('Start', () => onStart(), { icon: 'play', primary: true, title: 'Start a new set: generates every layer for the genre / key and plays it as endless, evolving loops' });
   const playBtn = button('Stop', () => (runner.running && engine.isPlaying ? runner.stop() : runner.resume()), { icon: 'stop', title: 'Stop / resume the set (Space works too)' });
   const captureBtn = button('Capture to arrangement', () => onCapture(), { icon: 'timeline', title: 'Write the set played so far into the song timeline (sections as markers) — export it like any song (.daW3 / WAV / MIDI)' });
+  const addLoopBtn = button('＋ Add loop', () => onAddLoop(), { icon: 'wave', title: 'Import an audio loop and add it as a layer (joins at the next phrase, loops on the phrase grid, follows the energy arc). Bars are inferred from the project tempo and the file length (1 / 2 / 4 / 8 bars).' });
+  let loopKeyShift = false;
+  const loopShiftToggle = toggle({ label: 'Key-shift', value: false, title: 'New loops follow key moves (re-pitched on a sampler track, in semitones). Off: loops keep their pitch and are placed as audio clips.', onChange: (v) => { loopKeyShift = !!v; } });
   const statusEl = h('span.sl-status.muted');
   const toolbar = h('div.view-toolbar.sl-toolbar',
     h('label.sl-field', h('span', 'Genre'), genreSel), h('label.sl-field', h('span', 'Key'), rootSel, scaleSel),
     h('label.sl-field', h('span', 'BPM'), bpmField), h('label.sl-field', h('span', 'Phrase'), barsSel),
-    startBtn, playBtn, captureBtn, h('div.spacer'), statusEl);
+    startBtn, playBtn, captureBtn, addLoopBtn, loopShiftToggle, h('div.spacer'), statusEl);
 
   // ------------------------------------------------------------------ global strip
   const secName = h('div.sl-sec-name');
@@ -112,6 +115,23 @@ export function createSetlistView(app) {
     renderAll();
   }
   const currentEnergy = () => { const t = parseFloat(energyVal.textContent); return isFinite(t) ? t / 100 : 0.7; };
+
+  async function onAddLoop() {
+    if (!runner.active) { app.toast('Start a set first — then add loops to it.', { level: 'warn' }); return; }
+    const added = await actions.importSamples();
+    const smp = added?.[0];
+    if (!smp) return;
+    let dur = smp.duration;
+    if (!dur) { try { dur = (await engine.decodeSample(smp.id)).duration; } catch { dur = 0; } }
+    const p = get();
+    const bpb = runner.state?.bpb || 4;
+    const bars = loopBarsFor(dur || 2, p.bpm, bpb);
+    try {
+      await runner.addSampleLayer({ sampleId: smp.id, name: String(smp.name || 'Loop').replace(/\.[^.]+$/, ''), beats: bars * bpb, bpm: p.bpm, keyShift: loopKeyShift });
+      app.toast(`Loop added: ${bars} bar${bars > 1 ? 's' : ''} — it comes in at the next phrase.`, { level: 'success' });
+    } catch (e) { app.toast(e.message, { level: 'error' }); }
+    renderAll();
+  }
 
   function onCapture() {
     if (!runner.active || !runner.phrases.length) { app.toast('Start a set first — then capture what you played.', { level: 'warn' }); return; }
@@ -192,15 +212,27 @@ export function createSetlistView(app) {
     const head = h('div.sl-prev-head');
     const prevWrap = h('div.sl-prev-wrap', { title: 'The phrase playing now' }, canvas, head);
     const prog = h('div.sl-col-prog', h('div.sl-col-prog-fill'));
-    const colEl = h('div.sl-col', { style: { '--col': color } },
-      h('div.sl-col-top', name, state),
-      prevWrap, prog,
-      h('div.sl-row.c', modeBtn, muteBtn, soloBtn),
-      h('div.sl-col-mid', vol, h('div.sl-knobs', mut, dens)),
-      h('div.sl-row.c', lockBtn, regenBtn, editBtn),
-      soundBtn,
-      h('div.sl-row.c', rotBtn, driftKnob, nowBtn),
-      nextEl);
+    const isLoop = !!l.sample;
+    const removeBtn = h('button.sl-regen', { type: 'button', title: 'Remove this loop from the set (from the next phrase)' }, icon('trash', 13));
+    removeBtn.addEventListener('click', () => runner.removeLayer(l.id));
+    const loopInfo = h('div.sl-next.muted');
+    const colEl = isLoop
+      ? h('div.sl-col', { style: { '--col': color } },
+        h('div.sl-col-top', name, state),
+        prevWrap, prog,
+        h('div.sl-row.c', modeBtn, muteBtn, soloBtn),
+        h('div.sl-col-mid', vol),
+        h('div.sl-row.c', lockBtn, removeBtn),
+        loopInfo)
+      : h('div.sl-col', { style: { '--col': color } },
+        h('div.sl-col-top', name, state),
+        prevWrap, prog,
+        h('div.sl-row.c', modeBtn, muteBtn, soloBtn),
+        h('div.sl-col-mid', vol, h('div.sl-knobs', mut, dens)),
+        h('div.sl-row.c', lockBtn, regenBtn, editBtn),
+        soundBtn,
+        h('div.sl-row.c', rotBtn, driftKnob, nowBtn),
+        nextEl);
     let drawnPat = null;
     const api = {
       el: colEl,
@@ -218,6 +250,11 @@ export function createSetlistView(app) {
         regenBtn.classList.toggle('on', !!L.regen);
         mut.setValue?.(L.mutate);
         dens.setValue?.(L.density);
+        if (L.sample) {
+          const bars = Math.round((L.sample.beats / (runner.state?.bpb || 4)) * 100) / 100;
+          loopInfo.textContent = `${bars} bar loop · ${L.sample.keyShift ? `key-shift ${L.sample.shift > 0 ? '+' : ''}${L.sample.shift} st` : 'audio, fixed pitch'}`;
+          loopInfo.title = loopInfo.textContent;
+        }
         const si = soundInfo(runner.state, l.id);
         if (si) {
           rotBtn.textContent = si.rotate ? '↻ Rotate' : 'Keep';
@@ -239,10 +276,15 @@ export function createSetlistView(app) {
         state.textContent = playing ? (next === false ? '▶ out next' : '▶ playing') : next ? '◌ in next' : '· resting';
         colEl.classList.toggle('playing', playing);
         colEl.classList.toggle('resting', !playing);
-        const pid = ph?.patterns[l.id] || null;
-        const pat = pid ? get().patterns[pid] : null;
-        const sigNow = pat ? `${pid}:${pat.notes.length}:${pat.notes[0]?.pitch}` : null;
-        if (sigNow !== drawnPat) { drawnPat = sigNow; drawPreview(canvas, pat, isDrumLayer(l), color); }
+        if (isLoop) {
+          const sigNow = playing ? `loop:${ph.index}` : null;
+          if (sigNow !== drawnPat) { drawnPat = sigNow; drawLoopPreview(canvas, playing ? ph : null, l, color); }
+        } else {
+          const pid = ph?.patterns[l.id] || null;
+          const pat = pid ? get().patterns[pid] : null;
+          const sigNow = pat ? `${pid}:${pat.notes.length}:${pat.notes[0]?.pitch}` : null;
+          if (sigNow !== drawnPat) { drawnPat = sigNow; drawPreview(canvas, pat, isDrumLayer(l), color); }
+        }
         const pr = ph ? Math.min(1, Math.max(0, (pos - ph.start) / ph.length)) : 0;
         head.style.left = `${pr * 100}%`;
         head.hidden = !playing;
@@ -263,6 +305,19 @@ export function createSetlistView(app) {
     const bpb = runner.state?.bpb || 4;
     for (let b = bpb; b < pat.length; b += bpb) c.fillRect(Math.round((b / pat.length) * W), 0, 1, H);
     drawPatternNotes(c, pat, { x: 0, y: 2, w: W, h: H - 4, color, drums, minW: 2 });
+    c.globalAlpha = 1;
+  }
+
+  /** Loop layer preview: one block per loop restart inside the phrase. */
+  function drawLoopPreview(canvas, ph, l, color) {
+    const { ctx: c, w: W, h: H } = fitCanvas(canvas);
+    c.clearRect(0, 0, W, H);
+    if (!ph) return;
+    const clips = get().clips.filter((x) => x.trackId === l.id && x.start >= ph.start - 1e-6 && x.start < ph.start + ph.length - 1e-6);
+    c.fillStyle = color;
+    c.globalAlpha = 0.55;
+    for (const x of clips) c.fillRect(Math.round(((x.start - ph.start) / ph.length) * W) + 1, 3, Math.max(2, Math.round((x.length / ph.length) * W) - 2), H - 6);
+    if (!clips.length) c.fillRect(1, 3, W - 2, H - 6); // key-shift (sampler) loops: a pattern clip
     c.globalAlpha = 1;
   }
 
