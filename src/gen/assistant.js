@@ -1,6 +1,7 @@
 // Production assistant: analyses a project and returns actionable recommendations,
 // plus a pure-JSON applier for the suggested actions.
 import { createRng, clamp } from '../core/util.js';
+import { PRESETS } from '../audio/presets.js';
 import { createNote, createPattern, createTrack, createClip, createEffect, beatsPerBar, songLengthBeats, TRACK_COLORS } from '../core/model.js';
 import {
   detectKey, keyName, inScale, snapToScale, isMinorScale, suggestNextChords, analyzeProgression, voiceLead,
@@ -389,7 +390,7 @@ export function applyAssistantAction(project, action, helpers = {}) {
       if (!t) {
         t = createTrack({
           name: role[0].toUpperCase() + role.slice(1), role, color: TRACK_COLORS[(project.tracks.length * 3) % TRACK_COLORS.length],
-          instrument: role === 'drums' ? { type: 'drums', preset: g.drumKit, params: {} } : { type: 'synth', preset: g.presets?.[role] || null, params: {} },
+          instrument: role === 'drums' ? { type: 'drums', preset: g.drumKit, params: {} } : { type: PRESETS[g.presets?.[role]]?.instrument.type || 'synth', preset: g.presets?.[role] || null, params: {} },
         });
         project.tracks.push(t);
       }

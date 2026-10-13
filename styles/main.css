@@ -245,5 +245,12 @@ canvas.meter { width: 10px; background: #000; border-radius: 2px; image-renderin
 }
 @media (max-width: 1350px) {
   .app-header .tap-btn, .app-header .lcd { min-width: 0; }
-  .app-header .btn.primary span { display: none; }
+  .app-header .btn.primary > span:not(.icon) { display: none; }
+}
+@media (max-width: 1500px) {
+  .app-header { gap: 4px; }
+  .app-header .logo { display: none; }
+  .app-header .hfield select { max-width: 96px; }
+  .lcd { min-width: 84px; padding: 2px 6px; }
+  .transport-btn { width: 30px; }
 }

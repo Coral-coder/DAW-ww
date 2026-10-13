@@ -1,6 +1,7 @@
 // Full-song generator: builds tracks, per-section pattern variations, arrangement clips, scenes and markers
 // using only the model factories from src/core/model.js.
 import { createRng, uid, clamp } from '../core/util.js';
+import { PRESETS } from '../audio/presets.js';
 import { createTrack, createPattern, createClip, createScene, createNote, TRACK_COLORS } from '../core/model.js';
 import { parsePitchClass, resolveScaleId, mod12, getProgression } from '../theory/index.js';
 import { GENRES, getGenre, ROLES } from './genres.js';
@@ -36,7 +37,8 @@ export function sectionKind(name = '') {
 
 function instrumentFor(role, genre) {
   if (role === 'drums') return { type: 'drums', preset: genre.drumKit, params: {} };
-  return { type: 'synth', preset: genre.presets?.[role] || null, params: {} };
+  const preset = genre.presets?.[role] || null;
+  return { type: PRESETS[preset]?.instrument.type || 'synth', preset, params: {} };
 }
 
 /**

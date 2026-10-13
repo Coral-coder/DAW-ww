@@ -523,6 +523,9 @@ export function createActions(app) {
     const newTracks = [], newPats = [], newClips = [];
     for (const part of parts) {
       const isDrums = part.kind === 'drums';
+      const generic = !part.name || /^(pattern|\$)\s*\d*$/i.test(part.name.trim());
+      const label = isDrums ? 'Drums' : (part.sound ? part.sound[0].toUpperCase() + part.sound.slice(1) : 'Synth');
+      part.name = generic ? label : `${part.name} ${label}`;
       const preset = isDrums ? null : (PRESETS[part.sound] ? part.sound : soundToPreset(part.sound, part.notes));
       const t = isDrums
         ? createTrack({ name: part.name || 'Drums', role: 'drums', color: ROLE_COLORS.drums, instrument: { type: 'drums', preset: bankToKit(part.bank) || '808', params: {} } })
