@@ -7,6 +7,7 @@ import { createRng } from '../../core/util.js';
 import * as theory from '../../theory/index.js';
 import * as genres from '../../gen/genres.js';
 import * as audio from '../../audio/index.js';
+import { createWizard } from '../wizard.js';
 
 const LS_TAB = 'daw3-assistant-tab';
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } };
@@ -73,7 +74,7 @@ export function createAssistantPanel(app) {
   const PRESETS = audio.PRESETS || {};
   const DRUM_KITS = audio.DRUM_KITS || {};
   let gen = {};
-  let activeTab = lsGet(LS_TAB, 'ideas');
+  let activeTab = lsGet(LS_TAB, 'guide'); // new users land on the guided session
   const dismissed = new Set();
   let recs = [];
   let recsKey = '';
@@ -97,7 +98,9 @@ export function createAssistantPanel(app) {
   const refreshBtn = iconButton('dice', () => { recsKey = ''; computeRecs(true); rerender(true); toast('Assistant refreshed', { timeout: 1200 }); }, 'Refresh suggestions');
   refreshBtn.firstChild.replaceWith(icon('loop', 15));
   const header = h('div.panel-header', icon('bulb', 14), h('span.title', 'Assistant'), h('div.spacer'), refreshBtn, iconButton('x', () => ui.set({ assistantOpen: false }), 'Hide assistant (A)'));
+  const wizard = createWizard(app);
   const tabItems = [
+    { id: 'guide', label: 'Guide', icon: 'wand', render: () => wizard.render() },
     { id: 'ideas', label: 'Ideas', icon: 'sparkles', render: renderIdeas },
     { id: 'theory', label: 'Theory', icon: 'music', render: renderTheory },
     { id: 'generate', label: 'Generate', icon: 'wand', render: renderGenerate },
@@ -190,6 +193,10 @@ export function createAssistantPanel(app) {
   }
   function renderIdeas() {
     const wrap = h('div.as-ideas');
+    if (!get().tracks.length) {
+      wrap.appendChild(h('button.as-hero.wz-start', { type: 'button', title: 'A step-by-step walkthrough from empty project to finished song', onclick: () => startGuide() },
+        icon('wand', 22), h('div', h('b', 'Start the guide'), h('span', 'Make a track step by step — vibe, beat, chords, hook, arrangement, mix'))));
+    }
     const t = selectedTrack();
     const g = GENRES[get().genre];
     wrap.appendChild(h('div.as-context', icon('pointer', 12), h('span', t ? `Focused on ${t.name}` : 'Looking at the whole project'), g ? h('span.chip', g.name) : null, h('span.chip', keyLabel(get().key.root, get().key.scale))));
@@ -556,7 +563,7 @@ export function createAssistantPanel(app) {
     timer = setTimeout(() => {
       const recsChanged = computeRecs(false);
       if (activeTab === 'ideas') { if (recsChanged) rerender(); }
-      else {
+      else if (activeTab !== 'guide') { // the guide re-renders itself
         const s = theorySig();
         if (s !== sigTheory) { sigTheory = s; rerender(); }
       }
@@ -585,5 +592,14 @@ export function createAssistantPanel(app) {
     updateBadge();
   });
 
-  return { el, refresh: () => { computeRecs(true); rerender(true); }, show: (id) => { activeTab = id; lsSet(LS_TAB, id); rerender(true); } };
+  function startGuide() {
+    ui.set({ assistantOpen: true });
+    wizard.start();
+    activeTab = 'guide'; lsSet(LS_TAB, 'guide');
+    rerender(true);
+  }
+  // a new / empty project opens on the Guide tab
+  store.on?.('load', () => { if (!get().tracks.length && activeTab !== 'guide') { activeTab = 'guide'; rerender(true); } });
+
+  return { el, refresh: () => { computeRecs(true); rerender(true); }, show: (id) => { activeTab = id; lsSet(LS_TAB, id); rerender(true); }, startGuide, wizard };
 }

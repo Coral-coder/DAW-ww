@@ -75,6 +75,7 @@ export function createXView(app) { return { el, show?(), hide?() } }
 | Code | `src/ui/views/code.js` (`createCodeView`) | `styles/code.css` |
 | Browser (left) | `src/ui/panels/browser.js` (`createBrowserPanel`) | `styles/panels.css` |
 | Assistant (right) | `src/ui/panels/assistant.js` (`createAssistantPanel`) | `styles/panels.css` (assistant section) |
+| Guided session (assistant "Guide" tab) | `src/ui/wizard.js` (`createWizard`; pure logic in `src/ui/wizard-core.js`) | `styles/wizard.css` |
 | Device panel (bottom) | `src/ui/panels/device.js` (`createDevicePanel`) | `styles/device.css` |
 | Plugboard (patch bay + project routing) | `src/ui/views/patch.js` (`createPatchView`) | `styles/patch.css` |
 

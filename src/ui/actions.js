@@ -894,6 +894,7 @@ export function createActions(app) {
       { header: get().name },
       { label: 'New project', icon: 'file', onClick: () => newProject() },
       { label: 'New from genre…', icon: 'wand', onClick: () => showSongWizard() },
+      { label: 'Guided session…', icon: 'sparkles', onClick: () => { ui.set({ assistantOpen: true }); app.panels?.assistant?.startGuide?.(); } },
       { label: 'Open project…', icon: 'folder', shortcut: 'Ctrl+O', onClick: () => openProject() },
       { label: 'Recent (browser storage)…', icon: 'layers', onClick: () => showLocalProjects() },
       { label: 'Save / download project', icon: 'save', shortcut: 'Ctrl+S', onClick: () => saveProject() },
@@ -1264,6 +1265,7 @@ export function createActions(app) {
     } catch (e) { console.warn('autosave restore failed', e); }
     try { createAutosaver(store, { intervalMs: 4000 }); } catch (e) { console.warn('autosave unavailable', e); }
     if (!restored && !new URLSearchParams(location.search).has('nowelcome')) showWelcome();
+    ui.set({ booted: true }); // panels that remember per-project state (the guide) can now check which project is open
   }
 
   return {
