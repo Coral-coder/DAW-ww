@@ -224,7 +224,8 @@ export function keyName(root, scaleId = 'major') {
   const id = resolveScaleId(scaleId);
   const flats = keyPrefersFlats(root, id);
   const label = id === 'major' ? 'major' : id === 'minor' ? 'minor' : SCALES[id].name;
-  return `${pitchClassName(root, flats ? true : 'common')} ${label}`;
+  // sharp keys keep sharp spelling (G# minor, not "Ab minor" next to its C#m chord); flat keys use flats
+  return `${pitchClassName(root, flats)} ${label}`;
 }
 
 /** Parse 'C major', 'F# minor', 'Am', 'Eb', 'D dorian' -> {root, scale} | null. */

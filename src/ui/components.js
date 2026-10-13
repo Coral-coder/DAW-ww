@@ -246,12 +246,15 @@ export function paramPanel({ defs, values = {}, onChange, color, sectionsOpen = 
     const val = values[d.key] ?? d.default;
     const cb = (v, meta = {}) => onChange && onChange(d.key, v, meta);
     let c;
-    if (d.type === 'enum') {
+    if (d.type === 'enum' || (d.type !== 'number' && d.type !== 'bool' && Array.isArray(d.options))) {
       c = h('div.param-enum', h('label', d.label), select({ options: d.options || [], value: val, onChange: (v) => cb(v, { final: true }) }));
     } else if (d.type === 'bool') {
       c = h('div.param-bool', toggle({ label: d.label, value: !!val, onChange: (v) => cb(v, { final: true }) }));
+    } else if (d.type === 'number' || d.type == null) {
+      c = knob({ def: d, value: Number.isFinite(val) ? val : d.default, onChange: cb, color });
     } else {
-      c = knob({ def: d, value: val, onChange: cb, color });
+      // unknown param type without options: show it read-only rather than crash the whole panel
+      c = h('div.param-enum', h('label', d.label), h('span.muted', String(val ?? '')));
     }
     controls[d.key] = c;
     return c;

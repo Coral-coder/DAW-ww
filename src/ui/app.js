@@ -130,6 +130,13 @@ export async function createApp(rootEl) {
     document.documentElement.dataset.theme = ui.get('theme');
   };
   applyPanels();
+  // On narrow windows the assistant is an overlay drawer: start (and switch to) narrow with it closed so it
+  // doesn't cover the view; B / A still toggle the panels.
+  try {
+    const narrow = window.matchMedia('(max-width: 1024px)');
+    if (narrow.matches && ui.get('assistantOpen')) ui.set({ assistantOpen: false });
+    narrow.addEventListener?.('change', (e) => { if (e.matches && ui.get('assistantOpen')) ui.set({ assistantOpen: false }); });
+  } catch { /* matchMedia unavailable */ }
 
   // ---- status bar ----
   const statusText = h('span');

@@ -2,8 +2,10 @@
 // importable from Node (no Web Audio access here). Implementation lives in effects.js.
 //
 // EFFECT_DEFS = { type: { name, category, description, params: ParamDef[] } }
-// ParamDef    = { key, label, type:'number'|'enum'|'bool', min, max, step, default, unit?,
+// ParamDef    = { key, label, type:'number'|'enum'|'bool'|'track', min, max, step, default, unit?,
 //                 curve?: 'lin'|'log'|'exp', options?: [{value,label}], section, advanced? }
+// type 'track' holds a track id (string, '' = none) — the UI renders a track picker; it is
+// never automatable (automation only targets 'number' params).
 
 /** Tempo-synced note divisions -> length in beats (quarter notes). */
 export const DIVISIONS = {
@@ -168,6 +170,17 @@ export const EFFECT_DEFS = {
       num('attack', 'Attack', 0.0005, 0.05, 0.002, { step: 0.0005, unit: 's', curve: 'log', section: 'Gate' }),
       num('release', 'Release', 0.01, 1, 0.08, { step: 0.005, unit: 's', curve: 'log', section: 'Gate' }),
       num('knee', 'Knee', 0, 12, 3, { step: 0.1, unit: 'dB', section: 'Gate', advanced: true }),
+    ],
+  },
+  ducker: {
+    name: 'Ducker (Sidechain)', category: 'Dynamics',
+    description: 'Keyed ducking: turns this channel down whenever the key track plays (e.g. bass ducks under the kick) — real sidechain compression feel driven by audio.',
+    params: [
+      { key: 'sourceTrackId', label: 'Key Track', type: 'track', default: '', section: 'Sidechain' },
+      num('amount', 'Amount', 0, 1, 0.7, { step: 0.01, section: 'Sidechain' }),
+      num('threshold', 'Threshold', -60, 0, -30, { step: 0.1, unit: 'dB', section: 'Sidechain' }),
+      num('attack', 'Attack', 0.001, 0.1, 0.005, { step: 0.0005, unit: 's', curve: 'log', section: 'Envelope' }),
+      num('release', 'Release', 0.02, 1.5, 0.18, { step: 0.005, unit: 's', curve: 'log', section: 'Envelope' }),
     ],
   },
   pump: {
@@ -365,6 +378,8 @@ export function resolveEffectParams(effect) {
       v = Math.min(p.max, Math.max(p.min, v));
     } else if (p.type === 'bool') {
       v = v === true || v === 1 || v === 'true' || v === '1';
+    } else if (p.type === 'track') {
+      v = v ? String(v) : '';
     } else if (p.type === 'enum') {
       const match = p.options.find((o) => o.value === v || String(o.value) === String(v));
       v = match ? match.value : p.default;

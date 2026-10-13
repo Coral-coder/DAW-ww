@@ -5,6 +5,7 @@ import { beatsPerBar } from '../core/model.js';
 import { MixGraph } from './mixer.js';
 import { CodeCache, collectEvents, defaultEndBeat, isTrackAudible } from './scheduler.js';
 import { hasAutomation, hasControlAutomation } from '../core/automation.js';
+import { keySourcesFor } from '../core/patch.js';
 
 function fallbackBase64ToArrayBuffer(b64) {
   const bin = atob(b64);
@@ -91,9 +92,18 @@ export async function renderOffline(source, opts = {}) {
   const out = { master: await renderOnce(project, cfg) };
   for (const track of project.tracks) {
     if (!isTrackAudible(project, track)) continue;
+    // Tracks that key a ducker heard in this stem keep playing silently (fader at 0, no sends:
+    // the key is tapped pre-fader) so the stem keeps its sidechain movement.
+    const keyOnly = keySourcesFor(project, track.id);
     const variant = {
       ...project,
-      tracks: project.tracks.map((t) => (t.id === track.id ? { ...t, mute: false, solo: false } : { ...t, mute: true, solo: false })),
+      tracks: project.tracks.map((t) => {
+        if (t.id === track.id) return { ...t, mute: false, solo: false };
+        if (keyOnly.has(t.id) && !t.mute) {
+          return { ...t, solo: false, volume: 0, sends: {}, automation: (t.automation || []).filter((l) => !/^(volume|send:)/.test(String(l.target))) };
+        }
+        return { ...t, mute: true, solo: false };
+      }),
     };
     out[track.id] = await renderOnce(variant, cfg);
   }

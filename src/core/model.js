@@ -2,6 +2,7 @@
 // saved, reloaded, diffed and undone. See docs/ARCHITECTURE.md for the contract.
 import { uid } from './util.js';
 import { normalizeLane } from './automation.js';
+import { normalizePatch } from './patch.js';
 
 export const PROJECT_FORMAT = 'heroic-daw-project';
 export const PROJECT_VERSION = 1;
@@ -71,6 +72,9 @@ export function createTrack(opts = {}) {
     activePatternId: null,
     automation: opts.automation || [], // [AutomationLane] — see src/core/automation.js (song mode only)
     role: opts.role || null, // optional hint for generators/assistant: 'drums'|'bass'|'chords'|'lead'|'pad'|'arp'|'fx'|'vocal'
+    // optional `patch` (plugboard routing of the fx in track.fx) — see src/core/patch.js.
+    // Absent / patch.enabled === false → the serial insert chain in track.fx order.
+    ...(opts.patch ? { patch: opts.patch } : {}),
   };
 }
 
@@ -144,7 +148,9 @@ export function normalizeProject(p) {
   out.tracks = (p.tracks || []).map((t) => ({
     ...createTrack({ type: t.type }), ...t, fx: t.fx || [], sends: t.sends || {},
     automation: Array.isArray(t.automation) ? t.automation.map(normalizeLane) : [],
+    ...(t.patch ? { patch: normalizePatch(t.patch) } : {}),
   }));
+  for (const t of out.tracks) if (!t.patch) delete t.patch;
   out.patterns = p.patterns || {};
   out.clips = p.clips || [];
   out.scenes = p.scenes?.length ? p.scenes : base.scenes;
