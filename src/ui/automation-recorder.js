@@ -31,7 +31,7 @@ export const AUTO_MODES = [
 /** Labels of store transactions that must never be recorded (history / housekeeping / ourselves). */
 const IGNORE = new Set(['undo', 'redo', 'load', 'refresh', 'Record automation', 'Normalize presets', 'Update plugboard', 'Song mode', 'Pattern mode',
   'Add automation lane', 'Delete automation lane', 'Clear automation', 'Toggle automation lane', 'Edit automation', 'Change automation target',
-  'Automation ramp', 'Automation LFO', 'Delete automation point']);
+  'Automation ramp', 'Automation LFO', 'Delete automation point', 'Override automation', 'Re-enable automation']);
 const BULK = 16; // more changed targets than this in one transaction = preset / auto-mix / generator: not recorded
 const VIRTUAL_TOUCH_MS = 700; // wheel / typed / click changes: "released" this long after the last change
 
@@ -108,6 +108,7 @@ export function installAutomationRecorder(app) {
         if (!Array.isArray(o.automation)) o.automation = [];
         let lane = o.automation.find((l) => l.target === r.target);
         if (!lane) { lane = createAutomationLane(r.target, []); o.automation.push(lane); }
+        delete lane.overridden; // recording into a lane brings it back to life
         lane.points = mergeTake(lane.points, r.segments, {
           staticValue: r.staticValue, stepped: !!r.def.stepped, eps: 0.008,
           norm: (v) => toNorm(r.def, v),
@@ -232,8 +233,56 @@ export function installAutomationRecorder(app) {
     for (const k of keys) releaseKey(k);
   });
 
+  // ------------------------------------------------------------------ override (not recording)
+  // Moving an automated control by hand while NOT recording overrides its lane (like Ableton / Bitwig): the lane
+  // stops driving the setting so the change is heard right away, during playback too, until "Re-enable automation".
+  let grabbed = null; // { owner, target, value, until }
+  function grab(e) {
+    if (e.type === 'pointerdown' && e.button !== 0) return;
+    const el = e.target?.closest?.('[data-auto-target]');
+    if (!el) return;
+    const owner = el.dataset.autoOwner, target = el.dataset.autoTarget;
+    const p = store.get();
+    const lane = laneOf(p, owner, target);
+    if (!lane || lane.enabled === false || lane.overridden || !lane.points?.length) { grabbed = null; return; }
+    const info = targetInfo(p, owner, target);
+    if (info.missing) return;
+    grabbed = { owner, target, value: info.staticValue, until: performance.now() + 15000 };
+  }
+  if (typeof document !== 'undefined') {
+    document.addEventListener('pointerdown', grab, true);
+    document.addEventListener('wheel', grab, { capture: true, passive: true });
+    document.addEventListener('focusin', grab, true);
+  }
+  let toldOverride = false;
+  function checkOverride(p, label) {
+    if (!grabbed || take || shouldRecord() || IGNORE.has(label)) return;
+    if (performance.now() > grabbed.until) { grabbed = null; return; }
+    const { owner, target, value } = grabbed;
+    const info = targetInfo(p, owner, target);
+    if (info.missing || info.staticValue === value) return;
+    grabbed = null;
+    queueMicrotask(() => {
+      store.transact('Override automation', (pp) => { const l = laneOf(pp, owner, target); if (l) l.overridden = true; });
+      if (!toldOverride) {
+        toldOverride = true;
+        toast(`"${laneLabel(store.get(), owner, target)}" now follows your hand instead of its automation lane — the orange ↺ button next to A● (or right-click the control) re-enables automation.`, { level: 'info', timeout: 6000 });
+      }
+    });
+  }
+  function reenable(owner, target) {
+    store.transact('Re-enable automation', (pp) => {
+      for (const o of automationOwners(pp)) for (const l of o?.automation || []) {
+        if (l?.overridden && (!target || (l.target === target && automationOwner(pp, owner) === o))) delete l.overridden;
+      }
+    });
+  }
+
   // ------------------------------------------------------------------ wiring
-  store.on('change', (p, label) => { try { onChange(p, label); } catch (e) { console.error('[automation-rec]', e); } });
+  store.on('change', (p, label) => {
+    try { checkOverride(p, label); } catch (e) { console.error('[automation-override]', e); }
+    try { onChange(p, label); } catch (e) { console.error('[automation-rec]', e); }
+  });
   store.on('load', () => { if (take) { take = null; clearInterval(tickTimer); engine.clearAutomationOverrides?.(); badge(false); bus.emit('update'); } });
   engine.on?.('state', ({ playing }) => { if (playing) begin(); else end(); });
   ui.on('change', (changed) => {
@@ -298,6 +347,7 @@ export function installAutomationRecorder(app) {
       const key = keyOf(owner, target);
       const has = laneIndex.has(key);
       el.classList.toggle('auto-on', has);
+      el.classList.toggle('auto-overridden', !has && !!laneOf(p, owner, target)?.overridden);
       el.classList.toggle('auto-rec', !!take?.isWriting(key));
       const setter = el.autoSet || el.setValue;
       const busy = el.classList.contains('active') || el.matches(':focus');
@@ -352,6 +402,7 @@ export function installAutomationRecorder(app) {
         ? { label: 'Show automation lane', icon: 'timeline', onClick: () => revealLane(owner, target) }
         : { label: 'Add automation lane', icon: 'plus', onClick: () => { ensureLane(owner, target); revealLane(owner, target); } },
       { label: 'Clear automation', icon: 'x', disabled: !lane?.points?.length, onClick: () => editLane('Clear automation', (l) => { l.points = []; }) },
+      lane?.overridden ? { label: 'Re-enable automation', icon: 'refresh', onClick: () => reenable(owner, target) } : null,
       lane ? { label: lane.enabled === false ? 'Enable lane' : 'Disable lane (bypass)', icon: 'power', onClick: () => editLane('Toggle automation lane', (l) => { l.enabled = l.enabled === false; }) } : null,
       '-',
       { label: armed() ? 'Disarm automation recording' : 'Arm automation recording (Shift+A)', icon: 'record', onClick: () => ui.set({ autoArm: !armed() }) },
@@ -375,6 +426,8 @@ export function installAutomationRecorder(app) {
     isWriting: (owner, target) => !!take?.isWriting(keyOf(owner, target)),
     revealLane,
     finish: end,
+    /** Re-enable every overridden lane (or one: owner + target). */
+    reenable,
   };
   app.automation = api;
   return api;

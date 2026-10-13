@@ -894,7 +894,7 @@ export function createArrangeView(app) {
     const lane = a.lane;
     const info = targetInfo(t, lane.target);
     const def = info.def;
-    const on = lane.enabled !== false && !info.missing;
+    const on = lane.enabled !== false && !lane.overridden && !info.missing;
     const pts = lane.points || [];
     const col = on ? rgba(rgb, 1) : rgba([140, 146, 160], 0.8);
     // centre line for bipolar targets
@@ -1310,7 +1310,7 @@ export function createArrangeView(app) {
         const v = a.lane.points?.length ? valueAt(a.lane.points, b) : info.staticValue;
         const txt = fmtVal(info.def, v);
         if (hd.val.textContent !== txt) hd.val.textContent = txt;
-        hd.val.classList.toggle('live', p.mode === 'song' && !!a.lane.points?.length && a.lane.enabled !== false);
+        hd.val.classList.toggle('live', p.mode === 'song' && !!a.lane.points?.length && a.lane.enabled !== false && !a.lane.overridden);
       }
     }
   }

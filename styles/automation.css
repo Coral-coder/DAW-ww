@@ -39,3 +39,13 @@ select.auto-on { outline: 1px solid var(--accent-2); outline-offset: -1px; }
 .arr-oh .toggle.auto.has:not(.on) { box-shadow: inset 0 -2px 0 var(--tc, var(--accent)); }
 .arr-ah.rec, .arr-ah.recording { box-shadow: inset 6px 0 0 var(--rec, #ff4d4d); }
 .arr-ah-reclbl { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Ableton-style override: an automated control moved by hand (its lane is ignored until re-enabled) */
+.auto-reenable { color: var(--warn); font-size: 15px; font-weight: 700; }
+.auto-reenable[hidden] { display: none; }
+.knob.auto-overridden, .mx-fader.auto-overridden, .toggle.auto-overridden, .dv-power.auto-overridden { position: relative; }
+.knob.auto-overridden::after, .mx-fader.auto-overridden::after, .toggle.auto-overridden::after, .dv-power.auto-overridden::after {
+  content: ''; position: absolute; top: 1px; right: 1px; width: 6px; height: 6px; border-radius: 50%;
+  background: transparent; border: 1.5px solid var(--warn); pointer-events: none;
+}
+select.auto-overridden { outline: 1px dashed var(--warn); outline-offset: -1px; }

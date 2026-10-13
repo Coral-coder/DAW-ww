@@ -114,7 +114,8 @@ export function segmentsInWindow(points, b0, b1) {
 export function activeLanes(owner) {
   const list = owner?.automation;
   if (!Array.isArray(list) || !list.length) return [];
-  return list.filter((l) => l && l.enabled !== false && l.points?.length && parseTarget(l.target));
+  // overridden: the user moved the control by hand (Ableton-style) — the static value wins until "Re-enable automation"
+  return list.filter((l) => l && l.enabled !== false && !l.overridden && l.points?.length && parseTarget(l.target));
 }
 
 /**
@@ -316,5 +317,12 @@ export function lfoPoints({ b0, b1, shape = 'sine', periodBeats = 4, min = 0, ma
     const ph = (((b - b0) / periodBeats) % 1 + 1) % 1;
     out.push({ beat: r6(b), value: scale(val(ph)) });
   }
+  return out;
+}
+
+/** Lanes the user overrode by moving their control by hand (see the header's "Re-enable automation"). */
+export function overriddenLanes(project) {
+  const out = [];
+  for (const o of automationOwners(project)) for (const l of o?.automation || []) if (l && l.overridden) out.push(l);
   return out;
 }
