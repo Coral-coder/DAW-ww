@@ -180,6 +180,15 @@ async function roundTrip(ctx, node) {
   void node;
 }
 
+// AudioWorklet modules can fail to load without ever settling (no audio thread, blocked worklets): give up after a
+// while so `ready` resolves false and the host's fallback (fallbackPreset / fallback effect) takes over.
+const NODE_TIMEOUT_MS = 15000;
+function withTimeout(p, ms) {
+  let timer;
+  return Promise.race([p, new Promise((_, reject) => { timer = setTimeout(() => reject(userError('The Faust audio node did not start (AudioWorklet unavailable?).')), ms); })])
+    .finally(() => clearTimeout(timer));
+}
+
 // ----------------------------------------------------------------------------- instrument
 export class FaustEngine {
   constructor(ctx, output, params, opts = {}) {
@@ -235,10 +244,10 @@ export class FaustEngine {
       if (sig !== this._sig) return false;
       setStatus(key, { state: 'loading', progress: null, message: 'Starting the audio node…', info: { params: factory.params, name: factory.meta?.name || this.p.name } });
       const voices = Math.max(1, Math.min(32, Math.round(this.p.voices || 8)));
-      const node = await factory.generator.createNode(this.ctx, voices);
+      const node = await withTimeout(factory.generator.createNode(this.ctx, voices), NODE_TIMEOUT_MS);
       if (!node) throw userError('Faust could not create the audio node.');
       if (sig !== this._sig) { this._retire(node); return false; }
-      if (this.offline) await pingNode(this.ctx);
+      if (this.offline) await withTimeout(pingNode(this.ctx), NODE_TIMEOUT_MS);
       node.connect(this.out);
       this.node = node;
       this.factory = factory;
@@ -355,7 +364,7 @@ export class FaustEffect {
       if (sig !== this._sig) return false;
       setStatus(key, { state: 'loading', progress: null, message: 'Starting the audio node…', info: { params: factory.params, name: factory.meta?.name || this.p.name } });
       if (!factory.inputs) throw userError('This Faust program has no audio inputs — load it as an instrument instead.');
-      const node = await factory.generator.createNode(this.ctx);
+      const node = await withTimeout(factory.generator.createNode(this.ctx), NODE_TIMEOUT_MS);
       if (!node) throw userError('Faust could not create the audio node.');
       if (sig !== this._sig) { try { node.disconnect(); node.destroy?.(); } catch { /* */ } return false; }
       this.input.connect(node);

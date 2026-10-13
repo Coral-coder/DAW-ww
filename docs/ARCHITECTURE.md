@@ -263,6 +263,23 @@ limits: no m2 below C4, no M2 below G3, no 3rds below F3, no m9 between voices),
   two-feel). `monotony.js`: `partStats` (distinct pitches per 16 / 8 bars, longest ≤ 3-token cell repetition in bars,
   bigram entropy), `isMonotonous`, `varyPart` (the guard `generateSong` runs on every part) and `monotonyReport(project)`;
   enforced by `tests/monotony.test.js`.
+* Orchestration depth (`orchestra.js`) and plugins (`plugins.js`), both called by `generateSong` (`orchestra: false` /
+  `plugins: false` turn them off; `soundfonts: false` also disables plugins):
+  - `planExtras(genre, sections)` adds extra layers per section (`section.extra`, kept out of `section.roles`) by genre
+    priority (`GENRE_EXTRAS` / family defaults): `perc` (1–2 voices, ≤ 8 hits/bar, conga + clave / 3-over-4 rim / tambourine /
+    taiko ostinato; top-end voices only within the per-bar budget left by the main kit — `topEndBudget` 16 dnb / 20 others —
+    never a second 16th stream), `top` (dnb / jungle / breaks only: off-step ghost snares, HPF 400 Hz, −12 dB), `sub`
+    (bass roots in E1–D#2, mid-bass HPF 95 Hz), `counter` (counter-melody, call & response), `strings`, `brass` (answer stabs),
+    `guitar`, `color` (banjo / sitar / steel drums / marimba / glockenspiel…), `texture`, `vox` (hook double / choir),
+    `bells`, `organ`, `impact` (downbeat hits; snare roll into drops only where the kit sits out). Density: `maxLayers(section)`
+    melodic layers (3 intro/outro … 8 biggest chorus). Enforced by `tests/drum-layers.test.js` (+ the harmony / monotony guards).
+  - `addTurnarounds(progs, sections)`: the last 2 beats before a new section become V7/x, a borrowed iv or bVII (song genres).
+  - `plugins.js`: Faust catalog instruments per genre/role (`GENRE_FAUST`, `EXTRA_FAUST`: supersaw, VA poly, warm pad, KS pluck,
+    modal bell, PM flute / clarinet, tonewheel organ) as `{type:'faust', params:{code, values (by control label), gain},
+    fallbackPreset}`; mixed as their fallback preset (`mixInstrument`), `FAUST_GAIN` calibrated to it. `applyPluginEffects`:
+    Zita / Freeverb on the reverb bus, tape echo on the delay bus, Moog ladder on analog / acid basses, phaser, parallel Faust
+    compression on band drums — each with `params.fallback = {type, params}`: `createEffect` (effects.js) mutes the plugin's
+    pass-through while it loads and swaps in the built-in effect if it fails (a send bus never returns dry signal).
 * `extend.js`: grow an existing song (generated or hand-made). `planExtension(project, {bars|minutes|toMinutes, mode, …})`
   (preview: items + summary "Adds Breakdown 3 (16) → Build 3 (8) → Drop 3 (32) = +56 bars / +1:37"), `extendSong` (material:
   varied copies of the template section's patterns — drum variants with fills / build rolls / crashes, lead hook variations

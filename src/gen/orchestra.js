@@ -161,7 +161,7 @@ const GUITAR_GM = {
   metal: 'overdriven_guitar', 'neo-soul': 'electric_guitar_jazz', rnb: 'electric_guitar_clean', soul: 'electric_guitar_clean', gospel: 'electric_guitar_clean',
   salsa: 'acoustic_guitar_nylon', chillwave: 'electric_guitar_clean',
 };
-const COLOR_GM = { country: 'banjo', psytrance: 'sitar', dancehall: 'steel_drums', afrobeat: 'kalimba', amapiano: 'marimba', indie: 'glockenspiel' };
+const COLOR_GM = { country: 'banjo', psytrance: 'sitar', dancehall: 'steel_drums', afrobeat: 'marimba', amapiano: 'marimba', indie: 'glockenspiel' };
 const COLOR_PRESET = { banjo: 'koto', sitar: 'koto', steel_drums: 'steel-drum', kalimba: 'kalimba', marimba: 'marimba', glockenspiel: 'celesta' };
 const PERC_KIT = { latin: 'latin', african: 'afro', caribbean: 'latin', cinematic: 'cinematic', funk: 'latin', house: 'house', techno: 'techno', trance: 'techno', garage: 'garage', dnb: 'breaks', breaks: 'breaks', hiphop: 'trap', industrial: 'industrial' };
 
@@ -598,7 +598,8 @@ export function addTurnarounds(progs, sections, { g, root, scale, seed, bpb }) {
     const cut = len - 2;
     const head = { ...last, durBeats: cut - last.startBeat };
     const notes = voiceChord({ root: chord.root, type: chord.type }, { prev: last.notes, range: [52, 76], maxVoices: 4 });
-    const turn = { roman: chord.roman || `V7/${next.type}`, chord: { root: chord.root, type: chord.type, name, notes: pcs, function: 'dominant' }, startBeat: cut, durBeats: 2, notes };
+    const tr = String(nprog[0].roman || '').replace(/(maj|m|ø|°)?\d+$|sus\d*$/, '') || 'I';
+    const turn = { roman: chord.roman || (tonic ? 'V7' : `V7/${tr}`), chord: { root: chord.root, type: chord.type, name, notes: pcs, function: 'dominant' }, startBeat: cut, durBeats: 2, notes };
     progs[si] = [...prog.slice(0, -1), head, turn];
     n++;
   });
