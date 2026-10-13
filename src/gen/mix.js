@@ -18,15 +18,15 @@ const SUB_BASSES = new Set(['808-bass', 'sub-bass', 'reese-bass', 'wobble-bass',
  * velocity layers read lower than the probe groove. Re-measure when presets change (presets are re-balanced separately).
  */
 export const LEVEL_FIX = {
-  "arp|arp-pluck": 6.6, "arp|arp-saw": 5, "arp|harp": 3, "arp|sf:orchestral_harp": 5.3, "bass|808-bass": -3.9,
+  "arp|arp-pluck": 6.5, "arp|arp-saw": 5, "arp|harp": 3, "arp|sf:orchestral_harp": 5.3, "bass|808-bass": -3.9,
   "bass|acid-bass": -3, "bass|chip-bass": -2.3, "bass|dub-bass": -4.4, "bass|finger-bass": -0.4, "bass|fm-bass": -3,
   "bass|moog-bass": -1.9, "bass|pluck-bass": -5.2, "bass|reese-bass": -5.7, "bass|saw-bass": -2.1,
   "bass|sf:acoustic_bass": -4.5, "bass|sf:contrabass": -3, "bass|sf:electric_bass_finger": -0.7,
   "bass|sf:electric_bass_pick": 0.6, "bass|sf:slap_bass_1": 0.5, "bass|sub-bass": -2.8, "bass|synthwave-bass": -2.1,
-  "bass|upright-bass": 0.4, "bass|wobble-bass": -7.6, "chords|bell": 1.5, "chords|celesta": 7.1, "chords|clav": 7.2,
+  "bass|upright-bass": 0.4, "bass|wobble-bass": -7.7, "chords|bell": 1.5, "chords|celesta": 7.1, "chords|clav": 7.2,
   "chords|electric-piano": 3.4, "chords|future-chords": 0.3, "chords|glass-pad": 5.4, "chords|grand-piano": 8.4,
   "chords|guitar-clean": 3, "chords|guitar-dist": 2.8, "chords|house-stab": 5, "chords|lofi-keys": 0.6,
-  "chords|organ-drawbar": -0.6, "chords|organ-rock": -1.7, "chords|pluck": 6.9, "chords|power-chord": 3,
+  "chords|organ-drawbar": -0.6, "chords|organ-rock": -2.1, "chords|pluck": 6.9, "chords|power-chord": 3,
   "chords|sf:acoustic_grand_piano": -0.3, "chords|sf:acoustic_guitar_nylon": -0.9,
   "chords|sf:acoustic_guitar_steel": 0.9, "chords|sf:clavinet": -2.5, "chords|sf:distortion_guitar": -4.6,
   "chords|sf:electric_guitar_clean": 5.4, "chords|sf:electric_guitar_muted": 4.5, "chords|sf:electric_piano_1": -7.2,
@@ -39,15 +39,16 @@ export const LEVEL_FIX = {
   "lead|sf:distortion_guitar": -2.8, "lead|sf:electric_guitar_clean": 6, "lead|sf:electric_guitar_jazz": -1,
   "lead|sf:fiddle": 0.3, "lead|sf:flute": -3.1, "lead|sf:french_horn": -0.6, "lead|sf:overdriven_guitar": 0.5,
   "lead|sf:trumpet": 0.6, "lead|sf:vibraphone": 4.2, "lead|square-lead": 0.9, "lead|supersaw-lead": 4.9,
-  "lead|sync-lead": 1.4, "lead|trance-lead": 4.8, "lead|vibraphone": 7.8, "lead|whistle-lead": 2.3,
-  "machine:AkaiMPC60": -5.2, "machine:AlesisHR16": -7, "machine:AlesisSR16": 0.8, "machine:CasioRZ1": -2.1,
-  "machine:EmuSP12": -4.8, "machine:KorgMinipops": -2.3, "machine:LinnDrum": -2.9, "machine:LinnLM1": -0.1,
+  "lead|sync-lead": 1.6, "lead|trance-lead": 4.8, "lead|vibraphone": 7.8, "lead|whistle-lead": 2.3,
+  "machine:AkaiMPC60": -5.2, "machine:AlesisHR16": -7, "machine:AlesisSR16": 2.1, "machine:CasioRZ1": -2.1,
+  "machine:EmuSP12": -3.9, "machine:KorgMinipops": -2.3, "machine:LinnDrum": -2.9, "machine:LinnLM1": -0.1,
   "machine:OberheimDMX": -1.4, "machine:RolandCompurhythm78": -1.9, "machine:RolandTR606": 0.1,
-  "machine:RolandTR808": -3.3, "machine:RolandTR909": -5.3, "machine:VCSLAcoustic": 8.2, "machine:YamahaRX5": -0.1,
-  "pad|ambient-pad": 0.8, "pad|brass-section": -0.2, "pad|choir-pad": 1.5, "pad|dark-pad": 0.8, "pad|glass-pad": 4.9,
-  "pad|organ-drawbar": -0.4, "pad|organ-rock": -2.6, "pad|sf:brass_section": -1.6, "pad|sf:choir_aahs": -2.4,
-  "pad|sf:string_ensemble_1": -2.5, "pad|sf:string_ensemble_2": -2.3, "pad|string-pad": 1.5, "pad|strings": 0.3,
-  "pad|supersaw-pad": 1.5, "pad|synthwave-pad": 1.5, "pad|warm-pad": 1.1
+  "machine:RolandTR808": -1.3, "machine:RolandTR909": -5.3, "machine:VCSLAcoustic": 8.2, "machine:YamahaRX5": -0.1,
+  "pad|ambient-pad": 0.8, "pad|brass-section": -0.2, "pad|choir-pad": 1.5, "pad|dark-pad": 0.8, "pad|fm-brass": 3,
+  "pad|glass-pad": 4.9, "pad|juno-strings": 4.3, "pad|organ-drawbar": -0.4, "pad|organ-rock": -2.9,
+  "pad|sf:brass_section": -1.6, "pad|sf:choir_aahs": -2.4, "pad|sf:string_ensemble_1": -2.5,
+  "pad|sf:string_ensemble_2": -2.3, "pad|string-pad": 1.5, "pad|strings": 0.3, "pad|supersaw-pad": 1.5,
+  "pad|warm-pad": 1.1
 };
 
 /** dB correction for an instrument in a role (clamped; unknown instruments: 0). */

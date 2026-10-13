@@ -7,8 +7,8 @@ export const PRESET_IDS = {
   bass: ['sub-bass', '808-bass', 'reese-bass', 'acid-bass', 'pluck-bass', 'fm-bass', 'wobble-bass', 'moog-bass', 'finger-bass', 'saw-bass', 'dub-bass', 'upright-bass', 'chip-bass', 'synthwave-bass'],
   lead: ['supersaw-lead', 'square-lead', 'saw-lead', 'fm-bell-lead', 'chip-lead', 'acid-lead', 'sync-lead', 'whistle-lead', 'guitar-lead', 'brass-lead', 'flute', 'trance-lead', 'hoover'],
   keys: ['electric-piano', 'fm-epiano', 'grand-piano', 'organ-drawbar', 'organ-rock', 'clav', 'vibraphone', 'marimba', 'bell', 'celesta', 'harpsichord', 'music-box', 'lofi-keys'],
-  pad: ['warm-pad', 'string-pad', 'choir-pad', 'ambient-pad', 'dark-pad', 'glass-pad', 'supersaw-pad', 'strings', 'brass-section', 'synthwave-pad'],
-  chords: ['pluck', 'house-stab', 'future-chords', 'guitar-clean', 'guitar-dist', 'power-chord', 'harp', 'koto', 'steel-drum', 'kalimba'],
+  pad: ['warm-pad', 'string-pad', 'choir-pad', 'ambient-pad', 'dark-pad', 'glass-pad', 'supersaw-pad', 'strings', 'brass-section', 'synthwave-pad', 'juno-strings', 'detuned-pad'],
+  chords: ['pluck', 'house-stab', 'fm-brass', 'rave-stab', 'future-chords', 'guitar-clean', 'guitar-dist', 'power-chord', 'harp', 'koto', 'steel-drum', 'kalimba'],
   arp: ['arp-pluck', 'arp-saw'],
   fx: ['riser', 'noise-sweep', 'laser'],
 };
@@ -122,14 +122,14 @@ export const GENRES = {
   house: G('house', 'House', 'house', [118, 130], 124, {
     swing: 0.1, scales: ['minor', 'dorian', 'major'], drumKit: '909', drumStyle: 'house', bassStyle: 'house', chordStyle: 'house',
     progressions: ['house-minor-7', 'dorian-vamp', 'soul-vamp', 'deep-house-9'], melodyStyle: 'hook',
-    presets: { drums: '909', bass: 'pluck-bass', chords: 'house-stab', pad: 'warm-pad', lead: 'electric-piano', arp: 'arp-pluck', fx: 'noise-sweep' },
+    presets: { drums: '909', bass: 'pluck-bass', chords: 'house-stab', pad: 'juno-strings', lead: 'electric-piano', arp: 'arp-pluck', fx: 'noise-sweep' },
     structure: 'house', fx: ['Sidechain compression on pads/bass from the kick', 'Plate reverb on claps', 'Low-pass filter sweeps for builds'],
     tips: ['Four-on-the-floor kick with claps on 2 and 4; open hats on the off-beats drive the groove.', 'Use 7th/9th chord stabs (organ or piano) in a syncopated rhythm.', 'Arrange in 8/16-bar blocks so DJs can mix it.', 'Sidechain the bass and chords to the kick for pump.'],
   }),
   'deep-house': G('deep-house', 'Deep House', 'house', [118, 125], 122, {
     swing: 0.15, scales: ['minor', 'dorian'], drumKit: 'house', drumStyle: 'deep-house', bassStyle: 'deep', chordStyle: 'house',
     progressions: ['deep-house-9', 'house-minor-7', 'amapiano-minor', 'neo-soul-251'], melodyStyle: 'sparse',
-    presets: { drums: 'house', bass: 'sub-bass', chords: 'electric-piano', pad: 'warm-pad', lead: 'vibraphone', arp: 'arp-pluck', fx: 'noise-sweep' },
+    presets: { drums: 'house', bass: 'sub-bass', chords: 'electric-piano', pad: 'juno-strings', lead: 'vibraphone', arp: 'arp-pluck', fx: 'noise-sweep' },
     structure: 'house', fx: ['Lush hall reverb on chords', 'Tape saturation on drums', 'Gentle sidechain'],
     tips: ['Minor 9th and 11th chords give the warm, jazzy colour.', 'Keep the kick soft and round; let shakers and rimshots carry the groove.', 'Rolling sub bass that answers the kick rather than doubling it.'],
   }),
@@ -278,7 +278,7 @@ export const GENRES = {
   rnb: G('rnb', 'R&B', 'soul', [65, 100], 85, {
     swing: 0.25, humanize: 0.2, scales: ['minor', 'dorian', 'major'], drumKit: 'trap', drumStyle: 'rnb', bassStyle: 'sub', chordStyle: 'neo-soul',
     progressions: ['neo-soul-251', 'just-the-two', 'garage-stabs', 'trap-bells'], melodyStyle: 'vocal',
-    presets: { drums: 'trap', bass: 'sub-bass', chords: 'electric-piano', pad: 'warm-pad', lead: 'fm-epiano', arp: 'arp-pluck', fx: 'noise-sweep' },
+    presets: { drums: 'trap', bass: 'sub-bass', chords: 'electric-piano', pad: 'string-pad', lead: 'fm-epiano', arp: 'arp-pluck', fx: 'noise-sweep' },
     structure: 'pop', fx: ['Smooth plate reverb on vocals/keys', 'Gentle saturation'],
     tips: ['Lush extended chords (maj7, m9, 11) and smooth voice leading.', 'Trap-soul drums: sparse kicks, snaps, rolling hats.', 'Leave room for vocal runs and harmonies.'],
   }),
@@ -307,14 +307,14 @@ export const GENRES = {
   synthwave: G('synthwave', 'Synthwave', 'retro', [80, 118], 100, {
     scales: ['minor', 'dorian'], drumKit: '808', drumStyle: 'synthwave', bassStyle: 'synthwave', chordStyle: 'whole',
     progressions: ['synthwave-drive', 'synthwave-mediant', 'aeolian-loop', 'mario-cadence'], melodyStyle: 'lead', arp: { mode: 'up', rate: 0.25, octaves: 2 },
-    presets: { drums: '808', bass: 'synthwave-bass', chords: 'synthwave-pad', pad: 'synthwave-pad', lead: 'saw-lead', arp: 'arp-saw', fx: 'noise-sweep' },
+    presets: { drums: '808', bass: 'synthwave-bass', chords: 'synthwave-pad', pad: 'juno-strings', lead: 'saw-lead', arp: 'arp-saw', fx: 'noise-sweep' },
     structure: 'pop', fx: ['Gated reverb on snare', 'Chorus on pads and bass', 'Tape saturation'],
     tips: ['Pulsing 8th-note bass locked to the grid.', 'Big gated-reverb snare on 2 and 4.', 'Lush detuned pads and arpeggios — 80s soundtrack vibes.'],
   }),
   chillwave: G('chillwave', 'Chillwave', 'retro', [75, 110], 92, {
     swing: 0.1, scales: ['major', 'lydian', 'dorian'], drumKit: '808', drumStyle: 'chillwave', bassStyle: 'synthwave', chordStyle: 'whole',
     progressions: ['chillwave', 'soul-vamp', 'indie-dreamy', 'lydian-float'], melodyStyle: 'vocal',
-    presets: { drums: '808', bass: 'synthwave-bass', chords: 'electric-piano', pad: 'glass-pad', lead: 'fm-bell-lead', arp: 'arp-pluck', fx: 'noise-sweep' },
+    presets: { drums: '808', bass: 'synthwave-bass', chords: 'electric-piano', pad: 'juno-strings', lead: 'fm-bell-lead', arp: 'arp-pluck', fx: 'noise-sweep' },
     structure: 'chill', fx: ['Tape wobble', 'Heavy reverb', 'Sidechain on everything'],
     tips: ['Hazy, washed-out pads and reverb.', 'Lo-fi drum machines with soft transients.', 'Major 7th chords and nostalgic melodies.'],
   }),
@@ -407,7 +407,7 @@ export const GENRES = {
   'nu-disco': G('nu-disco', 'Nu-Disco', 'funk', [110, 126], 120, {
     swing: 0.08, scales: ['minor', 'dorian', 'major'], drumKit: '909', drumStyle: 'disco', bassStyle: 'disco', chordStyle: 'house',
     progressions: ['nu-disco', 'disco-minor', 'royal-road', 'dorian-vamp'], melodyStyle: 'hook',
-    presets: { drums: '909', bass: 'moog-bass', chords: 'house-stab', pad: 'synthwave-pad', lead: 'square-lead', arp: 'arp-saw', fx: 'noise-sweep' },
+    presets: { drums: '909', bass: 'moog-bass', chords: 'house-stab', pad: 'juno-strings', lead: 'square-lead', arp: 'arp-saw', fx: 'noise-sweep' },
     structure: 'house', fx: ['Filter house sweeps', 'Sidechain'],
     tips: ['Disco grooves with modern synths and filter sweeps.', 'Arpeggiated synth bass.', 'Chopped disco samples or string stabs.'],
   }),
@@ -530,7 +530,7 @@ export const GENRES = {
   eurobeat: G('eurobeat', 'Eurobeat', 'retro', [150, 165], 155, {
     scales: ['minor', 'harmonic-minor'], drumKit: '909', drumStyle: 'eurobeat', bassStyle: 'offbeat', chordStyle: 'pulse8',
     progressions: ['eurobeat', 'royal-road', 'kpop-drama', 'epic-rise'], melodyStyle: 'lead', arp: { mode: 'up', rate: 0.25, octaves: 2 },
-    presets: { drums: '909', bass: 'saw-bass', chords: 'supersaw-pad', pad: 'brass-section', lead: 'brass-lead', arp: 'arp-saw', fx: 'riser' },
+    presets: { drums: '909', bass: 'saw-bass', chords: 'supersaw-pad', pad: 'fm-brass', lead: 'brass-lead', arp: 'arp-saw', fx: 'riser' },
     structure: 'pop', fx: ['Bright reverb', 'Gated brass stabs'],
     tips: ['Octave-bouncing offbeat bass at 155+ BPM.', 'Synth-brass riffs and dramatic minor melodies.', 'Big pre-chorus builds into the chorus hook.'],
   }),
