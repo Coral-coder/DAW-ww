@@ -3,12 +3,14 @@ import { h, icon } from '../../ui/dom.js';
 import { pageShell, soundName, iconBtn, addTrackSheet, emptyState } from './common.js';
 import { ctlTile, mixTarget } from '../controls.js';
 import { actionSheet, onLongPress, haptic, bigButton } from '../touch.js';
+import { dragReorder, reorder } from '../reorder.js';
 
 export function createTracksPage(app, nav) {
   const { store, ui, actions } = app;
   const { el, body } = pageShell('Tracks', iconBtn('plus', () => addTrackSheet(app, (t) => nav.go({ page: 'track', id: t.id })), 'Add track', 'labeled'));
   const list = h('div.pk-tracks');
   body.append(list);
+  dragReorder(list, { onMove: (from, to) => store.transact('Reorder tracks', (p) => { p.tracks = reorder(p.tracks, from, to); }) });
   let visible = false, key = '';
   const cards = new Map();
 
@@ -23,7 +25,8 @@ export function createTracksPage(app, nav) {
     const open = h('button.pk-tc-open', { type: 'button', 'aria-label': 'Open track' }, h('span.pk-tc-dot'), h('div.pk-tc-text', nameEl, subEl), icon('chevronRight', 20));
     open.addEventListener('click', () => { haptic(5); actions.selectTrack(t.id); nav.go({ page: 'track', id: t.id }); });
     onLongPress(open, () => trackActions(t.id));
-    const el2 = h('div.pk-tc', { style: { '--tc': t.color } }, h('div.pk-tc-top', open, mute, solo), vol);
+    const grip = h('span.pk-grip', { 'aria-label': 'Drag to reorder', 'data-noswipe': '' }, '≡');
+    const el2 = h('div.pk-tc', { style: { '--tc': t.color } }, h('div.pk-tc-top', grip, open, mute, solo), vol);
     const sync = () => {
       const tt = store.get().tracks.find((x) => x.id === t.id);
       if (!tt) return;
@@ -45,6 +48,7 @@ export function createTracksPage(app, nav) {
     actionSheet(t.name, [
       { label: 'Edit notes', icon: 'piano', onClick: () => { actions.selectTrack(id); nav.go({ page: 'notes' }); } },
       { label: 'Play it (keys)', icon: 'music', onClick: () => { actions.selectTrack(id); nav.go({ page: 'play' }); } },
+      { label: 'Show in the song', icon: 'scenes', onClick: () => { actions.selectTrack(id); nav.go({ page: 'arrange' }); } },
       ...items,
     ]);
   }

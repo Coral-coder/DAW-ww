@@ -8,6 +8,8 @@ import { SNAPS, snapFloor, snapRound, beatToX, xToBeat, pitchToY, yToPitch, hitN
 import { pageShell, iconBtn, pickTrack, isDrums, emptyState, soundName, addTrackSheet } from './common.js';
 import { actionSheet, haptic, bigButton, chips, openSheet } from '../touch.js';
 import { ctlTile, valueTarget } from '../controls.js';
+import { openPadSheet } from '../pad-sheet.js';
+import { editedPads } from '../pad-logic.js';
 
 const KW = 40; // keyboard strip width
 const RULER = 22;
@@ -304,14 +306,15 @@ export function createNotesPage(app, nav) {
       return b;
     }));
     const used = new Set(pat.notes.map((n) => n.pitch));
+    const edited = editedPads(track());
     const pads = DRUM_PADS.filter((d, i) => i < 9 || used.has(d.pitch));
     const first = drumPage * spp;
     const on = new Map();
     for (const n of pat.notes) on.set(`${n.pitch}:${Math.round(n.start / STEP)}`, n);
     gridEl.style.setProperty('--steps', String(spp));
     gridEl.replaceChildren(...pads.map((pad) => {
-      const name = h('button.pk-pad-name', { type: 'button' }, pad.name);
-      name.addEventListener('click', () => { const t = track(); if (t) engine.previewNote(t.id, pad.pitch, 0.9, 0.5); });
+      const name = h(`button.pk-pad-name${edited.has(pad.key) ? '.edited' : ''}`, { type: 'button', title: 'Tap: pad settings (tune, decay, level…)' }, pad.name);
+      name.addEventListener('click', () => { const t = track(); if (!t) return; engine.previewNote(t.id, pad.pitch, 0.9, 0.5); openPadSheet(app, t.id, pad); });
       const cells = [];
       for (let s = first; s < Math.min(total, first + spp); s++) {
         const n = on.get(`${pad.pitch}:${s}`);
