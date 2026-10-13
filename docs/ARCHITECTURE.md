@@ -50,7 +50,7 @@ Pattern { id, trackId, name, length(beats), notes: Note[], color }
 Note    { id, pitch, start(beats, relative to pattern), dur(beats), vel }
 Clip    { id, trackId, type:'pattern'|'audio', patternId, sampleId, start, length, offset, gain, name }
 Scene   { id, name, slots:{ trackId: patternId } }
-Bus     { id, name, volume, pan, mute, fx: Effect[] }
+Bus     { id, name, volume, pan, mute, fx: Effect[], automation: AutomationLane[] }
 Effect  { id, type, enabled, params:{} }
 Sample  { id, name, mime, data: base64 (original file bytes), duration }
 ```
@@ -108,7 +108,15 @@ Sample  { id, name, mime, data: base64 (original file bytes), duration }
 
 * Lane `target`: `'volume'` (0..1.5), `'pan'` (-1..1), `'send:<busId>'` (0..1), `'inst:<paramKey>'`
   (numeric instrument param of the track's *resolved* instrument type), `'fx:<fxId>:<paramKey>'`
-  (numeric param of an insert effect). `project.master.automation` accepts `volume` / `pan`.
+  (numeric param of an insert effect), `'mute'` (step lane, ≥ 0.5 = muted), `'fxen:<fxId>'` (effect on / bypass,
+  step lane), `'cable:<cableId>'` (plugboard cable gain 0..2). Nested param keys: `'inst:pads.<padKey>.<param>'`
+  (drum pads), `'inst:values.<address>'` / `'fx:<fxId>:values.<address>'` (Faust controls). enum / bool params are
+  lanes of numbers (option index / 0|1 — `laneDef`, `encodeParam`, `decodeParam`; the engine decodes them).
+* Owners (`automationOwner(project, id)`): tracks, **buses** (`bus.automation`: volume / pan / mute / fx / fxen) and
+  the master (`project.master.automation`: volume / fx / fxen). Track/bus/master fx automation, bus mixer lanes and
+  mute lanes all play live and in offline renders. A muted track with an active mute lane keeps playing in song
+  mode (`isTrackPlayable`) so the lane can un-mute it; a track silenced by another track's solo stays silent.
+* **One lane per target**: drawn, generated (src/gen rides) and recorded automation are the same data.
 * Points are sorted by beat; values interpolate linearly between points and are held before the
   first / after the last point. Two points on the same beat make a vertical jump. Lanes without
   points, disabled lanes and lanes whose target no longer exists are ignored.
@@ -124,6 +132,27 @@ Sample  { id, name, mime, data: base64 (original file bytes), duration }
   params at the audible position on every tick (`MixGraph.applyControl`, cheap: only on change).
   Offline render schedules all mixer ramps up front and, when inst/fx lanes exist, renders in
   1/16-note steps (suspend → apply params → schedule that step's events).
+
+## Automation recording (`src/core/automation-record.js` pure, `src/ui/automation-recorder.js`)
+
+* Arm with the header **A●** button (Shift+A); arming in pattern mode switches to SONG mode. While armed and
+  playing (also when started with Record / R), any change to an automatable setting from any UI is written into
+  that target's lane at the audible playhead (`engine.getAudiblePosition()` = position − output latency).
+* Detection is UI-agnostic: after every transaction `snapshotTargets(project)` (flat `owner|target → value`) is
+  diffed with the previous one (`diffTargets`). Ignored: undo / redo / load, the recorder's own commit, lane
+  edits, new tracks / effects / instrument swaps, and bulk changes (> 16 targets in one transaction: presets,
+  auto-mix). Disabled lanes are never recorded into (a toast says to re-enable them).
+* Modes (`ui.autoMode`): **touch** — writes while the control is held (`controlEvents` touchstart/touchend from
+  knob / fader / mixer fader; wheel / typed / click changes count as a 0.7 s touch), the lane resumes on release;
+  **latch** — writes from the first touch, holds the last value until stop; **write** — latch + grabbing a tagged
+  control writes immediately. Switched targets (mute, on/bypass, enum, bool) always latch.
+* `AutomationTake` collects segments per target (thinned to ≥ 1/32 beat, new segment on a loop wrap). On stop
+  `mergeTake` replaces only the written spans (punch-in / punch-out points keep drawn points around them),
+  simplifies with Ramer–Douglas–Peucker (≈ 0.8 % of the range) and the whole pass is ONE undo step
+  ("Record automation"); lanes are created when missing.
+* Engine: `setAutomationOverride(ownerId, target, on)` makes playback ignore a lane while it is being written
+  (the live store value is heard); `getAutomatedValue(ownerId, target)` is the lane value at the audible
+  position (null when not automated) — the UI uses it to animate tagged controls (`markAuto`) at ~20 fps.
 
 ## Audio recording (`src/audio/recorder.js`, browser-only)
 
@@ -192,6 +221,26 @@ limits: no m2 below C4, no M2 below G3, no 3rds below F3, no m9 between voices),
 * `song.js`: `generateSong({genre, key?, scale?, bpm?, seed, withHarmony?}) -> partial project
   {bpm, swing, key, genre, tracks, patterns, clips, scenes, markers}` using model factories (`withHarmony` adds
   `harmony` [{startBeat, durBeats, roman, root, type, bass, name}] + `harmonyLength` for analysis/tests).
+* Production layer used by `generateSong` (all pure, deterministic):
+  - `arrange.js`: `sectionKind/sectionType`, `planSections(genre)` (orchestration: sparse first verse, held-back arp in early
+    choruses, ≤ 5 melodic layers, fx only on transitions), `planSectionHarmony` (verse / chorus / pre-chorus tension
+    (IV–V, bVI–bVII…) / bridge progressions), automation point builders (`filterSweepPoints`, `AutomationBuilder`).
+  - `groove.js`: `GROOVES` / `grooveFor(genre)` feel templates, `applyGroove(notes, {role, genre, bpm, rng, length, strum})`
+    (swing baked in as a time warp of the 8th/16th grid — songs set `swing: 0`; late-only micro-timing per role / drum pad so
+    notes keep their step and chord; ghost snares; hat accents; strums), `shapeDynamics` (section energy, phrase accents,
+    crescendo into the next section).
+  - `melody.js` `makeMotif` / `varyMotif` / `writeMelody`: a 1-bar motif developed by sequence (re-anchored on each chord),
+    variation (displacement, tail, fragment, ornament) and question / answer cadences with rests; the chorus hook is its own
+    motif (higher, longer notes, repetition) and returns with each chorus.
+  - `sound.js`: `instrumentForRole(role, genre)` — sampled drum machine (`drumInstrumentForGenre`, synth kit fallback) and GM
+    SoundFonts for acoustic genres (`{type:'soundfont', params:{library, instrument}, fallbackPreset}`), else synth presets.
+  - `mix.js`: `mixTrack` (loudness-normalised levels `LEVEL_FIX` × role balance `ROLE_TRIM_DB`, pan, EQ8 high-pass, compression,
+    saturation / tape, ducker keyed by the drum track or pump, widener, sends), `createSongBuses` (Reverb / tempo-synced Delay),
+    `createSongMaster` (glue compressor → limiter).
+  - `rides.js`: `addRides` — sparse automation lanes a producer would ride: per-section volume rides, pre-chorus pad swells,
+    lead delay throws on phrase endings, pad width, breakdown filter dips, acid cutoff / resonance.
+  `generateSong` returns `buses` + `master` too (the UI uses them) and, with `withHarmony`, `patternHarmony {patId: {harmony,
+  length}}` — the exact chords each pattern was written over (sections use different progressions).
 * `assistant.js`: `getRecommendations(project, context) -> [{id, level:'tip'|'warn'|'idea', title, text, action?: {label, kind, payload}}]`
   (context = { selectedTrackId, selectedPatternId, view }). Actions are applied by the UI via `applyAssistantAction`.
 

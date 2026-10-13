@@ -6,7 +6,10 @@
 //   touch — writes while the control is held; on release the lane's existing automation resumes.
 //           Switched/stepped targets (mute, on/bypass, enum, bool) behave like latch (as in most DAWs).
 //   latch — writes from the first touch and keeps writing the last value until the transport stops.
-//   write — like latch, and also keeps the target overwritten across loop wraps from the loop start.
+//   write — like latch, and grabbing a control (pointer down) already writes its value, even before it
+//           moves (the UI recorder calls write() on touch start).
+//   Loop recording: a backward playhead jump closes the open segments; writers still writing continue
+//   in a new segment from the loop start, and later passes replace earlier ones.
 // Only the written spans are replaced: points before / after them (drawn or generated) are kept.
 import { valueAt, replaceRange, sortPoints } from './automation.js';
 
@@ -210,7 +213,10 @@ export function mergeTake(basePoints, segments, opts = {}) {
  * Writers: { key, mode, stepped, touching, active, cur, segs, lastValue }.
  */
 export class AutomationTake {
-  constructor({ mode = 'touch', minGap = 1 / 32, wrapThreshold = 0.5 } = {}) {
+  /** minGap: thinning distance (beats); holdGap: a pause longer than this between two changes means
+   * the control was held still (the old value is kept until just before the new change). */
+  constructor({ mode = 'touch', minGap = 1 / 32, holdGap = 0.5, wrapThreshold = 0.5 } = {}) {
+    this.holdGap = holdGap;
     this.mode = mode;
     this.minGap = minGap;
     this.wrapThreshold = wrapThreshold;
@@ -234,7 +240,12 @@ export class AutomationTake {
     w.active = true;
     if (stepped && w.cur.points.length) w.cur.points.push({ beat, value: w.lastValue });
     if (stepped) w.cur.points.push({ beat, value });
-    else pushThinned(w.cur.points, { beat, value }, { minGap: this.minGap, jump });
+    else {
+      // the control was held still since the last point: keep that value up to (just before) now
+      const last = w.cur.points[w.cur.points.length - 1];
+      if (last && beat - last.beat > this.holdGap) w.cur.points.push({ beat: beat - this.minGap * 1.5, value: w.lastValue });
+      pushThinned(w.cur.points, { beat, value }, { minGap: this.minGap, jump });
+    }
     w.cur.end = Math.max(w.cur.end, beat);
     w.lastValue = value;
     return w;

@@ -332,7 +332,7 @@ export const DRUM_KITS = {
  * with the QA harness (docs/SOUND.md) and applied to per-kit copies of the shared recipes.
  */
 /** Overall kit level (dB) so drums sit with the normalised instrument presets. */
-const KIT_LEVEL_DB = -3;
+const KIT_LEVEL_DB = -6;
 const PAD_TRIM_DB = {
   "808": { kick: 1.9, snare: 9.1, clap: 13.4, rim: 7.9, hihat: 15.3, openhat: 10.1, tomlow: 2.6, tommid: 2.5, tomhigh: 2.4, crash: 4.3, ride: 3.0, cowbell: -2.0, tambourine: 0.6, shaker: 4.1, conga: 3.5, clave: 6.1 },
   "909": { kick: 3.2, snare: 6.1, clap: 10.7, rim: 7.9, hihat: 8.4, openhat: 4.5, tomlow: 4.5, tommid: 4.3, tomhigh: 4.2, crash: 2.7, ride: 1.3, cowbell: -2.0, tambourine: 0.6, shaker: 4.1, conga: 3.5, clave: 6.1 },

@@ -440,3 +440,92 @@ test('describeGenre returns readable multi-line text', () => {
   assert.ok(typeof d === 'string' && d.includes('BPM') && d.split('\n').length >= 4);
   assert.equal(G.describeGenre('not-a-genre'), '');
 });
+
+// ---------------------------------------------------------------------------
+// Production layer: groove, songwriting, arrangement, sound, mix
+// ---------------------------------------------------------------------------
+
+test('groove: swing warp keeps beats fixed, late-only micro-timing, bounds, determinism', () => {
+  assert.equal(G.swingWarp(2, 0.66, 0.5), 2);
+  assert.ok(Math.abs(G.swingWarp(1.5, 0.66, 0.5) - 1.66) < 1e-9, 'off-beat 8th swung');
+  assert.ok(Math.abs(G.swingWarp(0.25, 0.5, 0.6) - 0.3) < 1e-9, 'odd 16th swung');
+  const mk = () => G.generateDrumPattern({ style: 'boom-bap', bars: 2, density: 0.8, rng: createRng(4) });
+  const a = G.applyGroove(mk(), { genre: 'boom-bap', role: 'drums', bpm: 90, rng: createRng(1), length: 8 });
+  const b = G.applyGroove(mk(), { genre: 'boom-bap', role: 'drums', bpm: 90, rng: createRng(1), length: 8 });
+  assert.deepEqual(strip(a), strip(b));
+  assertNotes(a, 8, 'grooved drums');
+  const snares = a.filter((n) => n.pitch === 38 && n.vel > 0.4);
+  assert.ok(snares.every((n) => n.start % 1 > 0.01 && n.start % 1 < 0.1), 'laid-back (late) backbeat snares');
+  assert.ok(a.some((n) => n.pitch === 38 && n.vel < 0.35), 'ghost notes');
+  const prog = G.generateProgression({ key: 0, scale: 'major', progression: 'pop-axis', bars: 4, rng: createRng(2) });
+  const chords = G.applyGroove(G.progressionToNotes(prog, { style: 'strum', rng: createRng(1) }), { genre: 'indie', role: 'chords', bpm: 110, rng: createRng(1), length: 16, strum: 11 });
+  for (const c of prog) {
+    const hit = chords.filter((n) => n.start >= c.startBeat - 1e-6 && n.start < c.startBeat + 0.08);
+    assert.ok(hit.length >= 3 && new Set(hit.map((n) => n.start)).size > 1, 'strummed chord at each change');
+    assert.ok(chords.every((n) => n.start >= c.startBeat || n.start + n.dur <= c.startBeat + 1e-6), 'no chord rings into the next');
+  }
+});
+
+test('songwriting: motif developed into periods; chorus hook differs from the verse and returns', () => {
+  const s = G.generateSong({ genre: 'pop', seed: 21 });
+  const lead = s.tracks.find((t) => t.role === 'lead');
+  const pats = Object.values(s.patterns).filter((p) => p.trackId === lead.id);
+  const verse = pats.find((p) => /Verse$/.test(p.name));
+  const ch1 = pats.find((p) => /Chorus$/.test(p.name));
+  const ch2 = pats.find((p) => /Chorus 2$/.test(p.name));
+  const sig = (p, bar) => p.notes.filter((n) => n.start >= bar * 4 && n.start < bar * 4 + 4).map((n) => `${n.pitch}@${Math.round((n.start - bar * 4) * 4)}`).join(' ');
+  assert.equal(sig(ch1, 0), sig(ch2, 0), 'the hook returns in every chorus');
+  assert.notEqual(sig(ch1, 0), sig(verse, 0), 'chorus hook is not the verse melody');
+  const med = (p) => p.notes.map((n) => n.pitch).sort((a, b) => a - b)[Math.floor(p.notes.length / 2)];
+  assert.ok(med(ch1) >= med(verse), 'chorus sits higher');
+  // breathing room: every 2-bar span of the verse has a rest of at least half a beat
+  for (let b = 0; b + 2 <= verse.length / 4; b += 2) {
+    const ns = verse.notes.filter((n) => n.start >= b * 4 && n.start < b * 4 + 8).sort((x, y) => x.start - y.start);
+    let gap = 0;
+    for (let i = 0; i < ns.length; i++) gap = Math.max(gap, (ns[i + 1]?.start ?? b * 4 + 8) - (ns[i].start + ns[i].dur));
+    assert.ok(gap >= 0.45 || ns.length === 0, `verse bars ${b + 1}-${b + 2} breathe`);
+  }
+});
+
+test('arrangement: section progressions, orchestration, variation, automation, mix', () => {
+  const s = G.generateSong({ genre: 'pop', seed: 3 });
+  const sec = Object.fromEntries(s.sections.map((x) => [x.name, x]));
+  assert.notDeepEqual(sec['Pre-Chorus'].progression, sec.Chorus.progression, 'pre-chorus has its own tension progression');
+  assert.ok(sec.Verse.roles.length < sec.Chorus.roles.length, 'verse sparser than chorus');
+  for (const x of s.sections) assert.ok(x.roles.filter((r) => ['bass', 'chords', 'pad', 'lead', 'arp'].includes(r)).length <= 5);
+  // nothing loops identically for more than 8 bars: drum bars of a 16-bar section are not all the same
+  const h = G.generateSong({ genre: 'house', seed: 2 });
+  const drums = h.tracks.find((t) => t.role === 'drums');
+  const drop = h.patterns[drums.activePatternId];
+  const barSig = (b) => drop.notes.filter((n) => n.start >= b * 4 && n.start < b * 4 + 4).map((n) => `${n.pitch}@${Math.round((n.start % 4) * 4)}`).sort().join();
+  const sigs = Array.from({ length: drop.length / 4 }, (_, b) => barSig(b));
+  assert.ok(new Set(sigs).size >= 3, 'drum bars vary');
+  // mix: buses, sends, inserts, sidechain on house bass, master limiter last
+  assert.equal(h.buses.length, 2);
+  assert.equal(h.swing, 0);
+  const bass = h.tracks.find((t) => t.role === 'bass');
+  assert.ok(bass.fx.some((f) => f.type === 'ducker' && f.params.sourceTrackId === drums.id), 'bass ducks under the drums');
+  assert.ok(h.tracks.filter((t) => !['drums', 'bass'].includes(t.role)).every((t) => t.fx.some((f) => f.type === 'eq8' && f.params.b1On)), 'high-pass on everything but kick & bass');
+  assert.equal(h.master.fx.at(-1).type, 'limiter');
+  assert.ok(h.tracks.every((t) => t.volume > 0 && t.volume <= 1.5));
+  // automation: filtered intro / build sweeps and rides
+  const lanes = h.tracks.flatMap((t) => t.automation);
+  assert.ok(lanes.some((l) => /^fx:.*:cutoff$/.test(l.target)), 'filter sweeps');
+  assert.ok(lanes.some((l) => l.target === 'volume'), 'volume rides');
+  assert.ok(h.master.automation.some((l) => l.target === 'volume'), 'outro fade');
+  // sounds: sampled drum machine + soundfonts for acoustic genres
+  assert.ok(drums.instrument.params.machine, 'sampled drum machine');
+  const jazz = G.generateSong({ genre: 'jazz', seed: 1 });
+  assert.ok(jazz.tracks.some((t) => t.instrument.type === 'soundfont' && t.instrument.fallbackPreset));
+  const synthOnly = G.generateSong({ genre: 'jazz', seed: 1, soundfonts: false, sampledDrums: false });
+  assert.ok(synthOnly.tracks.every((t) => t.instrument.type !== 'soundfont' && !t.instrument.params.machine));
+});
+
+test('generateSong stays fast', () => {
+  G.generateSong({ genre: 'pop', seed: 1 });
+  for (const genre of ['pop', 'cinematic', 'techno', 'jazz']) {
+    const t = performance.now();
+    G.generateSong({ genre, seed: 9 });
+    assert.ok(performance.now() - t < 600, `${genre} took ${performance.now() - t} ms`);
+  }
+});
