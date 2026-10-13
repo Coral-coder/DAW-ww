@@ -149,7 +149,13 @@ stack(kick, s("~ sd"))
   assert.equal(r.error, null);
   assert.equal(queryEvents(r, 0, 1).length, 3);
   assert.equal(evaluate('nope(').error !== null, true);
-  assert.match(evaluate('s("bd").fooBar()').error, /fooBar/);
+  // unsupported functions/methods are skipped with a warning instead of failing the whole song
+  const unk = evaluate('s("bd").fooBar()');
+  assert.equal(unk.error, null);
+  assert.match(unk.warnings.join(' '), /fooBar/);
+  const sl = evaluate('s("bd*2").gain(slider(0.5, 0, 1))');
+  assert.equal(sl.error, null);
+  assert.equal(queryEvents(sl, 0, 1)[0].value.gain, 0.5);
   assert.match(evaluate('note("c3").scale("C:notascale")').error, /scale/i);
   assert.equal(evaluate('').patterns.length, 0);
   assert.equal(evaluate('').error, null);
