@@ -34,7 +34,7 @@ test('pocket router: hash routes, tabs, neighbours, swipe decisions', () => {
   assert.equal(tabOf('track'), 'tracks');
   assert.equal(neighbour('home', -1), null);
   assert.equal(neighbour('home', 1), 'tracks');
-  assert.equal(neighbour('track', 1), 'notes');
+  assert.equal(neighbour('track', 1), 'arrange');
   assert.equal(neighbour(PAGES[PAGES.length - 1].id, 1), null);
   assert.equal(swipeDecision({ dx: -150, dy: 10, dt: 400, width: 390 }), 1);
   assert.equal(swipeDecision({ dx: 150, dy: 10, dt: 400, width: 390 }), -1);

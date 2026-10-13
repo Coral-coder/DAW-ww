@@ -9,7 +9,8 @@ import { fitNotesToHarmony } from '../gen/fit.js';
 import { PRESETS } from '../audio/index.js';
 import { scheduleClick } from '../audio/metronome.js';
 import { estimateLatency } from '../audio/recorder.js';
-import { yin, yinGeometry, trackPitch, segmentNotes, humToPattern, freqToMidi, GRIDS } from './pitch.js';
+import { yin, yinGeometry, humToPattern, freqToMidi, GRIDS } from './pitch.js';
+import { analyzeTakeAsync } from './hum-analysis.js';
 import { openSheet, bigButton, chips, haptic } from './touch.js';
 import { isMelodic, soundName, pickTrack } from './pages/common.js';
 
@@ -95,7 +96,7 @@ export function openHumSheet(app, { trackId = null } = {}) {
     cancelAnimationFrame(raf);
     if (phase === 'ready') renderReady();
     else if (phase === 'recording') renderRecording();
-    else if (phase === 'analysing') content.replaceChildren(h('div.pk-hum-big', '…'), h('p.pk-p.center', 'Finding your notes…'));
+    else if (phase === 'analysing') content.replaceChildren(h('div.pk-hum-big', '…'), h('p.pk-p.center', 'Finding your notes…'), h('div.pk-progress', progFill), progPct);
     else renderReview();
   }
 
@@ -221,6 +222,10 @@ export function openHumSheet(app, { trackId = null } = {}) {
     }
   }
 
+  const progFill = h('div.pk-progress-fill');
+  const progPct = h('p.pk-hint', '0 %');
+  const setProgress = (p) => { progFill.style.width = `${Math.round(p * 100)}%`; progPct.textContent = `${Math.round(p * 100)} %`; };
+
   async function stopRec() {
     if (phase !== 'recording') return;
     haptic(15);
@@ -229,11 +234,14 @@ export function openHumSheet(app, { trackId = null } = {}) {
     const sr = mic.sampleRate;
     mic.close(); mic = null;
     render();
+    setProgress(0);
     await new Promise((r) => setTimeout(r, 30));
     const samples = concat(blocks);
     blocks = [];
     recSec = samples.length / sr;
-    raw = segmentNotes(trackPitch(samples, sr));
+    // pitch tracking + segmentation in a Worker (main-thread slices as a fallback): a 60 s take never freezes the UI
+    raw = await analyzeTakeAsync(samples, sr, { onProgress: setProgress });
+    if (phase !== 'analysing') return; // the sheet was closed meanwhile
     if (!playAlong) startSec = raw.length ? raw[0].start : 0;
     phase = 'review';
     render();

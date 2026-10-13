@@ -2,18 +2,20 @@
 export const PAGES = [
   { id: 'home', label: 'Create', icon: 'sparkles' },
   { id: 'tracks', label: 'Tracks', icon: 'layers' },
+  { id: 'arrange', label: 'Song', icon: 'scenes' },
   { id: 'notes', label: 'Notes', icon: 'piano' },
   { id: 'play', label: 'Play', icon: 'music' },
   { id: 'mix', label: 'Mix', icon: 'mixer' },
   { id: 'setlist', label: 'Setlist', icon: 'timeline' },
 ];
 /** Sub-pages (not in the tab bar): reached from a page, "back" returns to their parent. */
-export const SUBPAGES = { track: { parent: 'tracks', label: 'Track' } };
+export const SUBPAGES = { track: { parent: 'tracks', label: 'Track' }, code: { parent: 'arrange', label: 'Code', noId: true } };
 
 /** '#/notes' | '#/track/trk_1' -> {page, id}; unknown -> home. */
 export function parseRoute(hash = '') {
   const parts = String(hash).replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
   const page = parts[0];
+  if (SUBPAGES[page]?.noId) return parts[1] ? { page, id: parts[1] } : { page };
   if (SUBPAGES[page]) return parts[1] ? { page, id: parts[1] } : { page: SUBPAGES[page].parent };
   if (PAGES.some((p) => p.id === page)) return { page };
   return { page: 'home' };
