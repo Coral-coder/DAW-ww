@@ -12,7 +12,7 @@ npm start          # serves the app at http://localhost:5173 (Node 18+, no npm i
 npm test           # runs the unit tests (node:test)
 ```
 
-Or open the GitHub Pages deployment of `main`. Any static file server works — it's plain ES modules.
+Any static file server works — it's plain ES modules.
 
 ## What's inside
 
