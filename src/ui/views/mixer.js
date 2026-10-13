@@ -8,6 +8,7 @@ import { createBus, createEffect } from '../../core/model.js';
 import { clamp, dbToGain, gainToDb } from '../../core/util.js';
 import { EFFECT_DEFS, INSTRUMENT_DEFS, PRESETS, DRUM_KITS } from '../../audio/index.js';
 import { showEffectMenu } from '../panels/device.js';
+import { isPatchActive, patchFxOrder } from '../../core/patch.js';
 
 // ---------------------------------------------------------------- helpers
 const VOL_MAX = 1.5;
@@ -118,7 +119,7 @@ export function createMixerView(app) {
   function signature(p) {
     return JSON.stringify([
       prefs.narrow, prefs.showBuses,
-      p.tracks.map((t) => [t.id, t.name, t.color, t.type, t.instrument?.type, t.instrument?.preset, fxSig(t.fx)]),
+      p.tracks.map((t) => [t.id, t.name, t.color, t.type, t.instrument?.type, t.instrument?.preset, fxSig(t.fx), isPatchActive(t) ? patchFxOrder(t).join(',') : 0]),
       p.buses.map((b) => [b.id, b.name, fxSig(b.fx)]),
       fxSig(p.master.fx),
     ]);
@@ -248,7 +249,7 @@ export function createMixerView(app) {
   }
 
   // ---------------------------------------------------------------- strip parts
-  function insertsSection(kind, id, fxList, getFxOwner) {
+  function insertsSection(kind, id, fxList, getFxOwner, patched = false) {
     const list = h('div.mx-slot-list');
     fxList.forEach((f, i) => {
       const def = EFFECT_DEFS?.[f.type];
@@ -263,12 +264,13 @@ export function createMixerView(app) {
         { header: def?.name || f.type },
         { label: 'Edit in device panel', icon: 'sliders', onClick: () => openChain(kind, id, f.id) },
         { label: f.enabled ? 'Bypass' : 'Enable', icon: 'power', onClick: () => dot.click() },
-        { label: 'Move up', disabled: i === 0, onClick: () => moveFx(getFxOwner, f.id, -1) },
-        { label: 'Move down', disabled: i === fxList.length - 1, onClick: () => moveFx(getFxOwner, f.id, 1) },
+        patched ? { label: 'Show on the Plugboard', icon: 'plug', onClick: () => openPlugboard(id) } : null,
+        { label: 'Move up', disabled: i === 0 || patched, onClick: () => moveFx(getFxOwner, f.id, -1) },
+        { label: 'Move down', disabled: i === fxList.length - 1 || patched, onClick: () => moveFx(getFxOwner, f.id, 1) },
         { label: 'Duplicate', icon: 'copy', onClick: () => store.transact('Duplicate effect', (p) => { const o = getFxOwner(p); const j = o.fx.findIndex((x) => x.id === f.id); if (j >= 0) o.fx.splice(j + 1, 0, createEffect(f.type, JSON.parse(JSON.stringify(f.params || {})))); }) },
         '-',
         { label: 'Remove', icon: 'trash', onClick: () => store.transact(`Remove ${def?.name || f.type}`, (p) => { const o = getFxOwner(p); o.fx = o.fx.filter((x) => x.id !== f.id); }) },
-      ]));
+      ].filter(Boolean)));
       list.appendChild(slot);
     });
     const add = h('button.mx-slot.mx-slot-add', { type: 'button', title: 'Add an insert effect' }, icon('plus', 12), h('span', fxList.length ? '' : 'Add FX'));
@@ -280,7 +282,17 @@ export function createMixerView(app) {
       });
     });
     list.appendChild(add);
+    if (patched) {
+      const badge = h('button.mx-plug-badge', { type: 'button', title: 'This channel’s effects are wired on the Plugboard (parallel branches / sidechain). Shown in signal-flow order — click to open the Plugboard.' }, icon('plug', 9), 'PLUG');
+      badge.addEventListener('click', (e) => { e.stopPropagation(); openPlugboard(id); });
+      return h('div.mx-inserts.patched', h('div.mx-sec-label', 'Inserts', badge), list);
+    }
     return h('div.mx-inserts', h('div.mx-sec-label', { title: 'Insert effects process this channel in series, top to bottom' }, 'Inserts'), list);
+  }
+
+  function openPlugboard(trackId) {
+    actions.selectTrack(trackId);
+    app.showView('patch');
   }
 
   function moveFx(getFxOwner, fxId, dir) {
@@ -377,7 +389,9 @@ export function createMixerView(app) {
     head.addEventListener('dblclick', () => actions.renameTrack(t.id));
     head.addEventListener('contextmenu', (e) => contextMenu(e, actions.trackMenuItems(t.id)));
 
-    const inserts = insertsSection('track', t.id, t.fx || [], get);
+    const patched = isPatchActive(t);
+    const ordered = patched ? patchFxOrder(t).map((fid) => t.fx.find((f) => f.id === fid)).filter(Boolean) : (t.fx || []);
+    const inserts = insertsSection('track', t.id, ordered, get, patched);
 
     // sends
     const sends = new Map();

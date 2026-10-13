@@ -1,6 +1,6 @@
 // Pattern / project analysis helpers shared by the assistant and part generators.
 import { beatsPerBar } from '../core/model.js';
-import { detectChord, chordToRoman, chordPitchClasses, mod12 } from '../theory/index.js';
+import { detectChord, chordToRoman, chordPitchClasses, chordName, mod12 } from '../theory/index.js';
 
 export const isDrumTrack = (t) => t?.instrument?.type === 'drums' || t?.role === 'drums';
 
@@ -71,11 +71,24 @@ export function detectPatternChords(pattern, bpb = 4) {
   return out;
 }
 
+/**
+ * detectChord reports the lowest note as `bass`. In a keys part that is usually just the voicing's inversion,
+ * not a slash chord the bass player should follow: keep it only when it is a separate note at least a 5th below
+ * the rest of the chord and down in the bass register (a deliberate "C/G" written with its bass note).
+ */
+function withoutVoicingBass(chord, notes = []) {
+  const out = { ...chord };
+  const sorted = [...new Set(notes)].sort((a, b) => a - b);
+  const slash = out.bass != null && mod12(out.bass) !== mod12(out.root) && sorted.length >= 3 && sorted[0] < 50 && sorted[1] - sorted[0] >= 7;
+  if (!slash) { delete out.bass; out.inversion = 0; out.name = chordName(out); }
+  return out;
+}
+
 /** Turn detected chords into a generator progression [{roman, chord, startBeat, durBeats, notes}]. */
 export function chordsToProgression(found, keyRoot = 0) {
   return found.map((f) => ({
     roman: chordToRoman(f.chord, keyRoot),
-    chord: { ...f.chord, notes: chordPitchClasses(f.chord.root, f.chord.type) },
+    chord: { ...withoutVoicingBass(f.chord, f.notes), notes: chordPitchClasses(f.chord.root, f.chord.type) },
     startBeat: f.start,
     durBeats: Math.max(0.25, f.end - f.start),
     notes: f.notes,

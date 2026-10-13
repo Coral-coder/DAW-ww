@@ -18,7 +18,7 @@ import { uid } from './util.js';
 export const PATCH_IN = 'in';
 export const PATCH_OUT = 'out';
 export const NODE_W = 172; // layout metrics shared with the UI (canvas units)
-export const NODE_H = 112;
+export const NODE_H = 118;
 export const MAX_CABLE_GAIN = 2;
 
 const isTerminal = (id) => id === PATCH_IN || id === PATCH_OUT;
@@ -560,7 +560,7 @@ export function applyTemplate(track, id, makeFx, opts = {}) {
       ]);
       break;
     case 'sidechain': {
-      const nid = fxNode('ducker', { sourceTrackId: opts.drumTrackId || '', amount: 0.75, threshold: -30, attack: 0.004, release: 0.2 });
+      const nid = fxNode('ducker', { sourceTrackId: opts.drumTrackId || '', amount: 0.75, threshold: -20, attack: 0.004, release: 0.2 });
       insertBeforeOut(track, nid);
       break;
     }

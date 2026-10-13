@@ -8,6 +8,7 @@ import { SamplerInstrument } from './sampler.js';
 import { resolveInstrumentDef, listPresets as _listPresets, PRESETS, PRESET_CATEGORIES } from './presets.js';
 import { INSTRUMENT_DEFS, getParamDefaults } from './defs.js';
 import { DRUM_KITS } from './kits.js';
+import { PluginInstrument, isPluginType } from './plugin-instrument.js';
 
 export { PRESETS, PRESET_CATEGORIES, INSTRUMENT_DEFS, getParamDefaults, DRUM_KITS };
 
@@ -45,7 +46,7 @@ export class Instrument {
     this.def = instrumentDef;
     if (!this.engine || this.type !== type) {
       const old = this.engine;
-      this.engine = new ENGINES[type](this.ctx, this.output, params, this.opts);
+      this.engine = isPluginType(type) ? new PluginInstrument(type, this.ctx, this.output, params, this.opts) : new ENGINES[type](this.ctx, this.output, params, this.opts);
       if (old) { try { old.dispose(); } catch (e) { warn(e); } }
     } else {
       try { this.engine.setParams(params); } catch (e) { warn(e); }
@@ -59,6 +60,10 @@ export class Instrument {
   noteOn(pitch, vel, time) { try { this.engine.noteOn(pitch, vel, time); } catch (e) { warn(e); } }
   noteOff(pitch, time) { try { this.engine.noteOff(pitch, time); } catch (e) { warn(e); } }
   allNotesOff(time) { try { this.engine.allNotesOff(time); } catch (e) { warn(e); } }
+  /** Plugin instruments (soundfont/faust/wam): resolves true when playable, false on failure. Built-ins: null. */
+  get ready() { return this.engine?.ready ?? null; }
+  /** User-facing load error of a plugin instrument (null when fine). */
+  get error() { return this.engine?.error ?? null; }
   /** value -1..1 (synth only; others ignore). */
   pitchBend(value, time) { try { this.engine.pitchBend?.(value, time); } catch (e) { warn(e); } }
   /** Number of currently allocated voices (for meters/debug). */

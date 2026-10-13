@@ -1,7 +1,7 @@
 // Bassline generator: idiomatic styles following a progression (from harmony.generateProgression).
 import { createRng, clamp } from '../core/util.js';
 import { DRUM_PITCH } from '../core/model.js';
-import { mod12, scalePitchClasses, getChordType } from '../theory/index.js';
+import { mod12, scalePitchClasses, getChordType, chordPitchClasses, chordScale, keyPitchClasses } from '../theory/index.js';
 import { getGenre } from './genres.js';
 import { resolveKey } from './harmony.js';
 import { makeNote } from './note-util.js';
@@ -42,7 +42,7 @@ const TEMPLATES = {
   hardstyle: [[0, 1, 2, 3].map((b) => B(b + 0.5, 0.45, 0, 0.9))],
   wobble: [
     [B(0, 0.75, 0, 1), B(0.75, 0.25, 0, 0.8), B(1, 0.5, 'oct'), B(1.5, 0.5), B(2, 1, 0, 0.95), B(3, 1 / 3, 0, 0.8), B(3 + 1 / 3, 1 / 3, 'oct', 0.8), B(3 + 2 / 3, 1 / 3, 0, 0.8)],
-    [B(0, 1.5, 0, 1), B(1.5, 0.25, 'oct', 0.7), B(1.75, 0.25), B(2.5, 0.5, 1, 0.8), B(3, 1, 0, 0.9)],
+    [B(0, 1.5, 0, 1), B(1.5, 0.25, 'oct', 0.7), B(1.75, 0.25), B(2.5, 0.5, 'b7', 0.8), B(3, 1, 0, 0.9)],
   ],
   reggae: [
     [B(0, 0.9, 0, 0.9), B(1.5, 0.4, '3', 0.7), B(2, 0.5, '5', 0.8), B(2.5, 0.5, 0, 0.75), B(3.5, 0.4, 'appr', 0.65)],
@@ -76,13 +76,29 @@ function bassRoot(pc, lo) {
   return lo + mod12(pc - lo);
 }
 
-function chordToneOffset(chord, token) {
-  const iv = getChordType(chord.type).intervals;
+/**
+ * Semitone offset above the chord root for a template token. keyPcs (the key's pitch classes) decides the
+ * colour when the chord itself has no such tone: a power chord's "3" is the key's 3rd, a triad's "b7" is the
+ * key's 7th only when it is a b7 that fits (else the octave) — never a guess that clashes with the chords.
+ */
+function chordToneOffset(chord, token, keyPcs = null) {
+  const iv = getChordType(chord.type).intervals.map((i) => i % 12);
+  const inKey = (i) => !keyPcs || keyPcs.includes(mod12(chord.root + i));
   switch (token) {
     case 'oct': return 12;
     case '5': return iv.find((i) => i === 7 || i === 6 || i === 8) ?? 7;
-    case '3': return iv.find((i) => i >= 2 && i <= 5) ?? 4;
-    case 'b7': return iv.find((i) => i === 10 || i === 11 || i === 9) ?? 10;
+    case '3': {
+      const t = iv.find((i) => i === 3 || i === 4) ?? iv.find((i) => i === 2 || i === 5);
+      if (t != null) return t;
+      return inKey(3) ? 3 : inKey(4) ? 4 : 7;
+    }
+    case 'b7': {
+      const s7 = iv.find((i) => i === 10 || i === 11 || i === 9);
+      if (s7 != null) return s7;
+      const minor = iv.includes(3);
+      if (inKey(10) && (minor || !inKey(11))) return 10;
+      return 12;
+    }
     default: return typeof token === 'number' ? token : 0;
   }
 }
@@ -103,27 +119,52 @@ export function generateBassline(opts = {}) {
   const density = clamp(opts.density ?? 0.8, 0, 1);
   const octave = opts.octave ?? 2;
   const lo = opts.range?.[0] ?? ((octave + 1) * 12 - 5); // octave 2 -> 31 (G1)
-  const scalePcs = scalePitchClasses(keyRoot, scale);
+  const scalePcs = keyPitchClasses(keyRoot, scale);
+  const keySet = new Set(scalePcs);
   const out = [];
   const push = (pitch, start, dur, vel) => {
     if (start < -1e-6 || start >= length - 1e-6) return;
     const n = makeNote(pitch, start, Math.max(0.05, dur), vel, length);
     if (n) out.push(n);
   };
-  const chordAt = (t) => progression.find((c) => t >= c.startBeat - 1e-6 && t < c.startBeat + c.durBeats - 1e-6) || progression[progression.length - 1];
+  // a tiny look-ahead: a humanized / kick-locked note a hair before the change belongs to the new chord
+  const chordAt0 = (t) => progression.find((c) => t >= c.startBeat - 1e-6 && t < c.startBeat + c.durBeats - 1e-6) || progression[progression.length - 1];
+  const chordAt = (t) => chordAt0(t + 0.03);
   const nextChordAfter = (c) => {
     const i = progression.indexOf(c);
     return progression[(i + 1) % progression.length];
   };
-  const rootPitch = (c) => bassRoot(c.chord.root, lo);
+  // the bass plays the slash-chord bass note when there is one, else the root
+  const bassPc = (c) => (c.chord.bass != null ? c.chord.bass : c.chord.root);
+  const rootPitch = (c) => bassRoot(bassPc(c), lo);
+  const tok = (c, token) => chordToneOffset(c.chord, token, scalePcs);
+  /** Would this pitch class grind against the chord (a minor 2nd above a chord tone, a cross-relation)? */
+  const grinds = (pc, c) => {
+    const tones = chordPitchClasses(c.chord.root, c.chord.type);
+    if (tones.includes(mod12(pc))) return false;
+    const major3 = getChordType(c.chord.type).intervals.some((i) => i % 12 === 4);
+    if (major3 && mod12(pc - c.chord.root) === 3) return true;
+    return tones.some((t) => mod12(pc - t) === 1 || (mod12(t - pc) === 1 && !keySet.has(t)));
+  };
+  const chromaticStyle = ['walking', 'funk', 'neo-soul', 'gospel', 'blues'].includes(style);
   const approach = (c, t) => {
-    // chromatic or diatonic approach to the next chord root
+    // lead into the next chord's bass note by step (diatonic, or chromatic in jazzier styles) or from its 5th —
+    // but never with a note that rubs against the chord still sounding
     const nxt = chordAt(t + 0.5 + 1e-3);
-    const target = rootPitch(nxt === c ? nextChordAfter(c) : nxt);
-    const below = target - 1;
-    const above = target + 1;
-    const diatonicBelow = [target - 2, target - 1].find((p) => scalePcs.includes(mod12(p)));
-    return rng.chance(0.5) ? (rng.chance(0.5) ? below : above) : diatonicBelow ?? below;
+    const nc = nxt === c ? nextChordAfter(c) : nxt;
+    const target = rootPitch(nc);
+    if (mod12(target) === mod12(bassPc(c))) return rootPitch(c) + (rng.chance(0.5) ? tok(c, '5') : 12);
+    const steps = rng.chance(0.5) ? [target - 1, target + 1, target - 2, target + 2] : [target - 2, target + 2, target - 1, target + 1];
+    const ok = (p) => !grinds(mod12(p), c) && (chromaticStyle || keySet.has(mod12(p)) || chordPitchClasses(c.chord.root, c.chord.type).includes(mod12(p)));
+    const hit = steps.find(ok);
+    if (hit != null) return hit;
+    const fifth = target - 5;
+    if (ok(fifth)) return fifth;
+    // nearest tone of the current chord to the target
+    const tones = chordPitchClasses(c.chord.root, c.chord.type);
+    let best = rootPitch(c);
+    for (let p = target - 6; p <= target + 6; p++) if (tones.includes(mod12(p)) && Math.abs(p - target) < Math.abs(best - target)) best = p;
+    return best;
   };
   const kickTimes = (opts.kickNotes || []).map((k) => (typeof k === 'number' ? k : k.pitch === DRUM_PITCH.kick ? k.start : null)).filter((t) => t != null).sort((a, b) => a - b);
 
@@ -131,7 +172,7 @@ export function generateBassline(opts = {}) {
   const resolveIv = (c, h, t) => {
     if (h.iv === 'appr') return approach(c, t);
     if (h.iv === 'next') return rootPitch(chordAt(t + 1 + 1e-3));
-    return rootPitch(c) + chordToneOffset(c.chord, h.iv);
+    return rootPitch(c) + tok(c, h.iv);
   };
 
   const fromTemplate = (name) => {
@@ -152,7 +193,7 @@ export function generateBassline(opts = {}) {
         push(pitch, t, dur, h.ghost ? h.v : h.v * (0.9 + rng() * 0.1));
         if (h.slide !== undefined) {
           // overlapping second note = legato glide on mono synths
-          const sp = rootPitch(c) + chordToneOffset(c.chord, h.slide);
+          const sp = rootPitch(c) + tok(c, h.slide);
           push(sp, t + dur * 0.6, dur * 0.6, h.v * 0.85);
         }
       }
@@ -168,7 +209,7 @@ export function generateBassline(opts = {}) {
       for (const c of progression) {
         if (c.durBeats >= bpb * 2 && rng.chance(0.5)) {
           push(rootPitch(c), c.startBeat, c.durBeats / 2, 0.9);
-          push(rootPitch(c) + (rng.chance(0.5) ? 12 : chordToneOffset(c.chord, '5')), c.startBeat + c.durBeats / 2, c.durBeats / 2 - 0.02, 0.85);
+          push(rootPitch(c) + (rng.chance(0.5) ? 12 : tok(c, '5')), c.startBeat + c.durBeats / 2, c.durBeats / 2 - 0.02, 0.85);
         } else push(rootPitch(c), c.startBeat, c.durBeats - 0.02, 0.9);
       }
       break;
@@ -208,12 +249,15 @@ export function generateBassline(opts = {}) {
         let dur = Math.min(next, chordEnd) - t;
         if (style === 'sub') { push(p, t, Math.max(0.1, dur - 0.02), 0.85); continue; }
         // 808: occasional octave jump on later hits within a chord
-        if (t > c.startBeat + 1e-6 && rng.chance(0.25)) p += rng.chance(0.6) ? 12 : chordToneOffset(c.chord, '5');
+        if (t > c.startBeat + 0.05 && rng.chance(0.25)) p += rng.chance(0.6) ? 12 : tok(c, '5');
         push(p, t, Math.max(0.15, dur - 0.02), 0.95);
         const slideChance = style === 'drill' ? 0.55 : 0.2;
         if (dur >= 1 && rng.chance(slideChance)) {
-          // glide: overlapping note into a neighbour (drill loves minor 3rd / b2 / 5th slides)
-          const targetIv = rng.pick(style === 'drill' ? [3, 1, 7, -2, 12] : [12, 7, -5]);
+          // glide: overlapping note into a neighbour (drill loves minor 3rd / 5th / b7 slides) — only into notes
+          // that sit with the chord (a b2 slide held over the chord just grinds)
+          const has7 = getChordType(c.chord.type).intervals.some((i) => i === 10 || i === 11);
+          const opts808 = style === 'drill' ? [tok(c, '3'), 7, ...(has7 ? [tok(c, 'b7') - 12] : []), 12] : [12, 7, -5];
+          const targetIv = rng.pick(opts808.filter((iv) => !grinds(mod12(p + iv), c)).concat([12]));
           const sp = p + targetIv;
           const st = t + dur * rng.pick([0.5, 0.75]);
           push(sp, st, t + dur - st, 0.9);
@@ -229,7 +273,8 @@ export function generateBassline(opts = {}) {
         if (i % 4 !== 0 && rng() > 0.45 + density * 0.4) continue;
         const c = chordAt(t);
         let p = rootPitch(c) + rng.pick(scaleOffsets);
-        if (!scalePcs.includes(mod12(p))) p = rootPitch(c);
+        const cs = chordScale(c.chord, keyRoot, scale);
+        if (![...cs.tones, ...cs.tensions].includes(mod12(p))) p = rootPitch(c);
         const accent = i % 4 === 0 || rng.chance(0.25);
         const slide = rng.chance(0.2);
         push(p, t, slide ? 0.35 : 0.18, accent ? 1 : 0.6);
@@ -237,32 +282,39 @@ export function generateBassline(opts = {}) {
       break;
     }
     case 'walking': {
+      // beat 1: root; beat 3: a chord tone; beats 2 / 4: scale steps, the last beat approaches the next root
+      let prevP = null;
       for (const c of progression) {
         const beats = Math.max(1, Math.round(c.durBeats));
-        const r = rootPitch(c);
-        const tones = getChordType(c.chord.type).intervals.map((i) => r + (i % 12)).filter((p, k, a) => a.indexOf(p) === k);
+        let r = rootPitch(c);
+        if (prevP != null) { while (r - prevP > 7 && r - 12 >= lo) r -= 12; while (prevP - r > 7 && r + 12 <= lo + 19) r += 12; }
+        const cs = chordScale(c.chord, keyRoot, scale);
+        const core = getChordType(c.chord.type).intervals.filter((i) => i < 12).map((i) => mod12(c.chord.root + i));
         let prev = r;
+        const dir0 = rng.chance(0.6) ? 1 : -1;
         for (let k = 0; k < beats; k++) {
           const t = c.startBeat + k;
           if (t >= length) break;
           let p;
+          const strongBeat = Math.abs(((t % bpb) + bpb) % bpb - bpb / 2) < 1e-6 && bpb % 2 === 0;
           if (k === 0) p = r;
           else if (k === beats - 1) p = approach(c, t);
-          else {
-            // step through chord/scale tones, ascending or descending
-            const dir = rng.chance(0.6) ? 1 : -1;
+          else if (strongBeat) {
             const cands = [];
-            for (let d = 1; d <= 4; d++) {
-              const q = prev + d * dir;
-              if (tones.some((x) => mod12(x) === mod12(q)) || (scalePcs.includes(mod12(q)) && d <= 2)) cands.push(q);
-            }
-            p = cands.length ? cands[0] : prev + 2 * dir;
+            for (let q = prev - 7; q <= prev + 7; q++) if (q !== prev && core.includes(mod12(q))) cands.push(q);
+            cands.sort((a, b) => (Math.abs(a - prev - 3 * dir0) - Math.abs(b - prev - 3 * dir0)));
+            p = cands[0] ?? r + 7;
+          } else {
+            const ok = [...cs.tones, ...cs.tensions];
+            const cands = [1, 2, 3, 4].map((d) => prev + d * dir0).filter((q) => ok.includes(mod12(q)));
+            p = cands[0] ?? prev + 2 * dir0;
           }
           while (p < lo) p += 12;
           while (p > lo + 19) p -= 12;
           push(p, t, 0.92, k === 0 ? 0.9 : 0.75 + rng() * 0.1);
           prev = p;
         }
+        prevP = prev;
       }
       break;
     }
@@ -273,8 +325,12 @@ export function generateBassline(opts = {}) {
           const t = b * bpb + Math.floor(k / 2) + (k % 2 ? 2 / 3 : 0);
           if (t >= length) continue;
           const c = chordAt(t);
-          const third = chordToneOffset(c.chord, '3');
-          const fig = [0, third, 7, 9, 10, 9, 7, third];
+          const third = tok(c, '3');
+          const fifth = tok(c, '5');
+          const sev = tok(c, 'b7');
+          const sixth = scalePcs.includes(mod12(c.chord.root + 9)) || sev === 10 ? 9 : fifth;
+          // strong beats (1 & 3) stay on chord tones: root and the 7th (or octave)
+          const fig = [0, third, fifth, sixth, sev, sixth, fifth, third];
           push(rootPitch(c) + fig[k], t, k % 2 ? 0.3 : 0.6, k % 2 ? 0.7 : 0.88);
         }
       }
@@ -289,9 +345,10 @@ export function generateBassline(opts = {}) {
           if (last && c.durBeats >= 2) {
             // chromatic walk-up 8ths into the next root
             const target = rootPitch(chordAt(c.startBeat + c.durBeats + 1e-3));
-            push(target - 2, t, 0.45, 0.7);
+            const a1 = grinds(mod12(target - 2), c) ? r + tok(c, '5') : target - 2;
+            push(a1, t, 0.45, 0.7);
             push(target - 1, t + 0.5, 0.45, 0.75);
-          } else push(k % 2 ? r + 7 : r, t, 0.9, k === 0 ? 0.9 : 0.75);
+          } else push(k % 2 ? r + tok(c, '5') : r, t, 0.9, k === 0 ? 0.9 : 0.75);
         }
       }
       break;

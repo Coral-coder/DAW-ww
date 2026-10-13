@@ -108,15 +108,82 @@ export function getPulseWave(ctx, width = 0.5) {
   });
 }
 
-/** Configure an OscillatorNode for a waveform name. */
-export function setOscWave(ctx, osc, wave, width = 0.5) {
-  switch (wave) {
-    case 'saw': case 'sawtooth': case 'supersaw': osc.type = 'sawtooth'; break;
+/* ---- phase-rotated band-limited waves (free-running oscillator emulation) ---- */
+// Web Audio oscillators always start at phase 0; analog/JP-8000 style oscillators are free
+// running. We emulate a random start phase with phase-rotated PeriodicWaves (8 phases cached).
+const PHASES = 8;
+function basicCoeffs(wave, width) {
+  const N = wave === 'sine' ? 2 : wave === 'triangle' ? 512 : 2048;
+  const real = new Float32Array(N), imag = new Float32Array(N);
+  for (let n = 1; n < N; n++) {
+    if (wave === 'saw') imag[n] = (2 / (n * Math.PI)) * (n % 2 ? 1 : -1);
+    else if (wave === 'square') imag[n] = n % 2 ? 4 / (n * Math.PI) : 0;
+    else if (wave === 'triangle') imag[n] = (8 * Math.sin((n * Math.PI) / 2)) / (n * n * Math.PI * Math.PI);
+    else if (wave === 'pulse') real[n] = (2 / (n * Math.PI)) * Math.sin(n * Math.PI * width);
+    else if (n === 1) imag[n] = 1;
+  }
+  return { real, imag };
+}
+function rotate({ real, imag }, frac) {
+  const r = new Float32Array(real.length), im = new Float32Array(imag.length);
+  for (let n = 1; n < real.length; n++) {
+    const th = 2 * Math.PI * n * frac, c = Math.cos(th), s = Math.sin(th);
+    r[n] = real[n] * c + imag[n] * s;
+    im[n] = imag[n] * c - real[n] * s;
+  }
+  return { real: r, imag: im };
+}
+/** Band-limited basic wave ('saw'|'square'|'triangle'|'sine'|'pulse') starting at phase k/8. */
+export function getPhasedWave(ctx, wave, width = 0.5, k = 0) {
+  const w = wave === 'pulse' ? clamp(Math.round(num(width, 0.5) * 100) / 100, 0.02, 0.98) : 0.5;
+  const kk = ((Math.round(k) % PHASES) + PHASES) % PHASES;
+  return getPeriodicWave(ctx, `ph:${wave}:${w}:${kk}`, () => rotate(basicCoeffs(wave, w), kk / PHASES));
+}
+
+/**
+ * Hard-sync approximation: the spectrum of a saw slave reset by the master every cycle, for a
+ * fixed slave/master ratio (analytic Fourier series of the piecewise-linear wave, band-limited).
+ */
+export function getSyncWave(ctx, ratio = 2) {
+  const r = clamp(Math.round(num(ratio, 2) * 20) / 20, 1, 8);
+  return getPeriodicWave(ctx, `sync:${r}`, () => {
+    const N = 1024;
+    const real = new Float32Array(N), imag = new Float32Array(N);
+    for (let k = 0; k < r; k++) {
+      const x0 = k / r, x1 = Math.min((k + 1) / r, 1);
+      const A = 2 * r, B = -2 * k - 1; // f(x) = A x + B on [x0, x1)
+      for (let n = 1; n < N; n++) {
+        const w = 2 * Math.PI * n;
+        const Ic = (x) => ((A * x + B) * Math.sin(w * x)) / w + (A * Math.cos(w * x)) / (w * w);
+        const Is = (x) => (-(A * x + B) * Math.cos(w * x)) / w + (A * Math.sin(w * x)) / (w * w);
+        real[n] += 2 * (Ic(x1) - Ic(x0));
+        imag[n] += 2 * (Is(x1) - Is(x0));
+      }
+    }
+    return { real, imag };
+  });
+}
+/** osc width knob (0.05..0.95) -> sync ratio 1..4.5 */
+export const syncRatio = (width) => 1 + ((clamp(num(width, 0.5), 0.05, 0.95) - 0.05) / 0.9) * 3.5;
+
+/** Configure an OscillatorNode for a waveform name (phaseIdx >= 0 -> free-running start phase). */
+export function setOscWave(ctx, osc, wave, width = 0.5, phaseIdx = -1) {
+  const basic = { saw: 'saw', sawtooth: 'saw', supersaw: 'saw', square: 'square', triangle: 'triangle', tri: 'triangle', sine: 'sine' }[wave];
+  if (wave === 'pulse') { osc.setPeriodicWave(phaseIdx >= 0 ? getPhasedWave(ctx, 'pulse', width, phaseIdx) : getPulseWave(ctx, width)); return; }
+  if (wave === 'sync') { osc.setPeriodicWave(getSyncWave(ctx, syncRatio(width))); return; }
+  if (phaseIdx >= 0 && basic) { osc.setPeriodicWave(getPhasedWave(ctx, basic, 0.5, phaseIdx)); return; }
+  switch (basic) {
+    case 'saw': osc.type = 'sawtooth'; break;
     case 'square': osc.type = 'square'; break;
-    case 'triangle': case 'tri': osc.type = 'triangle'; break;
-    case 'pulse': osc.setPeriodicWave(getPulseWave(ctx, width)); break;
+    case 'triangle': osc.type = 'triangle'; break;
     default: osc.type = 'sine';
   }
+}
+
+/** Velocity -> gain with a gentle exponential curve (sens 0 = flat, 1 = full range). */
+export function velCurve(vel, sens) {
+  const v = clamp(num(vel, 0.8), 0, 1), s = clamp(num(sens, 0.6), 0, 1);
+  return 1 - s + s * Math.pow(v, 1.5);
 }
 
 /* ------------------------------------------------------------------ */
@@ -154,6 +221,60 @@ export function getCrushCurve(bits) {
   return curve;
 }
 
+/**
+ * Asymmetric tube-style curve (even harmonics): tanh with a bias, re-centred so 0 -> 0.
+ * amount 0..1 -> drive 1..~25.
+ */
+export function getTubeCurve(amount) {
+  const a = Math.round(clamp(num(amount, 0), 0, 1) * 100) / 100;
+  const key = `tube:${a}`;
+  if (curveCache.has(key)) return curveCache.get(key);
+  const n = 4096, curve = new Float32Array(n);
+  const k = 1 + a * a * 24, bias = 0.35;
+  const off = Math.tanh(bias);
+  let mx = 1e-9;
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    curve[i] = Math.tanh(k * x + bias) - off;
+    mx = Math.max(mx, Math.abs(curve[i]));
+  }
+  for (let i = 0; i < n; i++) curve[i] /= mx;
+  curveCache.set(key, curve);
+  return curve;
+}
+/**
+ * Guitar-amp gain stage: high gain, harder clipping on the positive half than the negative
+ * (asymmetric -> even + odd harmonics, like a cathode-biased triode stack). amount 0..1.
+ */
+export function getAmpCurve(amount) {
+  const a = Math.round(clamp(num(amount, 0), 0, 1) * 100) / 100;
+  const key = `amp:${a}`;
+  if (curveCache.has(key)) return curveCache.get(key);
+  const n = 8192, curve = new Float32Array(n);
+  const k = 2 + a * a * 90;
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    const y = x >= 0 ? Math.tanh(k * x) : -Math.pow(Math.tanh(-k * x * 0.75), 1.25) * 0.92;
+    curve[i] = y;
+  }
+  curveCache.set(key, curve);
+  return curve;
+}
+/** Gentle per-voice saturation before the filter (unity gain for small signals). */
+export function getSatCurve(amount) {
+  const a = Math.round(clamp(num(amount, 0), 0, 1) * 50) / 50;
+  const key = `sat:${a}`;
+  if (curveCache.has(key)) return curveCache.get(key);
+  const n = 2048, curve = new Float32Array(n);
+  const k = 1 + a * 5; // input range is ±2 (see filter drive): soft knee
+  for (let i = 0; i < n; i++) {
+    const x = ((i / (n - 1)) * 2 - 1) * 2;
+    curve[i] = Math.tanh(k * x) / k;
+  }
+  curveCache.set(key, curve);
+  return curve;
+}
+
 /* ------------------------------------------------------------------ */
 /* Envelope helpers (click-free, offline-safe)                         */
 /* ------------------------------------------------------------------ */
@@ -173,25 +294,49 @@ export function holdAt(param, t, fallbackValue) {
   param.setValueAtTime(Number.isFinite(fallbackValue) ? fallbackValue : param.value, t);
 }
 
+// Analog-style attack: an RC charging towards ~1.5x the target and cut off at the peak gives a
+// convex rise (fast start, slowing near the top). Approximated with 4 linear segments.
+const ATTACK_SHAPE = [[0.15, 0.32], [0.38, 0.65], [0.66, 0.88], [1, 1]];
+function attackFrac(x) {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  let px = 0, py = 0;
+  for (const [ax, ay] of ATTACK_SHAPE) {
+    if (x <= ax) return py + ((ay - py) * (x - px)) / (ax - px);
+    px = ax; py = ay;
+  }
+  return 1;
+}
+function rampAttack(param, st, tEnd) {
+  const pts = st.convex ? ATTACK_SHAPE : [[1, 1]];
+  const val = (x) => st.from + (st.peak - st.from) * (st.convex ? attackFrac(x) : Math.min(1, x));
+  for (const [x] of pts) {
+    const tt = st.t + x * st.a;
+    if (tt >= tEnd - 1e-6) { param.linearRampToValueAtTime(val((tEnd - st.t) / st.a), tEnd); return; }
+    param.linearRampToValueAtTime(val(x), tt);
+  }
+}
+
 /**
  * Schedule a full ADSR on `param` starting at `t`. If `tOff` is a number, the release is
  * scheduled too; otherwise the note is held until envRelease(). Returns a state object.
  * env = {a, d, s, r} in seconds (s = 0..1 level fraction). peak may be negative (filter env).
+ * Attack is convex (analog RC) for attacks >= 12 ms, decay/release are exponential (RC).
  */
 export function envNote(param, t, tOff, env, peak, base = 0, from = base) {
   const a = Math.max(MIN_T, num(env.a, 0.005)), d = Math.max(MIN_T, num(env.d, 0.2));
   const s = clamp(num(env.s, 1), 0, 1), r = Math.max(MIN_T * 2, num(env.r, 0.1));
   const sus = base + (peak - base) * s;
-  const st = { t, a, d, s, r, peak, base, from, sus, tOff: null };
+  const st = { t, a, d, s, r, peak, base, from, sus, tOff: null, convex: a >= 0.012 && env.linear !== true };
   param.setValueAtTime(from, t);
   if (tOff != null && tOff < t + a) {
-    const v = from + (peak - from) * Math.max(0, (tOff - t) / a);
-    param.linearRampToValueAtTime(v, Math.max(t + 0.0005, tOff));
-    param.setTargetAtTime(base, Math.max(t + 0.0005, tOff), r / 6);
-    st.tOff = Math.max(t + 0.0005, tOff);
+    const te = Math.max(t + 0.0005, tOff);
+    rampAttack(param, st, te);
+    param.setTargetAtTime(base, te, r / 6);
+    st.tOff = te;
     return st;
   }
-  param.linearRampToValueAtTime(peak, t + a);
+  rampAttack(param, st, t + a);
   if (Math.abs(sus - peak) > 1e-6) param.setTargetAtTime(sus, t + a, d / 4);
   if (tOff != null) {
     param.setTargetAtTime(base, tOff, r / 6);
@@ -211,7 +356,10 @@ export function fadeOut(param, t, fade = 0.012, fallbackValue) {
 export function envValueAt(st, time) {
   const pre = (tm) => {
     if (tm <= st.t) return st.from;
-    if (tm < st.t + st.a) return st.from + (st.peak - st.from) * ((tm - st.t) / st.a);
+    if (tm < st.t + st.a) {
+      const x = (tm - st.t) / st.a;
+      return st.from + (st.peak - st.from) * (st.convex ? attackFrac(x) : x);
+    }
     return st.sus + (st.peak - st.sus) * Math.exp(-(tm - st.t - st.a) / (st.d / 4));
   };
   if (st.tOff != null && time >= st.tOff) {
@@ -228,7 +376,7 @@ export function envRelease(param, st, time, r = st.r) {
   holdAt(param, time, v);
   param.setTargetAtTime(st.base, time, Math.max(0.001, r / 6));
   // re-base state so later analytics stay sane
-  st.t = time - st.a - 1e3; st.sus = v; st.peak = v; st.from = v; st.tOff = time; st.r = r;
+  st.t = time - st.a - 1e3; st.sus = v; st.peak = v; st.from = v; st.tOff = time; st.r = r; st.convex = false;
   return time + r;
 }
 
@@ -239,10 +387,10 @@ export function envRegate(param, st, time, tOff, retrigger) {
   if (retrigger) {
     param.setTargetAtTime(st.peak0 ?? st.peak, time, st.a / 2.5);
     if (Math.abs(st.sus0 - (st.peak0 ?? st.peak)) > 1e-6) param.setTargetAtTime(st.sus0, time + st.a, st.d / 4);
-    st.t = time; st.from = v; st.peak = st.peak0 ?? st.peak; st.sus = st.sus0;
+    st.t = time; st.from = v; st.peak = st.peak0 ?? st.peak; st.sus = st.sus0; st.convex = false;
   } else {
     param.setTargetAtTime(st.sus0, time, st.d / 4);
-    st.t = time - st.a; st.from = v; st.peak = v; st.sus = st.sus0;
+    st.t = time - st.a; st.from = v; st.peak = v; st.sus = st.sus0; st.convex = false;
   }
   st.tOff = null;
   if (tOff != null) {

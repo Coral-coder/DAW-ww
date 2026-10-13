@@ -100,7 +100,7 @@ function eq8Params() {
   return out;
 }
 
-export const EFFECT_CATEGORIES = ['EQ & Filter', 'Dynamics', 'Distortion', 'Delay & Reverb', 'Modulation', 'Stereo', 'Utility'];
+export const EFFECT_CATEGORIES = ['EQ & Filter', 'Dynamics', 'Distortion', 'Delay & Reverb', 'Modulation', 'Stereo', 'Utility', 'Plugins'];
 
 export const EFFECT_DEFS = {
   // ---------------------------------------------------------------- EQ & Filter
@@ -178,7 +178,7 @@ export const EFFECT_DEFS = {
     params: [
       { key: 'sourceTrackId', label: 'Key Track', type: 'track', default: '', section: 'Sidechain' },
       num('amount', 'Amount', 0, 1, 0.7, { step: 0.01, section: 'Sidechain' }),
-      num('threshold', 'Threshold', -60, 0, -30, { step: 0.1, unit: 'dB', section: 'Sidechain' }),
+      num('threshold', 'Threshold', -60, 0, -20, { step: 0.1, unit: 'dB', section: 'Sidechain' }),
       num('attack', 'Attack', 0.001, 0.1, 0.005, { step: 0.0005, unit: 's', curve: 'log', section: 'Envelope' }),
       num('release', 'Release', 0.02, 1.5, 0.18, { step: 0.005, unit: 's', curve: 'log', section: 'Envelope' }),
     ],
@@ -351,6 +351,18 @@ export const EFFECT_DEFS = {
       bool('mono', 'Mono', false, { section: 'Utility' }),
       bool('invert', 'Phase Invert', false, { section: 'Utility', advanced: true }),
     ],
+  },
+  // ---------------------------------------------------------------- Plugins (src/plugins, lazy-loaded)
+  // Extra keys kept in effect.params: faust {name, code, url, values:{address: value}}, wam {name, url, state}.
+  faust: {
+    name: 'Faust Effect', category: 'Plugins', plugin: true,
+    description: 'A Faust DSP program compiled in the browser — load one from the plugin catalog, a GitHub link or the Faust editor.',
+    params: [num('mix', 'Mix', 0, 1, 1, { step: 0.01, section: 'Plugin' })],
+  },
+  wam: {
+    name: 'Web Audio Module', category: 'Plugins', plugin: true,
+    description: 'A Web Audio Modules 2.0 effect plugin loaded from a URL (experimental; may only run live).',
+    params: [num('mix', 'Mix', 0, 1, 1, { step: 0.01, section: 'Plugin' })],
   },
 };
 

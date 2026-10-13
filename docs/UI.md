@@ -8,6 +8,7 @@ Read `docs/ARCHITECTURE.md` first. UI code is plain ES modules + DOM + canvas, n
 app.store        Store (src/core/store.js) — store.get(), store.transact(label, fn, {coalesce, undo})
 app.ui           UIState (src/ui/state.js) — ui.get(key), ui.set({...}); keys: view, selectedTrackId,
                  selectedPatternId, selectedClipIds[], browserOpen, assistantOpen, deviceOpen, deviceHeight,
+                 deviceTarget ({kind:'bus'|'master', id}|null), deviceFocus (fxId to reveal in the device panel),
                  recording, followPlayhead, keyboardOctave, snap, theme
 app.engine       AudioEngine — play/pause/stop/setPosition/getPosition()/isPlaying, noteOn/noteOff(trackId,pitch,vel),
                  getMeter(id|'master') -> {l,r}, getAnalyser(), decodeSample(id), auditionSample(id),
@@ -46,7 +47,7 @@ export function createXView(app) { return { el, show?(), hide?() } }
   `styles/main.css` (`--bg`, `--bg-2..4`, `--panel`, `--line`, `--text`, `--text-2/3`, `--accent`, `--accent-2`,
   `--accent-3`, `--good`, `--warn`, `--bad`, `--grid-bar/beat/step`, `--white-key`, `--black-key`, `--mono`).
   Must look good in dark and light themes. Prefix classes with your view name to avoid collisions.
-* Keyboard: global shortcuts live in `src/ui/keyboard.js` (Space, 1–6, letters…). For view-specific shortcuts
+* Keyboard: global shortcuts live in `src/ui/keyboard.js` (Space, 1–7, letters…). For view-specific shortcuts
   (Delete, Ctrl+A/C/V/D, arrows) add a `keydown` listener on window that checks your view is visible and that
   `isTyping(e)` (exported from keyboard.js) is false; call `e.preventDefault()` + `e.stopImmediatePropagation()`
   only for keys you handle.
@@ -67,6 +68,7 @@ export function createXView(app) { return { el, show?(), hide?() } }
 | Browser (left) | `src/ui/panels/browser.js` (`createBrowserPanel`) | `styles/panels.css` |
 | Assistant (right) | `src/ui/panels/assistant.js` (`createAssistantPanel`) | `styles/panels.css` (assistant section) |
 | Device panel (bottom) | `src/ui/panels/device.js` (`createDevicePanel`) | `styles/device.css` |
+| Plugboard (patch bay + project routing) | `src/ui/views/patch.js` (`createPatchView`) | `styles/patch.css` |
 
 `index.html` links every CSS file above. Run the app with `npm start` (http://localhost:5173, add `?nowelcome`
 to skip the welcome dialog). Chromium for automated checks: Playwright is pre-configured

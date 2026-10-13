@@ -11,6 +11,7 @@
 // (`sync()`), retimed on tempo change (`setTempo()`), and behave identically offline.
 import { EFFECT_DEFS, resolveEffectParams, divisionToBeats } from './effect-defs.js';
 import { clamp, dbToGain, createRng } from '../core/util.js';
+import { pluginEffectBuilder, PLUGIN_EFFECT_TYPES } from './plugin-fx.js';
 
 const TC = 0.015; // smoothing time-constant for parameter changes
 
@@ -971,7 +972,7 @@ function syncLfo(lfo, p, env, time, offset = 0) {
  */
 export function createEffect(ctx, effectDef, opts = {}) {
   const type = effectDef?.type;
-  const builder = BUILDERS[type];
+  const builder = BUILDERS[type] || (PLUGIN_EFFECT_TYPES.includes(type) ? pluginEffectBuilder(type) : null);
   if (!builder) throw new Error(`Unknown effect type "${type}"`);
   const env = { getBpm: opts.getBpm || (() => 120), getBeatAt: opts.getBeatAt || (() => null) };
   const sh = createShell(ctx);
@@ -991,7 +992,7 @@ export function createEffect(ctx, effectDef, opts = {}) {
       if (json !== lastJson) {
         lastJson = json;
         const p = resolveEffectParams({ type, params: def?.params });
-        impl.apply(p, immediate);
+        impl.apply(p, immediate, def);
         if (hasMix) {
           setP(sh.dry.gain, 1 - p.mix, ctx, immediate);
           setP(sh.wet.gain, p.mix, ctx, immediate);
@@ -1012,6 +1013,10 @@ export function createEffect(ctx, effectDef, opts = {}) {
     getReduction: impl.getReduction ? () => impl.getReduction() : undefined,
     /** Sidechain key input (ducker only): connect the key signal here. */
     keyInput: impl.keyInput || null,
+    /** Plugin effects (faust/wam): load promise (true/false), error message and live plugin. */
+    get ready() { return impl.ready ?? null; },
+    get error() { return impl.error ?? null; },
+    get plugin() { return impl.plugin ?? null; },
     dispose() {
       if (disposed) return;
       disposed = true;

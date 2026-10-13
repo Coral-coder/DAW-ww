@@ -87,7 +87,9 @@ export function arpeggiate(input, opts = {}) {
       const beatPos = t % 1;
       const acc = accent ? (Math.abs(beatPos) < 1e-6 ? 1 : Math.abs(beatPos - 0.5) < 1e-6 ? 0.85 : 0.72) : 0.85;
       const vel = clamp(baseVel * acc * pv * (0.95 + rng() * 0.05) / 0.85, 0.05, 1);
-      const dur = Math.max(0.03, Math.min(rate * gate, total - t));
+      // a step never rings into the next chord (that would sound the old chord over the new one)
+      const segEnd = isProg ? seg.start + seg.dur : total;
+      const dur = Math.max(0.03, Math.min(rate * gate, total - t, gate <= 1 ? segEnd - t : Infinity));
       let item;
       if (mode === 'random') item = rng.pick(seq);
       else item = seq[seqPos % seq.length];

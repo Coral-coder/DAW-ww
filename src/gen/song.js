@@ -8,8 +8,9 @@ import { GENRES, getGenre, ROLES } from './genres.js';
 import { generateDrumPattern } from './drums.js';
 import { generateProgression, progressionToNotes, pickGenreProgression, progressionBars, resolveKey } from './harmony.js';
 import { generateBassline } from './bass.js';
-import { generateMelody, generateCounterMelody } from './melody.js';
+import { generateMelody, generateCounterMelody, MELODY_STYLES } from './melody.js';
 import { arpeggiate } from './arp.js';
+import { voiceChord } from '../theory/index.js';
 import { progressionFromProject } from './analyze.js';
 
 const ROLE_INFO = {
@@ -21,6 +22,10 @@ const ROLE_INFO = {
   arp: { name: 'Arp', color: TRACK_COLORS[5], volume: 0.48, pan: 0.3 },
   fx: { name: 'FX', color: TRACK_COLORS[10], volume: 0.42, pan: 0 },
 };
+
+/** Register plan: pads voiced in [52, 71], leads from G4 up (riffs may dip lower). */
+const PAD_RANGE = [52, 71];
+const LEAD_FLOOR = 64;
 
 const BAND_FAMILIES = new Set(['rock', 'funk', 'jazz', 'blues', 'soul', 'caribbean', 'latin', 'americana', 'pop', 'african', 'retro', 'hiphop']);
 
@@ -78,12 +83,21 @@ export function generateRoleNotes(role, opts) {
       return progressionToNotes(progression, { style, rng, beatsPerBar: bpb, length, vel: 0.6 + e * 0.2 });
     }
     case 'pad': {
-      const padProg = progression.map((c) => ({ ...c, notes: c.notes.map((n) => (n < 60 ? n + 12 : n)) }));
+      // pads get their own (thinner, 4-voice) voicing, voice-led and kept under the lead's register
+      let prev = [];
+      const padProg = progression.map((c) => {
+        const notes = c.chord?.type === '5' ? c.notes.map((n) => (n < 52 ? n + 12 : n)) : voiceChord(c.chord, { prev, range: PAD_RANGE, maxVoices: 4 });
+        prev = notes;
+        return { ...c, notes: notes.length ? notes : c.notes };
+      });
       return progressionToNotes(padProg, { style: 'whole', rng, beatsPerBar: bpb, length, vel: 0.5 + e * 0.15 });
     }
     case 'lead': {
       const style = opts.melodyStyle || (kind === 'break' ? 'sparse' : kind === 'verse' ? (g.melodyStyle === 'riff' ? 'riff' : 'vocal') : g.melodyStyle);
-      return generateMelody({ progression, key: root, scale, style, rng, beatsPerBar: bpb, length, density: 0.35 + e * 0.5 });
+      // the lead sits above the pad / chord bed by default
+      const st = MELODY_STYLES[style] || MELODY_STYLES.lead;
+      const range = [Math.max(st.range[0], LEAD_FLOOR), Math.max(st.range[1], LEAD_FLOOR + 17)];
+      return generateMelody({ progression, key: root, scale, style, rng, beatsPerBar: bpb, length, density: 0.35 + e * 0.5, range, genre: g.id });
     }
     case 'counter':
       return generateCounterMelody({ melody: opts.melody || [], progression, key: root, scale, rng, beatsPerBar: bpb, length, density: e });
@@ -139,8 +153,9 @@ export function generatePartNotes(role, opts = {}) {
 }
 
 /**
- * generateSong({genre, key (pc | {root,scale} | 'F#'), scale, bpm, seed, name, progression}) -> partial project
- * {name, bpm, swing, key, genre, timeSig, tracks, patterns, clips, scenes, markers, loop, seed, progression}
+ * generateSong({genre, key (pc | {root,scale} | 'F#'), scale, bpm, seed, name, progression, withHarmony}) -> partial project
+ * {name, bpm, swing, key, genre, timeSig, tracks, patterns, clips, scenes, markers, loop, seed, progression,
+ *  harmony? (with opts.withHarmony: [{startBeat, durBeats, roman, root, type, bass, name}]), harmonyLength?}
  */
 export function generateSong(opts = {}) {
   const g = getGenre(opts.genre) || GENRES.house;
@@ -250,5 +265,10 @@ export function generateSong(opts = {}) {
     loop: { enabled: true, start: best.start || 0, end: (best.start || 0) + loopBeats },
     seed,
     progression: progression.map((c) => c.roman),
+    // opts.withHarmony: the exact chords (timing, colour, slash bass) the parts were generated against
+    ...(opts.withHarmony ? {
+      harmony: progression.map((c) => ({ startBeat: c.startBeat, durBeats: c.durBeats, roman: c.roman, root: c.chord.root, type: c.chord.type, bass: c.chord.bass ?? null, name: c.chord.name })),
+      harmonyLength: loopBeats,
+    } : {}),
   };
 }

@@ -2,6 +2,7 @@
 // ParamDef { key, label, type:'number'|'enum'|'bool'|'sample', min, max, step, default, unit?, curve?,
 //            options?:[{value,label}], section, advanced? }
 import { DRUM_KITS } from './kits.js';
+import { GM_INSTRUMENTS, gmLabel, SOUNDFONT_LIBRARIES } from '../plugins/gm.js';
 
 const LFO_DIVS = ['4/1', '2/1', '1/1', '1/2', '1/2d', '1/4', '1/4d', '1/4t', '1/8', '1/8d', '1/8t', '1/16', '1/16t', '1/32'];
 const opt = (list) => list.map((x) => (typeof x === 'object' ? x : { value: x, label: String(x) }));
@@ -230,12 +231,48 @@ const SAMPLER_PARAMS = [
   ...outputSection(0.8),
 ];
 
+// ---- plugin instruments (implementations lazy-loaded from src/plugins/*). Extra keys stored in
+// instrument.params and passed through untouched: soundfont {url, name}, faust {name, code, url,
+// values:{address: value}}, wam {name, url, state}.
+const SOUNDFONT_PARAMS = [
+  ...section('Sound', [
+    enumP('instrument', 'Instrument', GM_INSTRUMENTS.map((id) => ({ value: id, label: gmLabel(id) })), 'acoustic_grand_piano'),
+    enumP('library', 'Library', Object.entries(SOUNDFONT_LIBRARIES).map(([value, l]) => ({ value, label: l.name })), 'FluidR3_GM'),
+    enumP('format', 'Format', ['mp3', 'ogg'], 'mp3', { adv: true }),
+  ]),
+  ...section('Envelope', [
+    time('attack', 'Attack', 0.002, 4),
+    time('release', 'Release', 0.4, 8),
+    numP('velSens', 'Velocity sens', 0, 1, 0.7, { step: 0.01 }),
+  ]),
+  ...section('Voice', [
+    numP('tune', 'Tune', -24, 24, 0, { step: 1, unit: 'st' }),
+    numP('fine', 'Fine', -100, 100, 0, { step: 1, unit: 'ct', adv: true }),
+    numP('polyphony', 'Polyphony', 1, 64, 32, { step: 1, adv: true }),
+  ]),
+  ...section('Output', [numP('gain', 'Volume', 0, 2, 0.8, { step: 0.01 })]),
+];
+const FAUST_PARAMS = section('Voice', [
+  numP('voices', 'Voices', 1, 32, 8, { step: 1 }),
+  numP('transpose', 'Transpose', -24, 24, 0, { step: 1, unit: 'st', adv: true }),
+  numP('gain', 'Volume', 0, 2, 0.8, { step: 0.01 }),
+]);
+const WAM_PARAMS = section('Host', [
+  numP('transpose', 'Transpose', -24, 24, 0, { step: 1, unit: 'st', adv: true }),
+  numP('gain', 'Volume', 0, 2, 0.8, { step: 0.01 }),
+]);
+/** Instrument types implemented by lazily loaded plugin hosts (src/plugins). */
+export const PLUGIN_INSTRUMENT_TYPES = ['soundfont', 'faust', 'wam'];
+
 export const INSTRUMENT_DEFS = {
   synth: { name: 'Subtractive Synth', params: SYNTH_PARAMS },
   fm: { name: 'FM Synth', params: FM_PARAMS },
   organ: { name: 'Drawbar Organ', params: ORGAN_PARAMS },
   drums: { name: 'Drum Machine', params: DRUM_PARAMS, padParams: DRUM_PAD_PARAM_DEFS },
   sampler: { name: 'Sampler', params: SAMPLER_PARAMS },
+  soundfont: { name: 'SoundFont Instrument', params: SOUNDFONT_PARAMS, plugin: true },
+  faust: { name: 'Faust Instrument', params: FAUST_PARAMS, plugin: true },
+  wam: { name: 'Web Audio Module', params: WAM_PARAMS, plugin: true },
 };
 
 /** { key: default } for an instrument type (drums also gets `pads: {}`). */

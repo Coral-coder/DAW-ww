@@ -4,7 +4,7 @@ import { createRng, clamp } from '../core/util.js';
 import { PRESETS } from '../audio/presets.js';
 import { createNote, createPattern, createTrack, createClip, createEffect, beatsPerBar, songLengthBeats, TRACK_COLORS } from '../core/model.js';
 import {
-  detectKey, keyName, inScale, snapToScale, isMinorScale, suggestNextChords, analyzeProgression, voiceLead,
+  detectKey, keyName, inScale, snapToScale, isMinorScale, suggestNextChords, analyzeProgression, voiceChord,
   chordPitchClasses, resolveScaleId, stepInScale, SCALES, pitchClassName,
 } from '../theory/index.js';
 import { getGenre, GENRES } from './genres.js';
@@ -117,7 +117,7 @@ export function getRecommendations(project, ctx = {}) {
     let sugg = [];
     try { sugg = suggestNextChords(romans, key.root, key.scale, genre?.id, { limit: 3 }); } catch { sugg = []; }
     sugg.forEach((s, i) => {
-      const notes = voiceLead(last.notes, chordPitchClasses(s.chord.root, s.chord.type), range);
+      const notes = voiceChord(s.chord, { prev: last.notes, range, maxVoices: 5 });
       add({
         id: `next-chord:${pat.id}:${s.roman}`, level: 'idea', title: `Next chord: ${s.roman} (${s.chord.name})`,
         text: `${s.reason}${i === 0 ? ` After ${romans.slice(-4).join(' – ')} in ${kName}.` : ''}`,
