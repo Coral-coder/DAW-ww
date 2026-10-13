@@ -1,10 +1,10 @@
 // Melody + counter-melody generator: chord tones on strong beats, stepwise passing/neighbour tones,
 // motif repetition with variation (call & response) and phrase endings that resolve.
 import { createRng, clamp } from '../core/util.js';
-import { createNote } from '../core/model.js';
 import { mod12, scaleNotesInRange, chordPitchClasses } from '../theory/index.js';
 import { getGenre } from './genres.js';
 import { resolveKey } from './harmony.js';
+import { makeNote } from './note-util.js';
 
 export const MELODY_STYLES = {
   lead: { name: 'Lead', grid: 0.25, notesPerBar: [4, 8], legato: 0.85, leap: 0.25, syncopation: 0.3, range: [62, 84] },
@@ -195,7 +195,8 @@ export function generateMelody(opts = {}) {
         if (isLastBar && j === rhythm.length - 1 && style !== 'riff') d = Math.max(d, bpb - h.t - 0.1);
         d = Math.min(d, length - t);
         const vel = (h.t === 0 ? 0.9 : h.t % 1 === 0 ? 0.82 : 0.7) * (0.93 + rng() * 0.07);
-        out.push(createNote(pitches[j], Math.round(t * 10000) / 10000, Math.round(Math.max(0.08, d) * 10000) / 10000, Math.round(vel * 100) / 100));
+        const note = makeNote(pitches[j], t, Math.max(0.08, d), vel, length);
+        if (note) out.push(note);
       });
     }
   }
@@ -255,7 +256,8 @@ export function generateCounterMelody(opts = {}) {
     }).sort((a, b) => a.s - b.s);
     const p = scored[0].p;
     const dur = Math.min(slot * (mel && mel.dur >= 1 ? 1 : 0.9), length - t);
-    out.push(createNote(p, Math.round(t * 10000) / 10000, Math.round(dur * 10000) / 10000, Math.round((0.55 + rng() * 0.15) * 100) / 100));
+    const note = makeNote(p, t, dur, 0.55 + rng() * 0.15, length);
+    if (note) out.push(note);
     prev = p;
     prevMel = mel ? mel.pitch : prevMel;
     prevInterval = mel ? (mel.pitch - p) % 12 : null;

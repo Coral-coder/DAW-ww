@@ -1,6 +1,6 @@
 // Arpeggiator: chord notes or a whole progression -> Note[].
 import { createRng, clamp } from '../core/util.js';
-import { createNote } from '../core/model.js';
+import { makeNote } from './note-util.js';
 
 export const ARP_MODES = ['up', 'down', 'updown', 'downup', 'random', 'chord', 'converge', 'diverge', 'pinky', 'thumb', 'order'];
 
@@ -93,7 +93,7 @@ export function arpeggiate(input, opts = {}) {
       else item = seq[seqPos % seq.length];
       seqPos++;
       const pitches = Array.isArray(item) ? item : [item];
-      for (const p of pitches) out.push(createNote(p, Math.round(t * 10000) / 10000, Math.round(dur * 10000) / 10000, Math.round(vel * 100) / 100));
+      for (const p of pitches) { const n = makeNote(p, t, dur, vel, total); if (n) out.push(n); }
     }
   }
   return out;

@@ -1,7 +1,8 @@
 // Idiomatic drum-pattern generator. Output: Note[] with General-MIDI drum pitches (see DRUM_PADS).
 import { createRng, clamp } from '../core/util.js';
-import { createNote, DRUM_PITCH } from '../core/model.js';
+import { DRUM_PITCH } from '../core/model.js';
 import { getGenre } from './genres.js';
+import { makeNote } from './note-util.js';
 
 /** Euclidean rhythm: k hits spread over n steps, rotated right by `rotate`. -> boolean[] */
 export function euclidean(k, n, rotate = 0) {
@@ -357,8 +358,8 @@ export function generateDrumPattern(opts = {}) {
       vel += (rng() - 0.5) * 0.16 * humanize;
       if (n.pitch === DRUM_PITCH.snare && styleId.match(/neo-soul|lofi|boom-bap|jazz/)) start += 0.012 * humanize; // lay back
     }
-    start = clamp(start, 0, length - 0.01);
-    out.push(createNote(n.pitch, Math.round(start * 10000) / 10000, Math.min(n.dur, length - start), Math.round(clamp(vel, 0.05, 1) * 100) / 100));
+    const note = makeNote(n.pitch, clamp(start, 0, length - 0.01), n.dur, vel, length);
+    if (note) out.push(note);
   }
   out.sort((a, b) => a.start - b.start || a.pitch - b.pitch);
   return out;

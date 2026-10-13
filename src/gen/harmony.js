@@ -1,11 +1,11 @@
 // Chord progression generation + rhythmic rendering of progressions into notes.
 import { createRng, clamp } from '../core/util.js';
-import { createNote } from '../core/model.js';
 import {
   romanToChord, getProgression, findProgressions, suggestNextChords, voiceLead, isMinorScale,
   chordPitchClasses, chordName, resolveScaleId, mod12, parseKey,
 } from '../theory/index.js';
 import { getGenre } from './genres.js';
+import { makeNote } from './note-util.js';
 
 /** Resolve {key, scale} options: key may be a pitch class, {root, scale} or a note name. */
 export function resolveKey(opts = {}) {
@@ -198,8 +198,8 @@ export function progressionToNotes(progression, opts = {}) {
   const out = [];
   const push = (pitch, start, dur, vel) => {
     if (start < 0 || start >= length - 1e-6) return;
-    const d = Math.max(0.05, Math.min(dur, length - start));
-    out.push(createNote(pitch + shift, Math.round(start * 10000) / 10000, Math.round(d * 10000) / 10000, Math.round(clamp(vel, 0.05, 1) * 100) / 100));
+    const n = makeNote(pitch + shift, start, Math.max(0.05, dur), vel, length);
+    if (n) out.push(n);
   };
   const chordAt = (t) => progression.find((c) => t >= c.startBeat - 1e-6 && t < c.startBeat + c.durBeats - 1e-6) || progression[progression.length - 1];
 

@@ -1,9 +1,10 @@
 // Bassline generator: idiomatic styles following a progression (from harmony.generateProgression).
 import { createRng, clamp } from '../core/util.js';
-import { createNote, DRUM_PITCH } from '../core/model.js';
+import { DRUM_PITCH } from '../core/model.js';
 import { mod12, scalePitchClasses, getChordType } from '../theory/index.js';
 import { getGenre } from './genres.js';
 import { resolveKey } from './harmony.js';
+import { makeNote } from './note-util.js';
 
 /** Bass style ids with a short description (for UI pickers). */
 export const BASS_STYLES = {
@@ -106,9 +107,8 @@ export function generateBassline(opts = {}) {
   const out = [];
   const push = (pitch, start, dur, vel) => {
     if (start < -1e-6 || start >= length - 1e-6) return;
-    const s = Math.max(0, start);
-    const d = Math.max(0.05, Math.min(dur, length - s));
-    out.push(createNote(Math.round(pitch), Math.round(s * 10000) / 10000, Math.round(d * 10000) / 10000, Math.round(clamp(vel, 0.05, 1) * 100) / 100));
+    const n = makeNote(pitch, start, Math.max(0.05, dur), vel, length);
+    if (n) out.push(n);
   };
   const chordAt = (t) => progression.find((c) => t >= c.startBeat - 1e-6 && t < c.startBeat + c.durBeats - 1e-6) || progression[progression.length - 1];
   const nextChordAfter = (c) => {
