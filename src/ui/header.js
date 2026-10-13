@@ -12,7 +12,21 @@ export function createHeader(app) {
 
   const menuBtn = h('button.icon-btn', { title: 'Menu' }, icon('menu', 18));
   menuBtn.addEventListener('click', (e) => contextMenu({ clientX: e.currentTarget.getBoundingClientRect().left, clientY: 46, preventDefault() {} }, actions.mainMenuItems()));
-  const logo = h('div.logo', { title: 'daW³ — open the main menu' }, h('div.logo-mark', '⚡'), h('div', 'daW³', h('small', 'THE WEB REMEMBERS')));
+  // Tagline: a random line on load, then a new one (never the same twice in a row) every 40 s, cross-faded.
+  const TAGLINES = [
+    'a studio in a tab', 'no install. no excuses.', 'nothing to download but ideas', 'open a tab, make a record',
+    "made of 1s and 808s", "the tab you shouldn't close", 'your room, but louder',
+  ];
+  let tagIndex = Math.floor(Math.random() * TAGLINES.length);
+  const tagline = h('small.logo-tagline', TAGLINES[tagIndex].toUpperCase());
+  setInterval(() => {
+    let next = Math.floor(Math.random() * (TAGLINES.length - 1));
+    if (next >= tagIndex) next++;
+    tagIndex = next;
+    tagline.classList.add('fading');
+    setTimeout(() => { tagline.textContent = TAGLINES[tagIndex].toUpperCase(); tagline.classList.remove('fading'); }, 400);
+  }, 40000);
+  const logo = h('div.logo', { title: 'daW³ — open the main menu' }, h('div.logo-mark', '⚡'), h('div', 'daW³', tagline));
   logo.addEventListener('click', (e) => contextMenu({ clientX: 10, clientY: 46, preventDefault() {} }, actions.mainMenuItems()));
 
   // transport
