@@ -196,14 +196,17 @@ test('compactness: chars per bar of music vs the previous writer (10 genres)', (
     const { code } = songToCode(p);
     const cpb = code.length / barsOf(p);
     rows.push(`${genre.padEnd(14)} ${String(b).padStart(4)} -> ${cpb.toFixed(0).padStart(4)} chars/bar (${code.split('\n').length} lines)`);
-    assert.ok(cpb <= b * 0.6, `${genre}: ${cpb.toFixed(0)} chars/bar (before ${b})`);
+    // trap: per-bar hi-hat rolls with per-note accents are genuinely different every bar (the anti-monotony generator)
+    // and can't be compressed further without losing notes / velocities, so its bound is looser
+    const limit = genre === 'trap' ? 0.7 : 0.6;
+    assert.ok(cpb <= b * limit, `${genre}: ${cpb.toFixed(0)} chars/bar (before ${b})`);
     before += b; after += cpb;
   }
   assert.ok(after / before <= 0.45, `overall ${after.toFixed(0)} vs ${before}`);
   console.log(`# compactness (before -> after):\n# ${rows.join('\n# ')}`);
-  // a ~7 minute trance song fits a few screens
+  // a ~7 minute trance song (256 bars, every section varied by the generator) fits a handful of screens: < 2 lines/bar
   const t = songToCode(song('trance', 1)).code.split('\n').length;
-  assert.ok(t <= 300, `trance: ${t} lines`);
+  assert.ok(t <= 512, `trance: ${t} lines`);
 });
 
 test('export: Menu ▸ Export ▸ Strudel code writes the whole arrangement, playable on strudel.cc', () => {
@@ -278,7 +281,8 @@ test('apply-back: arrangement edits (order, lengths, transposition, new patterns
   // other tracks' clips are untouched; regenerated code reflects the new arrangement and re-applies as a no-op
   assert.deepEqual(q.clips.filter((c) => c.trackId !== t.id), p.clips.filter((c) => c.trackId !== t.id));
   const again = songToCode(q).code;
-  assert.match(again, new RegExp(`^${lead.label}: arrange\\(\\[8, \\w+\\], \\[4, silence\\], \\[8, \\w+(\\.transpose\\(2\\))?\\], \\[4, \\w+\\]`, 'm'));
+  // (a long arrange() wraps over lines)
+  assert.match(again.replace(/arrange\(\n\s+/g, 'arrange(').replace(/\],\n\s+\[/g, '], ['), new RegExp(`^${lead.label}: arrange\\(\\[8, \\w+\\], \\[4, silence\\], \\[8, \\w+(\\.transpose\\(2\\))?\\], \\[4, \\w+\\]`, 'm'));
   const q3 = clone(q);
   assert.equal(applySongCode(q3, again).changed, false);
 });

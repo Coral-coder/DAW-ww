@@ -64,6 +64,10 @@ browser are in `tests/sound-dsp.test.js`.
 Why generated songs sounded "MIDI": GM soundfonts with one velocity layer, every note at its exact grid length,
 no pedal / legato / slides / vibrato, static timbre, a one-size reverb and a peak limiter as the only mastering.
 
+Wiring: `src/gen/sound.js` `instrumentForRole` returns `realInstrument(...)` (so the mix sees the final source) and
+`generateSong` ends with `finishSong(song, {genre, seed})` (`opts.production === false` skips it, e.g. in tests that
+apply expression themselves).
+
 * **Real instruments** — `src/gen/production.js` `realInstrument(def, role, genre)`: GM soundfont defs and synth
   presets that imitate an acoustic instrument (`PRESET_GM`) stream multisampled libraries (Salamander, VSCO-2,
   VCSL, tonejs-instruments) with MusyngKite → FluidR3 → synth-preset fallbacks — see docs/SAMPLES.md.

@@ -19,7 +19,7 @@ import { DRUM_PADS, beatsPerBar, songLengthBeats, createTrack, createPattern, cr
 import { evaluate, queryEvents, splitTopLevel, stripComments, lastExpressionStart, codeEngineVersion } from './strudel.js';
 import { drumPitch } from './convert.js';
 import {
-  renderPart, verifyExpr, detectSwing, swingCall, snapBeat as snapBeatQ, qVel as qVelQ, alternation, barsText, rootName, compactSteps, weightedSeq, mergeRests, chooseRes, barGroups,
+  renderPart, verifyExpr, detectSwing, swingCall, snapBeat as snapBeatQ, qVel as qVelQ, alternation, barsText, rootName, compactSteps, weightedSeq, mergeRests, chooseRes, barGroups, quantizePart,
 } from './idioms.js';
 import { valueAt, parseTarget } from '../core/automation.js';
 import { grooveFor } from '../gen/groove.js';
@@ -224,7 +224,7 @@ export function formatExpr(expr, indent = '', width = 100) {
     }
   }
   // (a string longer than the line has room for — ~115 columns in all — goes over several lines)
-  const room = Math.min(110, Math.max(60, width + 12));
+  const room = Math.min(112, Math.max(80, width + 15));
   return expr.replace(/"([^"`]*)"/g, (m, mini) => (mini.length > room && /[<\[,]/.test(mini) ? strLit(mini, indent, room) : m));
 }
 
@@ -349,10 +349,10 @@ function strLit(mini, indent = '', room = 110) {
   if (mini.length <= room) return `"${mini}"`;
   if (splitMini(mini, ',').length > 1) {
     // stacked layers: one per line (each broken further when long), inside an indented template string
-    const ls = miniLines(mini, '  ', Math.max(40, 114 - indent.length));
+    const ls = miniLines(mini, '  ', Math.max(40, Math.min(room + 2, 114 - indent.length)));
     return '`\n' + ls.map((l) => indent + l).join('\n') + `\n${indent}\``;
   }
-  const lines = miniLines(mini, '', Math.max(40, 112 - indent.length));
+  const lines = miniLines(mini, '', Math.max(40, Math.min(room, 112 - indent.length)));
   if (lines.length < 2) return `"${mini}"`;
   return '`' + lines.map((l, i) => (i ? indent + l : l)).join('\n') + '`';
 }
@@ -807,7 +807,13 @@ export function songToCode(project, opts = {}) {
     const notes = pats.flatMap((id) => project.patterns?.[id]?.notes || []);
     const humanized = notes.filter((n) => Math.abs(n.start - Math.round(n.start * 24) / 24) > 0.002).length > notes.length * 0.1;
     if (!humanized) continue;
-    const sw = detectSwing(notes, prior);
+    let sw = detectSwing(notes, prior);
+    if (sw.d > 0) {
+      // swing only where it keeps every note: fast runs (32nds, 64ths) would collide on the swung 16th grid
+      const kept = (g) => pats.reduce((a, id) => { const pt = project.patterns?.[id]; return a + (pt ? quantizePart(pt.notes, pt.length || bpb, { groove: g }).length : 0); }, 0);
+      const straight = { h: 1, d: 0 };
+      if (kept(sw) < kept(straight) - Math.max(1, notes.length * 0.005)) sw = straight;
+    }
     grooves.set(t.id, sw);
   }
   const render = (pat, kind, trackId) => {
@@ -1446,7 +1452,7 @@ export function applySongCode(project, code, opts = {}) {
           if (sameNotes(pat.notes, notes) && Math.abs(pat.length - out.length) < EPS) continue;
           pat.notes = mergeNotes(pat.notes, notes);
           pat.length = out.length;
-          report.changes.push(`${t.name}: pattern "${pat.name}" (${notes.length} notes)`);
+          report.changes.push(`${(trackOf(pat.trackId) || t).name}: pattern "${pat.name}" (${notes.length} notes)`);
         }
       }
       if (changedLabel && entry) {

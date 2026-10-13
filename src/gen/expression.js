@@ -243,11 +243,13 @@ export function expressPattern(notes, ctx) {
     for (const g of chordGroups(notes)) if (g.end - g.start >= bpb) for (const n of g.notes) n.vel = r2(clamp(n.vel * 1.04, 0.05, 1));
   }
 
-  if (role === 'arp') {
+  // (sub-16th arps — chiptune / trance gates — stay mechanical: that's their idiom)
+  if (role === 'arp' && notes.filter((n) => n.dur >= 0.12).length >= notes.length / 2) {
     const sorted = [...notes].sort((a, b) => a.start - b.start);
     sorted.forEach((n) => {
       const pos = ((n.start % 1) + 1) % 1;
-      n.vel = r2(clamp(n.vel * (pos < 0.04 ? 1.08 : Math.abs(pos - 0.5) < 0.04 ? 1 : 0.92) * (1 + (rng() - 0.5) * 0.06), 0.05, 1));
+      // beat accents only (no random jitter: song code writes arp velocities as a per-step pattern)
+      n.vel = r2(clamp(n.vel * (pos < 0.04 ? 1.06 : Math.abs(pos - 0.5) < 0.04 ? 1 : 0.95), 0.05, 1));
     });
   }
 
