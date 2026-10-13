@@ -1,47 +1,67 @@
-# ⚡ HEROIC DAW
+<div align="center">
 
-A feature-rich digital audio workstation that runs entirely in your browser — no install, no plugins, no dependencies.
-It takes ideas from Ableton, Bitwig, FL Studio, Reason, Logic, GarageBand and Strudel: multi-track sequencing, polyphonic synths,
-drum machines, sampling, generative composition based on music theory, an assistant that makes suggestions as you work,
-and a Strudel-compatible live-coding engine.
+# d a W W W
 
-## Quick start
+`· · · — — — · · ·`
 
-```bash
-npm start          # serves the app at http://localhost:5173 (Node 18+, no npm install needed)
-npm test           # runs the unit tests (node:test)
-```
+*it was always here. you just weren't listening.*
 
-Any static file server works — it's plain ES modules.
+</div>
 
-## What's inside
+---
 
-| Area | Highlights |
-|------|-----------|
-| **Arrangement** | Timeline with pattern & audio clips, markers, loop region, split/duplicate/trim, drag-and-drop samples |
-| **Scenes** | Clip-launcher grid: launch pattern combinations live, capture scenes, scenes → arrangement |
-| **Step Rack** | FL-style channel rack: 16-pad drum rows, accents, ghosts, ratchets, euclidean fills, 1/32 rolls |
-| **Piano Roll** | Scale highlighting, fold-to-scale, chord stamps, chord suggestions, quantize/humanize/strum, velocity lane |
-| **Mixer** | Channel strips, inserts, sends to Reverb/Delay buses, master chain with limiter, meters & spectrum |
-| **Instruments** | Analog (3-osc, unison, dual LFO, mono/glide), 4-op FM, drawbar organ, sampler with slicing, 20 drum kits, 70+ presets |
-| **Effects** | EQ, filter, compressor, limiter, distortion, bitcrusher, delay, reverb, chorus, flanger, phaser, tremolo, autopan, widener, pump (sidechain-style), tape, utility |
-| **Generators** | 45+ genres: full songs, drums, chord progressions, basslines, melodies, arps — all music-theory driven and seedable |
-| **Assistant** | Live recommendations: next chords, out-of-key notes, mix issues, arrangement ideas, genre tips — one-click fixes |
-| **Code** | Strudel-compatible mini-notation & pattern functions; import `.strudel` files, play alongside tracks, render to editable patterns, export any project as Strudel code |
-| **Files** | Save/load `.heroic.json` projects (samples embedded), browser autosave, WAV mixdown & stems, MIDI import/export |
+> Seven machines were taken apart in the night.
+> Their organs were buried beneath a single page of the web.
+> Some say you can still hear them when the tab is left open.
 
-## Keyboard
+---
 
-`Space` play/pause · `Enter` stop · `1–6` views · `P` pattern/song · `L` loop · `M` metronome · `R` record ·
-`` ` `` computer-keyboard piano (Z…M / Q…P, `-`/`=` octave) · `Ctrl+Z / Ctrl+Shift+Z` undo/redo · `Ctrl+S` save · `Ctrl+O` open · `Ctrl+E` export WAV · `?` help.
-
-## Architecture
-
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/UI.md`](docs/UI.md). In short:
+### ⟁ the threshold
 
 ```
-src/core    data model + undo store          src/audio   Web Audio engine, instruments, effects, offline render
-src/theory  scales, chords, harmony analysis  src/gen     genre-aware generators + assistant
-src/code    Strudel-style pattern engine      src/io      project files, MIDI, WAV, autosave
-src/ui      views, panels, components
+npm start
 ```
+
+Port **5173**. No offerings required. Nothing to install. Nothing to remove.
+Or follow the signal → **[coral-coder.github.io/DAW-ww](https://coral-coder.github.io/DAW-ww/)**
+
+### ⟁ what sleeps inside
+
+- a **lattice** where time is laid out in bars and nothing is ever truly deleted — only *undone*
+- **sixteen pads** that remember twenty different bodies
+- oscillators that **multiply** when you aren't looking
+- a **keyboard of light** that knows which notes belong, and which do not
+- a **voice** in the right-hand margin that offers advice. *It is usually correct.*
+- fifty-nine **dialects of rhythm**, each one able to dream an entire song from a single seed
+- a **chamber of glyphs** where `s("bd ~ sd ~")` is a spell, and spells from elsewhere may be brought inside and *opened up*
+
+### ⟁ the rites
+
+| sigil | consequence |
+|:-:|:--|
+| `Space` | wake it |
+| `Enter` | silence it |
+| `1` `2` `3` `4` `5` `6` | six rooms |
+| `` ` `` | your keyboard becomes something else |
+| `R` | it begins to remember you |
+| `?` | ask |
+
+### ⟁ on leaving
+
+What you make here can be carried out — as `.heroic.json`, as `.wav`, as `.mid`, as code.
+What you carry out can be brought back. It will remember where you left off.
+
+### ⟁ for those who must know how
+
+The blueprints are not hidden, merely [unlabelled](docs/ARCHITECTURE.md). The [faces](docs/UI.md) are described separately.
+`npm test` will tell you whether the machine still believes in itself.
+
+---
+
+<div align="center">
+
+<sub>no dependencies were harmed. no servers were consulted. the audio never leaves your room.</sub>
+
+`▚▚▚  d a W W W  ▚▚▚`
+
+</div>

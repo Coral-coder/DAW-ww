@@ -1003,7 +1003,7 @@ export function createActions(app) {
       return b;
     };
     const body = h('div',
-      h('div.welcome-hero', h('div.logo-mark', { style: { width: '48px', height: '48px', fontSize: '26px', margin: '0 auto', borderRadius: '12px' } }, '⚡'), h('h1', 'HEROIC DAW'), h('p', 'Sequence, synthesize, sample, generate and live-code — every genre, right in your browser.')),
+      h('div.welcome-hero', h('div.logo-mark', { style: { width: '48px', height: '48px', fontSize: '26px', margin: '0 auto', borderRadius: '12px' } }, '⚡'), h('h1', 'daWWW'), h('p', 'Sequence, synthesize, sample, generate and live-code — every genre, right in your browser.')),
       h('div.welcome-actions',
         card('wand', 'Generate a song', 'Pick a genre and get a full arrangement to remix', () => showSongWizard()),
         card('drum', 'Start with a beat', 'Drum machine + step sequencer', () => { addTrack('drums'); generatePart('drums', { trackId: get().tracks.at(-1).id }); ui.set({ view: 'rack' }); }),
@@ -1046,7 +1046,7 @@ export function createActions(app) {
           h('li', 'Export WAV mixdowns, stems, MIDI or Strudel code.')))),
       h('div.section-title', 'Shortcuts'),
       h('table.shortcut-table', sc.map(([k, v]) => h('tr', h('td', h('kbd', k)), h('td', v)))));
-    modal({ title: 'HEROIC DAW — Help', body, width: 860, actions: [{ label: 'Close', primary: true }] });
+    modal({ title: 'daWWW — Help', body, width: 860, actions: [{ label: 'Close', primary: true }] });
   }
 
   // ---------------------------------------------------------------- boot / autosave

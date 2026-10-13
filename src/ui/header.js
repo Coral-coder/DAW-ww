@@ -11,7 +11,7 @@ export function createHeader(app) {
 
   const menuBtn = h('button.icon-btn', { title: 'Menu' }, icon('menu', 18));
   menuBtn.addEventListener('click', (e) => contextMenu({ clientX: e.currentTarget.getBoundingClientRect().left, clientY: 46, preventDefault() {} }, actions.mainMenuItems()));
-  const logo = h('div.logo', { title: 'HEROIC DAW — open the main menu' }, h('div.logo-mark', '⚡'), h('div', 'HEROIC', h('small', 'DIGITAL AUDIO WORKSTATION')));
+  const logo = h('div.logo', { title: 'daWWW — open the main menu' }, h('div.logo-mark', '⚡'), h('div', 'daWWW', h('small', 'THE WEB REMEMBERS')));
   logo.addEventListener('click', (e) => contextMenu({ clientX: 10, clientY: 46, preventDefault() {} }, actions.mainMenuItems()));
 
   // transport

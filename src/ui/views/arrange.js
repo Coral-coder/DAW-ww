@@ -890,14 +890,17 @@ export function createArrangeView(app) {
     if (!on) ctx.setLineDash([5, 4]);
     ctx.stroke();
     ctx.setLineDash([]);
-    // points
+    // points (smaller dots when they are dense, e.g. LFO shapes)
+    let minGap = Infinity;
+    for (let k = 1; k < pts.length; k++) { const g = (pts[k].beat - pts[k - 1].beat) * ppb; if (g > 0.01 && g < minGap) minGap = g; }
+    const rDot = minGap < 7 ? 1.6 : minGap < 14 ? 2.5 : 3.5;
     pts.forEach((pt, k) => {
       const x = pt.beat * ppb - sx;
       if (x < -6 || x > W + 6) return;
       const yy = autoY(y, def, pt.value);
       const hot = autoHover && autoHover.laneId === lane.id && autoHover.idx === k;
       ctx.beginPath();
-      ctx.arc(x, yy, hot ? 5 : 3.5, 0, Math.PI * 2);
+      ctx.arc(x, yy, hot ? 5 : rDot, 0, Math.PI * 2);
       ctx.fillStyle = hot ? theme.sel : col;
       ctx.fill();
       ctx.lineWidth = 1.5;
@@ -1159,7 +1162,10 @@ export function createArrangeView(app) {
         onT.setValue(lane.enabled !== false);
         const groups = targetGroups(t);
         const opts = [];
-        for (const g of groups) for (const it of g.items) opts.push({ value: it.target, label: it.label, group: g.name });
+        for (const g of groups) {
+          const pre = g.kind === 'mixer' ? '' : `${g.name.replace(/^(Instrument|FX \d+) · /, '')} · `;
+          for (const it of g.items) opts.push({ value: it.target, label: pre + it.label, group: g.name });
+        }
         if (!opts.some((o) => o.value === lane.target)) opts.unshift({ value: lane.target, label: targetInfo(t, lane.target).label });
         const key = opts.map((o) => o.value + o.label).join('|') + '#' + lane.target;
         if (key !== selKey) {

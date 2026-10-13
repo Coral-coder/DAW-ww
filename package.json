@@ -1,7 +1,7 @@
 {
-  "name": "heroic-daw",
+  "name": "dawww",
   "version": "1.0.0",
-  "description": "A feature-rich, zero-dependency web-based digital audio workstation with sequencing, synths, drum machines, sampling, generative composition and Strudel-style live coding.",
+  "description": "it was always here.",
   "type": "module",
   "private": true,
   "scripts": {
