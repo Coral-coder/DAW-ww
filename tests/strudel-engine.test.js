@@ -56,3 +56,12 @@ chorus.set(x).midi().fooBar()`);
   assert.match(evaluate('nope(').error, /Unexpected/);
   assert.equal(evaluate('n("0 2 4").scale("C:major").s("piano").pianoroll()').error, null);
 });
+
+test('render-to-tracks (convert.js) works on real-Strudel results', async () => {
+  const { codeToPatterns } = await import('../src/code/convert.js');
+  const parts = codeToPatterns('$: s("bd*4, [~ sd]*2").bank("RolandTR909")\nbass: n("0 2 4 7").scale("C:minor").s("sawtooth")', { cycles: 1, beatsPerCycle: 4 });
+  const drums = parts.find((p) => p.kind === 'drums');
+  const bass = parts.find((p) => p.kind === 'melodic');
+  assert.equal(drums.notes.length, 6);
+  assert.deepEqual(bass.notes.map((n) => n.pitch), [48, 51, 55, 60]);
+});

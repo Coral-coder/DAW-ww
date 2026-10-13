@@ -1271,7 +1271,7 @@ export function createActions(app) {
     setGenre, applyGenreDefaults, newProject, openProject, saveProject, renameProject, loadProjectObject,
     exportWav, exportMidiFile, exportCode, importMidiFile, importStrudel, renderCodeToTracks, importSamples, placeSample, sampleToSampler,
     generatePart, generateSong, newProgression, currentProgression, applyAssistantAction, showExtendDialog, extendSongBy, removeSectionAt,
-    mainMenuItems, generateMenuItems, showSongWizard, showHelp, showWelcome, showLocalProjects,
+    mainMenuItems, generateMenuItems, showSongWizard, showHelp, showAbout, showWelcome, showLocalProjects,
     undo: () => { const l = store.undo(); if (l) app.setStatus?.(`Undo: ${l}`); },
     redo: () => { const l = store.redo(); if (l) app.setStatus?.(`Redo: ${l}`); },
   };

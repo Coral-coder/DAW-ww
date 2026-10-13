@@ -6,7 +6,7 @@ import { songToCode, applySongCode, snapBeat, notesToVoices, labelFor } from '..
 import { drumPitch } from '../src/code/convert.js';
 import { generateSong } from '../src/gen/song.js';
 import { createProject, createTrack, createPattern, createNote, beatsPerBar } from '../src/core/model.js';
-import { collectEvents } from '../src/audio/scheduler.js';
+import { songFaith } from './lib/song-faith.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 /** [begin, token text] of each event, sorted. */
@@ -77,42 +77,20 @@ test('notesToVoices writes compact, idiomatic mini-notation', () => {
 
 function roundTrip(p) {
   const bpb = beatsPerBar(p);
-  const { code, blocks } = songToCode(p);
-  const r = evaluate(code);
-  assert.equal(r.error, null, r.error);
-  const end = p.mode === 'song' ? Math.max(...p.clips.map((c) => c.start + c.length)) : 8 * bpb;
-  const want = collectEvents({ ...p, swing: 0 }, 0, end, { mode: p.mode }).filter((e) => e.type === 'note');
-  const label2track = Object.fromEntries(blocks.filter((b) => b.label).map((b) => [b.label, b.trackId]));
-  const drums = new Set(p.tracks.filter((t) => t.instrument?.type === 'drums').map((t) => t.id));
-  const key = (tid, pitch, beat) => `${tid}|${pitch}|${Math.round(snapBeat(beat) * 24)}`;
-  const got = new Map();
-  for (const e of queryEvents(r, 0, end / bpb)) {
-    const tid = label2track[e.name];
-    const pitch = drums.has(tid) ? (e.value.n >= 24 ? e.value.n : drumPitch(e.value.s)) : e.value.note;
-    const k = key(tid, pitch, e.begin * bpb);
-    if (!got.has(k)) got.set(k, []);
-    got.get(k).push({ dur: (e.end - e.begin) * bpb, vel: e.value.velocity ?? 0.8 });
-  }
-  let ok = 0;
-  for (const e of want) {
-    const list = got.get(key(e.trackId, e.pitch, e.beat));
-    if (!list?.length) continue;
-    let bi = 0;
-    list.forEach((x, i) => { if (Math.abs(x.dur - e.dur) < Math.abs(list[bi].dur - e.dur)) bi = i; });
-    const g = list.splice(bi, 1)[0];
-    const durOk = drums.has(e.trackId) || Math.abs(g.dur - e.dur) <= Math.max(0.126, 0.05 * e.dur) + 1e-6;
-    if (durOk && Math.abs(g.vel - e.vel) <= 0.1) ok++;
-  }
-  return { ok, total: want.length };
+  const { code, labels } = songToCode(p);
+  // with clips the whole arrangement is written (any mode); without, the playing loop
+  const f = songFaith(p, code, labels, p.clips.length ? {} : { end: 8 * bpb, mode: 'pattern' });
+  return { ok: f.ok, total: f.total };
 }
 
-test('song code round trip: code -> notes == project notes (>=95%) across genres, both modes', () => {
+test('song code round trip: code -> notes == project notes (>=95%) across genres, both modes, and loops', () => {
   const genres = ['house', 'techno', 'jazz', 'lofi-hip-hop', 'drum-and-bass', 'reggae', 'salsa', 'ambient', 'funk', 'indie', 'chiptune', 'trap'];
   let all = 0, good = 0;
   for (const genre of genres) {
     for (const seed of [11, 42]) {
-      for (const mode of ['pattern', 'song']) {
-        const p = { ...createProject(), ...generateSong({ genre, seed }), mode, swing: 0 }; // swing is applied by all(swingBy) — compare on the grid
+      for (const mode of ['pattern', 'song', 'loop']) {
+        const base = { ...createProject(), ...generateSong({ genre, seed }), mode: mode === 'loop' ? 'pattern' : mode, swing: 0 };
+        const p = mode === 'loop' ? { ...base, clips: [] } : base;
         const { ok, total } = roundTrip(p);
         assert.ok(total > 0, `${genre} ${seed} ${mode}: no notes`);
         assert.ok(ok / total >= 0.95, `${genre} ${seed} ${mode}: only ${ok}/${total} notes round-trip`);
@@ -141,9 +119,9 @@ test('song code: header, labels, mutes, code tracks, empty project', () => {
   const r = evaluate(code);
   assert.equal(r.error, null);
   assert.equal(r.cps, p.bpm / 60 / 4);
-  // song mode: one const per pattern + arrange()
+  // with clips (any mode): one const per section part + one arrange() per track
   const s = songToCode({ ...p, mode: 'song' }).code;
-  assert.match(s, /^const drums_\w+ = /m);
+  assert.match(s, /^const \w+_drums\s*= /m);
   assert.match(s, /^drums: arrange\(/m);
   assert.equal(evaluate(s).error, null);
 });
@@ -151,7 +129,7 @@ test('song code: header, labels, mutes, code tracks, empty project', () => {
 // ------------------------------------------------------------------------------ apply back
 
 test('apply-back: unchanged code changes nothing; edits write notes, gain, mutes, new tracks', () => {
-  const p = { ...createProject(), ...generateSong({ genre: 'house', seed: 3 }), mode: 'pattern' };
+  const p = { ...createProject(), ...generateSong({ genre: 'house', seed: 3 }), mode: 'pattern', clips: [] };
   const { code } = songToCode(p);
   let q = clone(p);
   assert.equal(applySongCode(q, code).changed, false);
@@ -168,13 +146,13 @@ test('apply-back: unchanged code changes nothing; edits write notes, gain, mutes
   assert.deepEqual(bar1, ['36@0', '36@1', '36@2', '36@3', '38@1', '38@3'].sort());
   // regenerated code reflects the edit and re-applying it is a no-op
   const again = songToCode(q).code;
-  assert.match(again, /drums: s\("bd\*4, \[~ sd\]\*2"\)/);
+  assert.match(again, /drums: s\("bd\*4, \[~ sd\]\*2"\)\.bank\("RolandTR909"\)/);
   assert.equal(applySongCode(clone(q), again).changed, false);
 
   // remove bass (-> muted), mute lead with "_", change chords gain, add a new drum + melodic block
   const bassLabel = labelFor('Bass');
   let e2 = code.replace(new RegExp(`\\n${bassLabel}: [\\s\\S]*?\\n(?=\\n)`), '\n').replace('\nlead:', '\n_lead:')
-    .replace(/(\nchords: [\s\S]*?\.s\("[^"]+"\))\.gain\([\d.]+\)/, '$1.gain(0.5)');
+    .replace(/(\nchords: [\s\S]*?\.s\("[^"]+"\)\s*)\.gain\([\d.]+\)/, '$1.gain(0.5)');
   e2 += '\nperc: s("[~ cp]*4").bank("808")\nhook: note("c4 e4 g4 c5").s("square")\n';
   q = clone(p);
   r = applySongCode(q, e2);
@@ -192,7 +170,7 @@ test('apply-back: unchanged code changes nothing; edits write notes, gain, mutes
 });
 
 test('apply-back: random / signal blocks are offered as code tracks; tempo + song-mode consts', () => {
-  const p = { ...createProject(), ...generateSong({ genre: 'techno', seed: 9 }), mode: 'pattern' };
+  const p = { ...createProject(), ...generateSong({ genre: 'techno', seed: 9 }), mode: 'pattern', clips: [] };
   const { code } = songToCode(p);
   const e = code + '\nwobble: note("c2*8").s("sawtooth").lpf(sine.range(200, 2000))\n';
   let q = clone(p);
@@ -208,21 +186,27 @@ test('apply-back: random / signal blocks are offered as code tracks; tempo + son
   q = clone(p);
   applySongCode(q, code.replace(/setcpm\([\d.]+\/4\)/, 'setcpm(140/4)'));
   assert.equal(q.bpm, 140);
-  // song mode: editing a pattern const rewrites that pattern
-  const ps = { ...p, mode: 'song' };
+  // song mode: editing a section const rewrites that pattern
+  const ps = { ...createProject(), ...generateSong({ genre: 'techno', seed: 9 }), mode: 'song' };
   const sc = songToCode(ps).code;
-  const d = splitTopLevel(sc).find((it) => it.kind === 'decl' && it.name.startsWith('bass_'));
+  const d = splitTopLevel(sc).find((it) => it.kind === 'decl' && it.name.endsWith('_bass'));
   assert.ok(d, 'bass const');
   q = clone(ps);
   r = applySongCode(q, sc.slice(0, d.start) + `const ${d.name} = note("c2 eb2 g2 bb2")` + sc.slice(d.end));
   assert.equal(r.error, null);
   const changed = Object.values(q.patterns).find((pat) => pat.notes.length && pat.notes.every((n) => [36, 39, 43, 46].includes(n.pitch)) && pat.trackId === q.tracks.find((t) => t.name === 'Bass').id);
   assert.ok(changed, 'pattern rewritten');
-  // arrangement edits are reported, not applied
+  // arrangement edits are applied to the clips (the first section gets 4 bars longer, the rest moves)
   q = clone(ps);
   r = applySongCode(q, sc.replace(/drums: arrange\(\n {2}\[(\d+),/, (s0, n) => `drums: arrange(\n  [${Number(n) + 4},`));
-  assert.equal(r.warnings.length, 1);
-  assert.deepEqual(q.clips, ps.clips);
+  assert.equal(r.error, null);
+  assert.ok(r.changes.some((c) => /^Drums: arrangement/.test(c)), r.changes.join('; '));
+  const dt = q.tracks.find((t) => t.name === 'Drums');
+  const before = ps.clips.filter((c) => c.trackId === dt.id).sort((a, b) => a.start - b.start);
+  const after = q.clips.filter((c) => c.trackId === dt.id).sort((a, b) => a.start - b.start);
+  assert.equal(after[0].length, before[0].length + 16);
+  assert.equal(after[after.length - 1].start, before[before.length - 1].start + 16);
+  assert.deepEqual(q.clips.filter((c) => c.trackId !== dt.id), ps.clips.filter((c) => c.trackId !== dt.id));
 });
 
 test('samples() calls the injectable sample-pack loader once per pack; URL args stay strings', async () => {

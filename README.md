@@ -56,6 +56,8 @@ What you carry out can be brought back. It will remember where you left off.
 The blueprints are not hidden, merely [unlabelled](docs/ARCHITECTURE.md). The [faces](docs/UI.md) are described separately.
 `npm test` will tell you whether the machine still believes in itself.
 
+The glyphs speak the true tongue of [Strudel](https://strudel.cc) — borrowed, with gratitude, from its makers — and so all of this is bound by the [AGPL-3.0](LICENSE). *What you hear may always be read.*
+
 ---
 
 <div align="center">
