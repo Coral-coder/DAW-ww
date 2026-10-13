@@ -160,7 +160,7 @@ export function pluginInstrumentEditor(app, body, tgt, ins, { edit, resolved }) 
   const refreshKnobs = () => {
     if (!knobsHost) return;
     const st = getStatus(keyOf());
-    const list = st.state === 'ready' ? st.info?.params || [] : null;
+    const list = st.info?.params || (st.state === 'ready' ? [] : null);
     const sig = list ? list.map((p) => p.address).join('|') : `#${st.state}`;
     if (sig !== knobSig) {
       knobSig = sig;
@@ -207,7 +207,7 @@ export function pluginEffectEditor(app, body, fx, { edit }) {
     status.update();
     if (fx.type !== 'faust') return;
     const st = getStatus(keyOf());
-    const list = st.state === 'ready' ? st.info?.params || [] : null;
+    const list = st.info?.params || (st.state === 'ready' ? [] : null);
     const sig = list ? list.map((p) => p.address).join('|') : `#${st.state}`;
     if (sig !== knobSig) {
       knobSig = sig;

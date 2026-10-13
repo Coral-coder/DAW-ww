@@ -161,7 +161,8 @@ function movementCost(v, prev) {
 
 /**
  * Best voicing of pitch classes `pcs` (root = opts.root ?? pcs[0]).
- * opts: {prev: MIDI[], range: [lo, hi], voices (doubles the root when > pcs), center, allowMinor9, chordType}
+ * opts: {prev: MIDI[], range: [lo, hi], voices (doubles the root when > pcs), center, allowMinor9, chordType,
+ *        context: MIDI[] of another part voicing the same chord (seconds against it are penalised)}
  */
 export function voicePitchClasses(pcs, opts = {}) {
   const uniq = [...new Set(pcs.map(mod12))].slice(0, 6);
@@ -192,7 +193,10 @@ export function voicePitchClasses(pcs, opts = {}) {
         if (n < lo) cost += (lo - n) * 4;
         if (n > hi) cost += (n - hi) * 4;
       }
-      cost += prev.length ? movementCost(v, prev) : Math.abs(v.reduce((s, n) => s + n, 0) / v.length - center) * 0.8;
+      const mean = v.reduce((s, n) => s + n, 0) / v.length;
+      cost += prev.length ? movementCost(v, prev) : Math.abs(mean - center) * 0.8;
+      // an explicit register centre keeps a voice-led part from drifting up/down over a long loop
+      if (prev.length && opts.center != null) cost += Math.abs(mean - opts.center) * 0.35;
       const span = v[v.length - 1] - v[0];
       if (span > 19) cost += (span - 19) * 1.5;
       // what sits at the bottom: root/3rd/5th are stable, a 7th / 9th less so, a major 7th or b9 rubs
@@ -201,6 +205,14 @@ export function voicePitchClasses(pcs, opts = {}) {
       else if (bottom === 2 || bottom === 10) cost += 1.2;
       // mild preference against close minor 2nds even up high
       for (let i = 1; i < v.length; i++) if (v[i] - v[i - 1] === 1) cost += 1.5;
+      // another part already voicing this chord (e.g. keys under a pad): avoid rubbing 2nds against it
+      if (opts.context?.length) {
+        for (const n of v) for (const q of opts.context) {
+          const d = Math.abs(n - q);
+          if (d === 1 || d === 13) cost += 3;
+          else if (d === 2) cost += n < 60 || q < 60 ? 2 : 0.8;
+        }
+      }
       const allowMinor9 = opts.allowMinor9 ?? (t ? t.intervals.includes(13) : false);
       const problem = voicingProblem(v, { allowMinor9 });
       if (problem) {

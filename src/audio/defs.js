@@ -49,6 +49,7 @@ const outputSection = (gain = 0.8) => section('Output', [
   numP('drive', 'Drive', 0, 1, 0, { step: 0.01 }),
   enumP('driveType', 'Drive type', [{ value: 'soft', label: 'Soft clip' }, { value: 'tube', label: 'Tube' }, { value: 'amp', label: 'Guitar amp + cab' }], 'soft', { adv: true }),
   numP('toneCut', 'Tone', 200, 20000, 20000, { unit: 'Hz', curve: 'log', adv: true }),
+  numP('lowCut', 'Low cut', 20, 2000, 20, { unit: 'Hz', curve: 'log', adv: true }),
   numP('gain', 'Volume', 0, 2, gain, { step: 0.01 }),
 ]);
 

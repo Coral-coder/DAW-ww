@@ -8,6 +8,10 @@ const LOADERS = {
   wam: () => import('../plugins/wam.js'),
 };
 
+import { getStatus, setStatus, pluginKey, soundfontSourceUrl } from '../plugins/status.js';
+
+const setStatusInfo = (key, f) => setStatus(key, { ...getStatus(key), info: { params: f.params, name: f.meta?.name } });
+
 export const PLUGIN_TYPES = Object.keys(LOADERS);
 export const isPluginType = (type) => Object.prototype.hasOwnProperty.call(LOADERS, type);
 
@@ -63,6 +67,7 @@ export async function awaitPluginsReady(graph, project, onError = () => {}, time
     if (inst?.ready) {
       jobs.push(Promise.resolve(inst.ready).then((ok) => {
         if (!ok) onError(new Error(`“${name(id)}”: ${inst.error || 'plugin instrument failed to load'} — rendered silent.`));
+        else if (inst.type === 'wam') onError(new Error(`“${name(id)}” uses a Web Audio Module: WAMs are made for live playback and some are rendered silent in exports — if so, record the track live instead.`));
       }));
     }
   }
@@ -80,4 +85,55 @@ export async function awaitPluginsReady(graph, project, onError = () => {}, time
     new Promise((resolve) => { timer = setTimeout(() => { onError(new Error('Some plugins took too long to load — they are silent in this render.')); resolve(); }, timeoutMs); }),
   ]);
   clearTimeout(timer);
+}
+
+/** True once a soundfont instrument def ({type:'soundfont', params:{library, instrument}}) is decoded. */
+export function isSoundfontReady(def) {
+  if (def?.type !== 'soundfont') return false;
+  return getStatus(pluginKey({ type: 'soundfont', params: def.params || {} })).state === 'ready';
+}
+
+/** Plugin status of any instrument def: {state:'idle'|'loading'|'ready'|'error', progress, error}. */
+export function pluginStatus(def) {
+  const key = pluginKey(def);
+  return key ? getStatus(key) : { state: 'ready', progress: 1 };
+}
+
+/**
+ * Start downloading / decoding a plugin instrument ahead of playback (e.g. on project load).
+ * Soundfonts are fully preloaded (shared bank cache); Faust programs are compiled. Resolves
+ * true/false, never rejects. Built-in instrument types resolve true immediately.
+ */
+export async function preloadInstrument(def, { sampleRate = 44100 } = {}) {
+  try {
+    if (def?.type === 'soundfont') {
+      const m = await import('../plugins/soundfont.js');
+      await m.loadSoundfontWithStatus(soundfontSourceUrl(def.params || {}), sampleRate);
+      return true;
+    }
+    if (def?.type === 'faust' && def.params?.code) {
+      const m = await import('../plugins/faust.js');
+      const f = await m.getFaustFactory(def.params.code, 'poly');
+      const key = pluginKey(def);
+      if (getStatus(key).state !== 'ready') setStatusInfo(key, f);
+      return true;
+    }
+    return !isPluginType(def?.type) || def?.type === 'wam';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Offline renders: AudioWorklet-based plugins receive notes through MessagePorts, which an
+ * OfflineAudioContext may not deliver while it renders. Call (and await) this after scheduling and
+ * before startRendering()/resume() so every posted note has reached its processor. Never rejects.
+ */
+export async function flushPlugins(graph) {
+  const jobs = [];
+  for (const e of graph.tracks?.values?.() || []) {
+    const pl = e.instrument?.engine?.plugin;
+    if (pl?.flush) jobs.push(pl.flush().catch(() => {}));
+  }
+  if (jobs.length) await Promise.all(jobs);
 }

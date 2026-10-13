@@ -475,10 +475,15 @@ export class OutputStage {
     this.tone = ctx.createBiquadFilter();
     this.tone.type = 'lowpass';
     this.tone.Q.value = -3; // dB, ~Butterworth
+    this.lowCut = ctx.createBiquadFilter(); // mix low-cut (12 dB/oct), ~off at 10 Hz
+    this.lowCut.type = 'highpass';
+    this.lowCut.frequency.value = 10;
+    this.lowCut.Q.value = 0.6;
     this.gain = ctx.createGain();
     this.input.connect(this.pre);
     this._route = null;
-    this.tone.connect(this.gain);
+    this.tone.connect(this.lowCut);
+    this.lowCut.connect(this.gain);
     if (output) this.gain.connect(output);
     this.drive = -1;
     this.curveKey = '';
@@ -540,10 +545,12 @@ export class OutputStage {
     this.post.gain.setTargetAtTime(postG, time, 0.02);
     const nyq = this.ctx.sampleRate / 2 - 100;
     this.tone.frequency.setTargetAtTime(clamp(num(p.toneCut, 20000), 40, nyq), time, 0.02);
+    const lc = num(p.lowCut, 20, 20, 2000);
+    this.lowCut.frequency.setTargetAtTime(lc <= 21 ? 10 : lc, time, 0.02);
     this.gain.gain.setTargetAtTime(clamp(num(p.gain, 0.8), 0, 2), time, 0.02);
   }
   dispose() {
-    for (const n of [this.input, this.pre, this.shaper, this.post, this.tone, this.gain, this.dc, ...(this.ampPre || []), ...(this.cab || [])]) {
+    for (const n of [this.input, this.pre, this.shaper, this.post, this.tone, this.lowCut, this.gain, this.dc, ...(this.ampPre || []), ...(this.cab || [])]) {
       if (n) { try { n.disconnect(); } catch { /* */ } }
     }
   }

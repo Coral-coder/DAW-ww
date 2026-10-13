@@ -6,7 +6,7 @@ import { MixGraph } from './mixer.js';
 import { CodeCache, collectEvents, defaultEndBeat, isTrackAudible } from './scheduler.js';
 import { hasAutomation, hasControlAutomation } from '../core/automation.js';
 import { keySourcesFor } from '../core/patch.js';
-import { awaitPluginsReady } from './plugin-instrument.js';
+import { awaitPluginsReady, flushPlugins } from './plugin-instrument.js';
 
 function fallbackBase64ToArrayBuffer(b64) {
   const bin = atob(b64);
@@ -175,7 +175,7 @@ async function renderOnce(project, cfg) {
       ctx.suspend(t).then(() => {
         runStep(k, false);
         plan(k + 1);
-        ctx.resume();
+        flushPlugins(graph).then(() => ctx.resume()); // worklet plugins must receive their notes first
       }, (e) => { onError(e); });
     };
     plan(1);
@@ -189,7 +189,7 @@ async function renderOnce(project, cfg) {
       ctx.suspend(k * chunkSec).then(() => {
         schedule(from, Math.min(endBeat, from + chunkBeats), false);
         plan(k + 1);
-        ctx.resume();
+        flushPlugins(graph).then(() => ctx.resume()); // worklet plugins must receive their notes first
       }, (e) => { onError(e); });
     };
     plan(1);
@@ -197,6 +197,7 @@ async function renderOnce(project, cfg) {
     schedule(startBeat, endBeat, true);
   }
 
+  await flushPlugins(graph);
   const buffer = await ctx.startRendering();
   try { graph.dispose(); } catch { /* */ }
   return buffer;

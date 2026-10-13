@@ -231,3 +231,22 @@ limits: no m2 below C4, no M2 below G3, no 3rds below F3, no m9 between voices),
 * `wav.js`: `encodeWav(audioBuffer, {bitDepth:16|24|32}) -> ArrayBuffer`.
 * `autosave.js`: IndexedDB autosave + list/restore of local projects.
 * `samples.js`: `fileToSample(file) -> Sample` (base64), `sampleToArrayBuffer(sample)`.
+
+## Plugins (`src/plugins/*`, browser runtime lazy-loaded)
+
+Web-native stand-ins for VSTs, as instrument types `soundfont` / `faust` / `wam` (INSTRUMENT_DEFS,
+`plugin: true`) and effect types `faust` / `wam` (EFFECT_DEFS category 'Plugins'). Everything needed
+to reload lives in `params`: soundfont `{library, instrument, url?}`, faust `{name, code, url?,
+values:{address: value}}`, wam `{name, url, state}`.
+* Pure (Node-tested in `tests/plugins.test.js`): `github.js` (`resolveGitHubUrl` → jsDelivr,
+  `detectPluginKind`, `validateManifest` for `daWWW.json`/`plugin.json` `{name, kind, entry, type?}`),
+  `soundfont-parse.js` (midi-js file parser, note names), `gm.js` (128 GM names, libraries),
+  `catalog.js` (+ `faust-library.js` sources), `status.js` (load-status registry keyed by `pluginKey(def)`).
+* Runtime: `soundfont.js` (bank cache, repitch, ADSR), `faust.js` (@grame/faustwasm from jsDelivr,
+  factory cache per source), `wam.js` (WAM 2.0 host, experimental), `fetch-cache.js` (Cache Storage,
+  raw.githubusercontent fallback). `src/audio/plugin-instrument.js` is the sync facade used by
+  `instruments.js` (`Instrument.ready` / `.error`), plus `awaitPluginsReady` / `flushPlugins` used by
+  `render.js` (offline renders wait for plugins and for worklet note delivery), `preloadInstrument(def)`,
+  `isSoundfontReady(def)`. `src/audio/plugin-fx.js` builds plugin effects (pass-through until loaded).
+* UI: `src/ui/plugins-dialog.js` (Catalog / GitHub link / Faust editor), `src/ui/plugin-device.js`
+  (device-panel status + retry, Faust knobs, WAM GUI), `styles/plugins.css`.

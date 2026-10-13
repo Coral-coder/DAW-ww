@@ -119,7 +119,15 @@ export class FMInstrument extends BaseInstrument {
         op.g.connect(out);
       } else {
         peak = level * level * MAX_INDEX * op.freq * velScale * levelScale; // Hz deviation
-        for (const [src, dst] of algo.mods) if (src === i) op.g.connect(ops[dst].osc.frequency);
+        // A modulator that is itself modulated (stack / feedback) has a DC component in FM (unlike
+        // the DX7's phase modulation) which would shift the carrier's pitch -> block DC first.
+        let mo = op.g;
+        if (algo.mods.some(([, dst]) => dst === i) || (i === 1 && num(p.feedback, 0, 0, 1) > 0.001)) {
+          mo = v.node(ctx.createBiquadFilter());
+          mo.type = 'highpass'; mo.frequency.value = Math.min(8, op.freq / 4); mo.Q.value = 0.5;
+          op.g.connect(mo);
+        }
+        for (const [src, dst] of algo.mods) if (src === i) mo.connect(ops[dst].osc.frequency);
       }
       if (peak <= 1e-7 && carriers.has(i)) continue;
       const st = fmEnv(op.g.gain, t, tOff, env, peak);
