@@ -28,6 +28,8 @@ const level = (key, label, def, adv = false) => numP(key, label, 0, 1, def, { st
 export const SYNTH_WAVES = opt([
   { value: 'saw', label: 'Saw' }, { value: 'square', label: 'Square' }, { value: 'pulse', label: 'Pulse' },
   { value: 'triangle', label: 'Triangle' }, { value: 'sine', label: 'Sine' }, { value: 'supersaw', label: 'Supersaw' },
+  { value: 'sync', label: 'Hard sync' }, { value: 'pad', label: 'PAD warm' }, { value: 'ensemble', label: 'PAD strings' },
+  { value: 'choir', label: 'PAD choir' }, { value: 'pluck', label: 'Plucked string' }, { value: 'piano', label: 'Piano (modal)' },
 ]);
 const FILTER_TYPES = opt([
   { value: 'lp24', label: 'Low-pass 24' }, { value: 'lp12', label: 'Low-pass 12' }, { value: 'hp24', label: 'High-pass 24' },
@@ -36,6 +38,7 @@ const FILTER_TYPES = opt([
 const LFO_TARGETS = opt([
   { value: 'none', label: 'Off' }, { value: 'pitch', label: 'Pitch' }, { value: 'filter', label: 'Filter' },
   { value: 'amp', label: 'Amp (tremolo)' }, { value: 'pan', label: 'Pan' }, { value: 'oscmix', label: 'Osc 1/2 mix' },
+  { value: 'pwm', label: 'Pulse width' },
 ]);
 const LFO_SHAPES = opt([
   { value: 'sine', label: 'Sine' }, { value: 'triangle', label: 'Triangle' }, { value: 'square', label: 'Square' },
@@ -44,6 +47,7 @@ const LFO_SHAPES = opt([
 
 const outputSection = (gain = 0.8) => section('Output', [
   numP('drive', 'Drive', 0, 1, 0, { step: 0.01 }),
+  enumP('driveType', 'Drive type', [{ value: 'soft', label: 'Soft clip' }, { value: 'tube', label: 'Tube' }, { value: 'amp', label: 'Guitar amp + cab' }], 'soft', { adv: true }),
   numP('toneCut', 'Tone', 200, 20000, 20000, { unit: 'Hz', curve: 'log', adv: true }),
   numP('gain', 'Volume', 0, 2, gain, { step: 0.01 }),
 ]);
@@ -80,12 +84,16 @@ const SYNTH_PARAMS = [
     numP('subOctave', 'Sub octave', -2, -1, -1, { step: 1, adv: true }),
     numP('noiseLevel', 'Noise', 0, 1, 0, { step: 0.01 }),
     enumP('noiseType', 'Noise color', ['white', 'pink'], 'white', { adv: true }),
+    numP('modelTone', 'Model tone', -1, 1, 0, { step: 0.01, adv: true }),
+    numP('modelDecay', 'Model decay', 0.25, 4, 1, { step: 0.01, unit: '×', curve: 'exp', adv: true }),
+    numP('padWidth', 'PAD bandwidth', 0.25, 4, 1, { step: 0.01, unit: '×', curve: 'exp', adv: true }),
   ]),
   ...section('Unison', [
     numP('unison', 'Voices', 1, 7, 1, { step: 1 }),
     numP('unisonDetune', 'Detune', 0, 100, 15, { step: 0.5, unit: 'ct' }),
     numP('unisonSpread', 'Stereo spread', 0, 1, 0.5, { step: 0.01 }),
     numP('superDetune', 'Supersaw detune', 0, 1, 0.4, { step: 0.01 }),
+    numP('superMix', 'Supersaw mix', 0, 1, 0.75, { step: 0.01, adv: true }),
   ]),
   ...section('Filter', [
     enumP('filterType', 'Type', FILTER_TYPES, 'lp24'),
@@ -93,6 +101,7 @@ const SYNTH_PARAMS = [
     numP('resonance', 'Resonance', 0, 1, 0.1, { step: 0.01 }),
     numP('keytrack', 'Key tracking', 0, 1, 0.3, { step: 0.01, adv: true }),
     numP('velToFilter', 'Velocity → filter', 0, 1, 0.3, { step: 0.01, adv: true }),
+    numP('filterDrive', 'Drive', 0, 1, 0, { step: 0.01, adv: true }),
   ]),
   ...section('Filter Env', [
     numP('fEnvAmount', 'Amount', -8, 8, 2, { step: 0.01, unit: 'oct' }),
@@ -105,6 +114,7 @@ const SYNTH_PARAMS = [
   ...lfoDefs(1),
   ...lfoDefs(2),
   ...section('Voice', [
+    numP('analog', 'Analog drift', 0, 1, 0.2, { step: 0.01 }),
     boolP('mono', 'Mono', false),
     boolP('legato', 'Legato (no retrigger)', true, { adv: true }),
     time('glide', 'Glide', 0, 2),
@@ -133,6 +143,8 @@ function opDefs(i, o) {
     level(`op${i}Sustain`, 'Sustain', o.s ?? 0.5),
     time(`op${i}Release`, 'Release', o.r ?? 0.4),
     numP(`op${i}Vel`, 'Velocity sens', 0, 1, o.vel ?? 0.5, { step: 0.01, adv: true }),
+    level(`op${i}Break`, 'Break level', 0.5, true),
+    time(`op${i}Decay2`, 'Decay 2', 0, 30, true),
   ]);
 }
 const FM_PARAMS = [

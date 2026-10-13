@@ -1,6 +1,10 @@
 // Subtractive polysynth + shared voice/DSP helpers used by every instrument engine.
 // Browser-only at runtime, but importable in Node (no AudioContext use at import time).
 import { clamp, createRng, midiToFreq } from '../core/util.js';
+import { padTable, padZone } from './dsp/padsynth.js';
+import { pluckTable } from './dsp/pluck.js';
+import { pianoTable, PIANO_ZONE } from './dsp/piano.js';
+import { warmLater } from './dsp/bufcache.js';
 
 /* ------------------------------------------------------------------ */
 /* Small numeric helpers                                               */
@@ -354,14 +358,14 @@ export function fadeOut(param, t, fade = 0.012, fallbackValue) {
 
 /** Analytic value of an envelope state at `time` (used where cancelAndHold is missing). */
 export function envValueAt(st, time) {
-  const pre = (tm) => {
+  const pre = st.fn || ((tm) => {
     if (tm <= st.t) return st.from;
     if (tm < st.t + st.a) {
       const x = (tm - st.t) / st.a;
       return st.from + (st.peak - st.from) * (st.convex ? attackFrac(x) : x);
     }
     return st.sus + (st.peak - st.sus) * Math.exp(-(tm - st.t - st.a) / (st.d / 4));
-  };
+  });
   if (st.tOff != null && time >= st.tOff) {
     const v0 = pre(st.tOff);
     return st.base + (v0 - st.base) * Math.exp(-(time - st.tOff) / (st.r / 6));
@@ -376,7 +380,7 @@ export function envRelease(param, st, time, r = st.r) {
   holdAt(param, time, v);
   param.setTargetAtTime(st.base, time, Math.max(0.001, r / 6));
   // re-base state so later analytics stay sane
-  st.t = time - st.a - 1e3; st.sus = v; st.peak = v; st.from = v; st.tOff = time; st.r = r; st.convex = false;
+  st.t = time - st.a - 1e3; st.sus = v; st.peak = v; st.from = v; st.tOff = time; st.r = r; st.convex = false; st.fn = null;
   return time + r;
 }
 
@@ -387,10 +391,10 @@ export function envRegate(param, st, time, tOff, retrigger) {
   if (retrigger) {
     param.setTargetAtTime(st.peak0 ?? st.peak, time, st.a / 2.5);
     if (Math.abs(st.sus0 - (st.peak0 ?? st.peak)) > 1e-6) param.setTargetAtTime(st.sus0, time + st.a, st.d / 4);
-    st.t = time; st.from = v; st.peak = st.peak0 ?? st.peak; st.sus = st.sus0; st.convex = false;
+    st.t = time; st.from = v; st.peak = st.peak0 ?? st.peak; st.sus = st.sus0; st.convex = false; st.fn = null;
   } else {
     param.setTargetAtTime(st.sus0, time, st.d / 4);
-    st.t = time - st.a; st.from = v; st.peak = v; st.sus = st.sus0; st.convex = false;
+    st.t = time - st.a; st.from = v; st.peak = v; st.sus = st.sus0; st.convex = false; st.fn = null;
   }
   st.tOff = null;
   if (tOff != null) {
@@ -644,15 +648,36 @@ export class BaseInstrument {
 /* Subtractive synth                                                    */
 /* ------------------------------------------------------------------ */
 
-// JP-8000-style supersaw detune ratios (relative), centre osc at index 3
+// JP-8000 supersaw (Adam Szabo, "How to Emulate the Super Saw", 2010): 7 saws with these relative
+// offsets scaled by a non-linear detune curve, centre/side mix curves and a pitch-tracked HPF.
 const SUPERSAW = [-0.11002313, -0.06288439, -0.01952356, 0, 0.01991221, 0.06216538, 0.10745242];
-const VOICE_SCALE = 0.3;
-const LFO_SCALE = { pitch: 1200, filter: 4800, amp: 1, pan: 1, oscmix: 1 };
+/** Szabo's measured detune-knob curve (0..1 -> 0..1). */
+export function superDetuneCurve(x) {
+  x = clamp(num(x, 0.5), 0, 1);
+  return 10028.7312891634 * x ** 11 - 50818.8652045924 * x ** 10 + 111363.4808729368 * x ** 9 - 138150.6761080548 * x ** 8
+    + 106649.6679158292 * x ** 7 - 53046.9642751875 * x ** 6 + 17019.9518580080 * x ** 5 - 3425.0836591318 * x ** 4
+    + 404.2703938388 * x ** 3 - 24.1878824391 * x ** 2 + 0.6717417634 * x + 0.0030115596;
+}
+/** Szabo's mix curves: [centre gain, side gain] for mix 0..1. */
+export function superMixCurve(m) {
+  m = clamp(num(m, 0.75), 0, 1);
+  return [-0.55366 * m + 0.99785, -0.73764 * m * m + 1.2841 * m + 0.044372];
+}
 
-function filterQ(type, res) {
+const VOICE_SCALE = 0.3;
+const LFO_SCALE = { pitch: 1200, filter: 4800, amp: 1, pan: 1, oscmix: 1, pwm: 1 };
+/** Wave names rendered from procedurally generated sample tables (src/audio/dsp). */
+export const MODEL_WAVES = ['pad', 'ensemble', 'choir', 'pluck', 'piano'];
+const PAD_WAVES = new Set(['pad', 'ensemble', 'choir']);
+
+/**
+ * Resonance 0..1 -> Biquad Q. Low/high-pass Q is in dB: a power curve keeps the useful range
+ * wide while topping out at +21 dB (a 4-pole ladder "whistles" but never screams).
+ */
+export function filterQ(type, res) {
   const r = clamp(num(res, 0), 0, 1);
-  if (type === 'bp' || type === 'notch') return 0.5 + r * r * 24; // linear Q
-  return -3 + Math.pow(r, 1.2) * 27; // lowpass/highpass Q is in dB
+  if (type === 'bp' || type === 'notch') return 0.5 + r * r * 18; // linear Q
+  return -3 + Math.pow(r, 1.4) * 24;
 }
 
 export class SynthInstrument extends BaseInstrument {
@@ -677,7 +702,7 @@ export class SynthInstrument extends BaseInstrument {
   onParams() {
     // live-update sounding voices (cheap params only)
     const p = this.params, t = this.ctx.currentTime;
-    for (const v of this.voices) {
+    for (const v of this.voices || []) {
       if (v.done) continue;
       for (let i = 1; i <= 3; i++) {
         const g = v.oscGains?.[i];
@@ -686,11 +711,29 @@ export class SynthInstrument extends BaseInstrument {
       if (v.subGain) v.subGain.gain.setTargetAtTime(clamp(num(p.subLevel, 0), 0, 1), t, 0.02);
       if (v.noiseGain) v.noiseGain.gain.setTargetAtTime(clamp(num(p.noiseLevel, 0), 0, 1) * 0.6, t, 0.02);
       if (v.filters?.length) {
-        const f = this._cutoff(v.pitch, v.vel, v.cutoffOverride);
+        const f = this._cutoff(v.pitch, v.vel, v.cutoffOverride) * (v.cutVar || 1);
         v.filters.forEach((fl, idx) => {
-          fl.frequency.setTargetAtTime(f, t, 0.02);
+          fl.frequency.setTargetAtTime(clamp(f, 20, this.ctx.sampleRate / 2 - 100), t, 0.02);
           if (idx === v.filters.length - 1) fl.Q.setTargetAtTime(filterQ(p.filterType, p.resonance), t, 0.02);
         });
+      }
+    }
+    this._warm();
+  }
+
+  /** Pre-generate sample-model tables in the background (realtime contexts only). */
+  _warm() {
+    if (isOffline(this.ctx)) return;
+    const p = this.params;
+    const waves = [1, 2, 3].map((i) => (num(p[`osc${i}Level`], i === 1 ? 0.8 : 0) > 0.0005 ? p[`osc${i}Wave`] : null)).filter((w) => MODEL_WAVES.includes(w));
+    if (!waves.length) return;
+    const key = waves.join(',') + `:${p.modelTone}:${p.modelDecay}:${p.padWidth}`;
+    if (key === this._warmKey) return;
+    this._warmKey = key;
+    const sr = this.ctx.sampleRate;
+    for (const w of waves) {
+      for (let m = 36; m <= 84; m += (w === 'pluck' ? 1 : w === 'piano' ? 3 : 4)) {
+        warmLater(() => this._table(w, m, 0.8, sr));
       }
     }
   }
@@ -746,11 +789,13 @@ export class SynthInstrument extends BaseInstrument {
   _monoNote(t, pitch, vel, tOff, extra) {
     const p = this.params;
     const v = this.mono;
-    // a voice with a scheduled stop can't be held indefinitely (stop() can't be undone)
-    const alive = v && !v.done && v.end > Math.max(t, this.ctx.currentTime) + 0.03 && (tOff != null || v.end === Infinity);
+    // a voice with a scheduled stop can't be held indefinitely (stop() can't be undone);
+    // sample-model voices (one-shot tables) always retrigger
+    const alive = v && !v.done && !v.oneShot && v.end > Math.max(t, this.ctx.currentTime) + 0.03 && (tOff != null || v.end === Infinity);
     const glide = num(p.glide, 0, 0, 5);
     if (!alive) {
       if (v && !v.done && tOff == null) this._releaseVoice(v, t);
+      else if (v && !v.done && v.oneShot) this._kill(v, t, 0.02);
       this._makeRoom(t);
       const ex = { ...extra };
       if (ex.glideFrom == null && glide > 0 && p.glideAlways && this.lastPitch != null) ex.glideFrom = this.lastPitch;
@@ -775,8 +820,8 @@ export class SynthInstrument extends BaseInstrument {
     v.curFreq = freq;
     v.pitch = pitch;
     if (extra.cutoff != null && v.filters?.length) {
-      const f = this._cutoff(pitch, vel, extra.cutoff);
-      for (const fl of v.filters) fl.frequency.setTargetAtTime(f, t, 0.01);
+      const f = this._cutoff(pitch, vel, extra.cutoff) * (v.cutVar || 1);
+      for (const fl of v.filters) fl.frequency.setTargetAtTime(clamp(f, 20, this.ctx.sampleRate / 2 - 100), t, 0.01);
     }
     // envelopes
     let end = t;
@@ -797,14 +842,32 @@ export class SynthInstrument extends BaseInstrument {
     v.stopAt(end + 0.03);
   }
 
+  /** Sample-model table for a wave at an effective MIDI pitch: { buffer, f0 }. */
+  _table(wave, midi, vel, sr) {
+    const p = this.params;
+    const tone = num(p.modelTone, 0, -1, 1), decay = num(p.modelDecay, 1, 0.25, 4);
+    const layer = vel < 0.45 ? 0 : vel < 0.78 ? 1 : 2;
+    if (PAD_WAVES.has(wave)) return padTable(sr, wave, padZone(midi, wave === 'choir' ? 3 : 4), num(p.padWidth, 1, 0.25, 4), tone, this.ctx);
+    if (wave === 'piano') return pianoTable(sr, Math.round(midi / PIANO_ZONE) * PIANO_ZONE, layer, tone, decay, this.ctx);
+    return pluckTable(sr, Math.round(midi), layer, tone, decay, this.ctx);
+  }
+
   _createVoice(t, pitch, vel, tOff, extra) {
     const ctx = this.ctx, p = this.params;
+    const rnd = this.rand;
     const v = new Voice(ctx);
     v.pitch = pitch; v.vel = vel; v.start = t; v.envs = [];
     v.cutoffOverride = extra.cutoff;
     const transpose = num(p.transpose, 0, -48, 48);
     const freq = midiToFreq(pitch + transpose);
     const glide = num(p.glide, 0, 0, 5);
+    // OB-Xd style per-voice "slop": static detune, filter offset, envelope & level variance
+    const an = num(p.analog, 0, 0, 1);
+    const sl = () => (rnd() - 0.5) * 2;
+    const voiceDet = sl() * an * 2.5;
+    v.cutVar = Math.pow(2, sl() * an * 0.15);
+    const envVar = 1 + sl() * an * 0.08;
+    const lvlVar = Math.pow(10, (sl() * an * 0.6) / 20);
 
     // shared frequency source (Hz) -> every oscillator's frequency input (glide in one place)
     const fsrc = v.src(ctx.createConstantSource());
@@ -819,42 +882,69 @@ export class SynthInstrument extends BaseInstrument {
     }
 
     const mix = v.node(ctx.createGain());
-    mix.gain.value = VOICE_SCALE;
+    mix.gain.value = VOICE_SCALE * lvlVar;
     const detuneTargets = [];
     v.oscGains = [];
+
+    // LFO routing is needed up front (PWM changes how pulse oscillators are built)
+    const lfos = [];
+    for (let k = 1; k <= 2; k++) {
+      const target = p[`lfo${k}Target`] || 'none';
+      const depth = num(p[`lfo${k}Depth`], 0, 0, 1);
+      if (target === 'none' || depth <= 0.0001) continue;
+      lfos.push({ k, target, depth });
+    }
+    const pwmOn = lfos.some((l) => l.target === 'pwm');
+    const pwmTargets = []; // [delayParam, periodSec]
 
     const unison = Math.round(num(p.unison, 1, 1, 7));
     const uDet = num(p.unisonDetune, 15, 0, 100);
     const spread = num(p.unisonSpread, 0.5, 0, 1);
-    const superDet = num(p.superDetune, 0.4, 0, 1);
+    const superDet = superDetuneCurve(num(p.superDetune, 0.4, 0, 1));
+    const [sCentre, sSide] = superMixCurve(num(p.superMix, 0.75, 0, 1));
+    const nyq = ctx.sampleRate / 2;
+    v.oneShot = false;
 
     for (let i = 1; i <= 3; i++) {
       const level = clamp(num(p[`osc${i}Level`], i === 1 ? 0.8 : 0), 0, 1);
       if (level <= 0.0005) continue;
       const wave = p[`osc${i}Wave`] || 'saw';
-      const cents = num(p[`osc${i}Octave`], 0, -4, 4) * 1200 + num(p[`osc${i}Semi`], 0, -24, 24) * 100 + num(p[`osc${i}Fine`], 0, -100, 100);
+      const oscVar = i > 1 ? sl() * an * 1.5 : 0;
+      const cents = num(p[`osc${i}Octave`], 0, -4, 4) * 1200 + num(p[`osc${i}Semi`], 0, -24, 24) * 100 + num(p[`osc${i}Fine`], 0, -100, 100) + voiceDet + oscVar;
       const g = v.node(ctx.createGain());
       g.connect(mix);
+      g.gain.value = level;
       v.oscGains[i] = g;
-      // build list of (detuneCents, pan)
+      const isPad = PAD_WAVES.has(wave);
+      const isModel = MODEL_WAVES.includes(wave);
+      // build list of (detuneCents, pan, gain)
       const parts = [];
-      const uni = wave === 'supersaw' ? Math.min(unison, 2) : unison;
+      const uni = wave === 'supersaw' ? Math.min(unison, 2) : isPad ? 1 : unison;
       for (let u = 0; u < uni; u++) {
         const uo = uni > 1 ? (u / (uni - 1) - 0.5) * uDet : 0;
-        const upan = uni > 1 ? (u / (uni - 1) - 0.5) * 2 * spread : 0;
+        // Surge-style alternating pan law: neighbours go to opposite sides
+        const upan = uni > 1 ? (u % 2 ? -1 : 1) * Math.abs(u / (uni - 1) - 0.5) * 2 * spread : 0;
         if (wave === 'supersaw') {
           SUPERSAW.forEach((r, k) => {
             const dc = 1200 * Math.log2(1 + r * superDet);
-            const pan = clamp(((k / 6) - 0.5) * 2 * spread + upan * 0.5, -1, 1);
-            parts.push([uo + dc, uni > 1 ? (u % 2 ? -1 : 1) * Math.abs(pan) : pan]);
+            const pan = clamp(((k / 6) - 0.5) * 2 * spread * (k % 2 ? -1 : 1) + upan * 0.5, -1, 1);
+            parts.push([uo + dc, pan, k === 3 ? sCentre : sSide]);
           });
-        } else parts.push([uo, upan]);
+        } else parts.push([uo, upan, 1]);
       }
-      g.gain.value = level;
-      const partGain = 1 / Math.sqrt(parts.length);
+      const partGain = wave === 'supersaw'
+        ? 1.45 / Math.sqrt(uni * (sCentre * sCentre + 6 * sSide * sSide))
+        : 1 / Math.sqrt(parts.length);
       const sum = v.node(ctx.createGain());
-      sum.gain.value = partGain * (wave === 'supersaw' ? 1.5 : 1);
-      sum.connect(g);
+      sum.gain.value = partGain;
+      if (wave === 'supersaw') {
+        // pitch-tracked 12 dB high-pass at the fundamental (thins the low end like the JP-8000)
+        const hp = v.node(ctx.createBiquadFilter());
+        hp.type = 'highpass'; hp.Q.value = 0.5; hp.frequency.value = 0;
+        const hg = v.node(ctx.createGain()); hg.gain.value = Math.pow(2, cents / 1200);
+        fsrc.connect(hg); hg.connect(hp.frequency);
+        sum.connect(hp); hp.connect(g);
+      } else sum.connect(g);
       // stereo: bucket parts into left / centre / right panners (3 nodes instead of one per osc)
       const buckets = {};
       const bucketFor = (pan) => {
@@ -868,14 +958,68 @@ export class SynthInstrument extends BaseInstrument {
         }
         return buckets[b];
       };
-      for (const [dc, pan] of parts) {
+      // free-running phase for stacked / secondary oscillators
+      const freePhase = parts.length > 1 || (an > 0.001 && i > 1);
+      if (isModel) {
+        const effMidi = pitch + transpose + cents / 100;
+        const { buffer, f0 } = this._table(wave, effMidi, vel, ctx.sampleRate);
+        if (!buffer) continue;
+        const rate = v.node(ctx.createGain());
+        rate.gain.value = 1 / f0;
+        fsrc.connect(rate);
+        const mk = (dc, dest, offset) => {
+          const s = v.src(ctx.createBufferSource());
+          s.buffer = buffer;
+          s.playbackRate.value = 0;
+          rate.connect(s.playbackRate);
+          s.detune.value = cents + dc;
+          detuneTargets.push([s.detune, cents + dc]);
+          if (isPad) { s.loop = true; s.loopStart = 0; s.loopEnd = buffer.duration; s._offset = offset; }
+          s.connect(dest);
+          return s;
+        };
+        if (isPad) {
+          // two decorrelated read positions of the same random-phase table = wide stereo
+          const o1 = rnd() * buffer.duration;
+          if (spread > 0.02) {
+            for (const [side, off] of [[-1, o1], [1, (o1 + buffer.duration / 2) % buffer.duration]]) {
+              const pn = v.node(ctx.createStereoPanner());
+              pn.pan.value = side * spread;
+              pn.connect(sum);
+              mk(0, pn, off);
+            }
+            sum.gain.value = partGain * Math.SQRT1_2;
+          } else mk(0, sum, o1);
+        } else {
+          v.oneShot = true;
+          for (const [dc, pan] of parts) mk(dc, bucketFor(pan));
+        }
+        continue;
+      }
+      for (const [dc, pan, pg] of parts) {
         const osc = v.src(ctx.createOscillator());
-        setOscWave(ctx, osc, wave, p[`osc${i}Width`]);
+        const ph = freePhase ? Math.floor(rnd() * 8) : -1;
+        const pwmPulse = pwmOn && (wave === 'pulse' || wave === 'square');
+        setOscWave(ctx, osc, pwmPulse ? 'saw' : wave, p[`osc${i}Width`], pwmPulse ? Math.max(0, ph) : ph);
         osc.frequency.value = 0;
         fsrc.connect(osc.frequency);
         osc.detune.value = cents + dc;
         detuneTargets.push([osc.detune, cents + dc]);
-        osc.connect(bucketFor(pan));
+        let src = osc;
+        if (pg !== 1) { const pgn = v.node(ctx.createGain()); pgn.gain.value = pg; osc.connect(pgn); src = pgn; }
+        if (pwmPulse) {
+          // band-limited PWM: pulse = saw(t) - saw(t - w*T); the LFO sweeps the delay
+          const T = 1 / clamp(freq * Math.pow(2, (cents + dc) / 1200), 1, nyq);
+          const w = wave === 'square' ? 0.5 : clamp(num(p[`osc${i}Width`], 0.5), 0.05, 0.95);
+          const dl = v.node(ctx.createDelay(0.1));
+          dl.delayTime.value = w * T;
+          const inv = v.node(ctx.createGain()); inv.gain.value = -1;
+          const out = v.node(ctx.createGain()); out.gain.value = 0.7;
+          src.connect(out); src.connect(dl); dl.connect(inv); inv.connect(out);
+          pwmTargets.push([dl.delayTime, T]);
+          src = out;
+        }
+        src.connect(bucketFor(pan));
       }
     }
     // sub oscillator
@@ -885,7 +1029,7 @@ export class SynthInstrument extends BaseInstrument {
       setOscWave(ctx, sub, p.subWave || 'sine');
       sub.frequency.value = 0;
       fsrc.connect(sub.frequency);
-      const sc = num(p.subOctave, -1, -2, -1) * 1200;
+      const sc = num(p.subOctave, -1, -2, -1) * 1200 + voiceDet;
       sub.detune.value = sc;
       detuneTargets.push([sub.detune, sc]);
       const sg = v.node(ctx.createGain());
@@ -900,6 +1044,7 @@ export class SynthInstrument extends BaseInstrument {
       ns.buffer = getNoiseBuffer(ctx, p.noiseType === 'pink' ? 'pink' : 'white');
       ns.loop = true;
       ns.loopStart = 0; ns.loopEnd = ns.buffer.duration;
+      ns._offset = rnd() * ns.buffer.duration;
       const ng = v.node(ctx.createGain());
       ng.gain.value = noiseLevel * 0.6;
       ns.connect(ng); ng.connect(mix);
@@ -912,7 +1057,7 @@ export class SynthInstrument extends BaseInstrument {
       const g = v.node(ctx.createGain()); g.gain.value = 0.8; osc.connect(g); g.connect(mix);
     }
 
-    // pitch: bend + pitch envelope
+    // pitch: bend + pitch envelope + slow analog drift
     for (const [d] of detuneTargets) v.ext(this.bend, d);
     const pe = num(p.pitchEnvAmt, 0, -48, 48);
     if (Math.abs(pe) > 0.01) {
@@ -922,15 +1067,37 @@ export class SynthInstrument extends BaseInstrument {
         d.setTargetAtTime(base, t, ped / 4);
       }
     }
+    if (an > 0.01) {
+      // Surge-style drift: a very slow random-rate wobble per voice (±3 cents at analog = 1)
+      const dr = v.src(ctx.createOscillator());
+      dr.type = 'triangle';
+      dr.frequency.value = 0.07 + rnd() * 0.35;
+      const dg = v.node(ctx.createGain());
+      dg.gain.value = an * 3 * (rnd() < 0.5 ? -1 : 1);
+      dr.connect(dg);
+      for (const [d] of detuneTargets) dg.connect(d);
+    }
 
-    // filter
+    // pre-filter drive (per voice, gentle) -> filter
     let node = mix;
+    const fdrive = num(p.filterDrive, 0, 0, 1);
+    if (fdrive > 0.005) {
+      const pre = v.node(ctx.createGain());
+      pre.gain.value = 1 + fdrive * 2.5;
+      const sh = v.node(ctx.createWaveShaper());
+      sh.curve = getSatCurve(fdrive);
+      node.connect(pre); pre.connect(sh);
+      const post = v.node(ctx.createGain());
+      post.gain.value = 1 / (1 + fdrive * 1.2);
+      sh.connect(post);
+      node = post;
+    }
     const ftype = p.filterType || 'lp24';
     v.filters = [];
     if (ftype !== 'off') {
       const map = { lp12: ['lowpass'], lp24: ['lowpass', 'lowpass'], hp12: ['highpass'], hp24: ['highpass', 'highpass'], bp: ['bandpass'], notch: ['notch'] };
       const types = map[ftype] || map.lp24;
-      const fc = this._cutoff(pitch, vel, extra.cutoff);
+      const fc = clamp(this._cutoff(pitch, vel, extra.cutoff) * v.cutVar, 20, nyq - 100);
       const fmod = v.src(ctx.createConstantSource());
       fmod.offset.value = 0;
       v.fmod = fmod;
@@ -939,7 +1106,8 @@ export class SynthInstrument extends BaseInstrument {
         f.type = ty;
         f.frequency.value = fc;
         const last = idx === types.length - 1;
-        f.Q.value = last ? filterQ(ftype, extra.resonance != null ? num(extra.resonance, 0, 0, 1) : p.resonance) : (ty === 'lowpass' || ty === 'highpass' ? -3 : 0.7);
+        // 4-pole: a soft first stage (Q -1 dB) under the resonant one -> ladder-like rounded knee
+        f.Q.value = last ? filterQ(ftype, extra.resonance != null ? num(extra.resonance, 0, 0, 1) : p.resonance) : (ty === 'lowpass' || ty === 'highpass' ? -1 : 0.7);
         fmod.connect(f.detune);
         node.connect(f);
         node = f;
@@ -949,9 +1117,11 @@ export class SynthInstrument extends BaseInstrument {
       if (Math.abs(amt) > 0.001) {
         const vf = num(p.velToFilter, 0, 0, 1);
         const peak = amt * 1200 * (1 - vf + vf * vel);
-        v.envs.push([fmod.offset, envNote(fmod.offset, t, tOff, { a: p.fAttack, d: p.fDecay, s: p.fSustain, r: p.fRelease }, peak, 0)]);
-        v.envs[v.envs.length - 1][1].peak0 = peak;
-        v.envs[v.envs.length - 1][1].sus0 = peak * clamp(num(p.fSustain, 0.3), 0, 1);
+        const fe = { a: num(p.fAttack, 0.005) * envVar, d: num(p.fDecay, 0.3) * envVar, s: p.fSustain, r: num(p.fRelease, 0.3) * envVar };
+        const st = envNote(fmod.offset, t, tOff, fe, peak, 0);
+        st.peak0 = peak;
+        st.sus0 = peak * clamp(num(p.fSustain, 0.3), 0, 1);
+        v.envs.push([fmod.offset, st]);
       }
     }
 
@@ -960,37 +1130,28 @@ export class SynthInstrument extends BaseInstrument {
     amp.gain.value = 0;
     node.connect(amp);
     v.amp = amp;
-    const va = num(p.velToAmp, 0.6, 0, 1);
-    const peak = 1 - va + va * vel;
-    const ampEnv = { a: p.attack, d: p.decay, s: p.sustain, r: p.release };
+    const peak = velCurve(vel, num(p.velToAmp, 0.6, 0, 1));
+    const ampEnv = { a: num(p.attack, 0.005) * envVar, d: num(p.decay, 0.3) * envVar, s: p.sustain, r: num(p.release, 0.2) * envVar };
     v.ampSt = envNote(amp.gain, t, tOff, ampEnv, peak, 0);
     v.ampSt.peak0 = peak; v.ampSt.sus0 = peak * clamp(num(p.sustain, 0.8), 0, 1);
     v.envs.unshift([amp.gain, v.ampSt]);
     let outNode = amp;
 
     // LFOs
-    const lfos = [];
-    for (let k = 1; k <= 2; k++) {
-      const target = p[`lfo${k}Target`] || 'none';
-      const depth = num(p[`lfo${k}Depth`], 0, 0, 1);
-      if (target === 'none' || depth <= 0.0001) continue;
-      if (target === 'filter' && !v.fmod) continue;
-      if (target === 'oscmix' && !(v.oscGains[1] && v.oscGains[2])) continue;
-      lfos.push({ k, target, depth });
-    }
     let trem = null, panner = null;
-    if (lfos.some((l) => l.target === 'amp')) {
+    const live = lfos.filter(({ target }) => !(target === 'filter' && !v.fmod) && !(target === 'oscmix' && !(v.oscGains[1] && v.oscGains[2])) && !(target === 'pwm' && !pwmTargets.length));
+    if (live.some((l) => l.target === 'amp')) {
       trem = v.node(ctx.createGain());
       trem.gain.value = 1;
       outNode.connect(trem); outNode = trem;
     }
     const pan = extra.pan != null ? num(extra.pan, 0, -1, 1) : null;
-    if (pan != null || lfos.some((l) => l.target === 'pan')) {
+    if (pan != null || live.some((l) => l.target === 'pan')) {
       panner = v.node(ctx.createStereoPanner());
       panner.pan.value = pan ?? 0;
       outNode.connect(panner); outNode = panner;
     }
-    for (const { k, target, depth } of lfos) {
+    for (const { k, target, depth } of live) {
       const lfo = v.src(ctx.createOscillator());
       const shape = p[`lfo${k}Shape`] || 'sine';
       lfo.type = shape === 'ramp' ? 'sawtooth' : ['sine', 'triangle', 'square', 'sawtooth'].includes(shape) ? shape : 'sine';
@@ -1009,6 +1170,11 @@ export class SynthInstrument extends BaseInstrument {
       else if (target === 'oscmix') {
         lg.connect(v.oscGains[2].gain);
         const inv = v.node(ctx.createGain()); inv.gain.value = -1; lg.connect(inv); inv.connect(v.oscGains[1].gain);
+      } else if (target === 'pwm') {
+        // depth 1 sweeps the duty cycle by ±0.42 around the set width
+        for (const [dp, T] of pwmTargets) {
+          const pg = v.node(ctx.createGain()); pg.gain.value = 0.42 * T; lg.connect(pg); pg.connect(dp);
+        }
       }
     }
     outNode.connect(this.out.input);

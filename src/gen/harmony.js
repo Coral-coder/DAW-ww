@@ -3,7 +3,7 @@ import { createRng, clamp } from '../core/util.js';
 import {
   romanToChord, getProgression, findProgressions, suggestNextChords, isMinorScale,
   chordPitchClasses, chordName, resolveScaleId, mod12, parseKey, scalePitchClasses, SCALES,
-  chordVoicingPcs, voiceChord, keyPitchClasses, getChordType,
+  chordVoicingPcs, voiceChord, keyPitchClasses,
 } from '../theory/index.js';
 import { getGenre } from './genres.js';
 import { makeNote } from './note-util.js';

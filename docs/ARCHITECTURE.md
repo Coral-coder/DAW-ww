@@ -168,6 +168,13 @@ suggestNextChords(progressionRomans[], keyRoot, scaleId, genre?) -> [{roman, cho
 PROGRESSIONS (named library, tagged by genre/mood), CIRCLE_OF_FIFTHS helpers, relativeKey, parallelKey,
 analyzeProgression(romans) -> notes for assistant (cadences, borrowed chords)`.
 
+`voicing.js` — chord-scales and voicings (every chord writer goes through these):
+`chordScale(chord, keyRoot, scale, {blues}) -> {tones, tensions, avoid, pool}` (key notes that contradict an altered
+chord tone are dropped; avoid = a half step above a chord tone), `fitToChord(midi, cs, {allow, dir, range})`,
+`chordVoicingPcs(chord, max, {rootless})` (drops 5th → 11 → root → 13 → 9; 3rd/7th always kept),
+`voiceChord(chord, {prev, range, maxVoices})` / `voiceLead(prev, pcs, range)` (voice-led search under low-interval
+limits: no m2 below C4, no M2 below G3, no 3rds below F3, no m9 between voices), `cleanVoicing(notes)`.
+
 ## Generators (`src/gen/*.js`) — pure, take `rng` (from `createRng(seed)`) for reproducibility
 
 * `genres.js`: `GENRES {id: GenreDef}`, ≥40 genres. GenreDef includes name, family, bpm range, default
@@ -177,9 +184,14 @@ analyzeProgression(romans) -> notes for assistant (cadences, borrowed chords)`.
 * `drums.js`: `generateDrumPattern({genre|style, bars, density, variation, fill, rng}) -> Note[]` (GM pitches).
 * `harmony.js`: `generateProgression({key, scale, genre, bars, chordsPerBar, rng}) -> [{roman, chord, startBeat, durBeats, notes(midi voicing)}]`,
   `progressionToNotes(...)`.
-* `bass.js`, `melody.js`, `arp.js`: produce `Note[]` from a progression with styles.
-* `song.js`: `generateSong({genre, key?, scale?, bpm?, seed}) -> partial project
-  {bpm, swing, key, genre, tracks, patterns, clips, scenes, markers}` using model factories.
+* `bass.js`, `melody.js`, `arp.js`: produce `Note[]` from a progression with styles. Upper parts are judged against the
+  chord-scale of the chord sounding under each note (`fit.js` `fitNotesToHarmony`), not just the project scale;
+  basses keep strong beats / chord starts on chord tones and approach notes never grind against the current chord.
+  `colorChord(chord, flavor, rng, {key})` takes extensions from the key (no maj7 on a dorian IV, no m9 on iii).
+  Quality is enforced by `tests/harmony-quality.test.js` (all genres × seeds; rules in `tests/lib/harmony-check.js`).
+* `song.js`: `generateSong({genre, key?, scale?, bpm?, seed, withHarmony?}) -> partial project
+  {bpm, swing, key, genre, tracks, patterns, clips, scenes, markers}` using model factories (`withHarmony` adds
+  `harmony` [{startBeat, durBeats, roman, root, type, bass, name}] + `harmonyLength` for analysis/tests).
 * `assistant.js`: `getRecommendations(project, context) -> [{id, level:'tip'|'warn'|'idea', title, text, action?: {label, kind, payload}}]`
   (context = { selectedTrackId, selectedPatternId, view }). Actions are applied by the UI via `applyAssistantAction`.
 

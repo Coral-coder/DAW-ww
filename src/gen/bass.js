@@ -1,7 +1,7 @@
 // Bassline generator: idiomatic styles following a progression (from harmony.generateProgression).
 import { createRng, clamp } from '../core/util.js';
 import { DRUM_PITCH } from '../core/model.js';
-import { mod12, scalePitchClasses, getChordType, chordPitchClasses, chordScale, keyPitchClasses } from '../theory/index.js';
+import { mod12, getChordType, chordPitchClasses, chordScale, keyPitchClasses } from '../theory/index.js';
 import { getGenre } from './genres.js';
 import { resolveKey } from './harmony.js';
 import { makeNote } from './note-util.js';
