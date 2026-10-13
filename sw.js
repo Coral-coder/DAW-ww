@@ -4,7 +4,11 @@
 const params = new URL(self.location).searchParams;
 const VERSION = params.get('v') || 'dev';
 const BASE = params.get('base') || './';
-const APP_CACHE = `daw3-app-${VERSION}`;
+// Cache names carry the scope: several builds (e.g. main at /daw3/ and a branch at /daw3/mobile/) can live on one
+// origin, and each worker only cleans up its own old versions.
+const SCOPE = new URL('./', self.location).pathname;
+const APP_PREFIX = `daw3-app-${SCOPE}-`;
+const APP_CACHE = APP_PREFIX + VERSION;
 const SOUND_CACHE = 'daw3-sounds';
 const SOUND_HOSTS = /(^|\.)(githubusercontent\.com|jsdelivr\.net|unpkg\.com|github\.io|strudel\.cc|cdnjs\.cloudflare\.com)$/;
 
@@ -26,7 +30,7 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
-    for (const key of await caches.keys()) if (key.startsWith('daw3-app-') && key !== APP_CACHE) await caches.delete(key);
+    for (const key of await caches.keys()) if (key.startsWith(APP_PREFIX) && key !== APP_CACHE) await caches.delete(key); // only this scope's old versions
     await self.clients.claim();
   })());
 });

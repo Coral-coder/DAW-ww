@@ -127,3 +127,23 @@ test('pitch: scale snap uses the fractional pitch; octave shift; pattern notes',
   assert.equal(octaveShiftFor([48, 50], 64), 12);
   assert.deepEqual(toPatternNotes([{ pitch: 90, start: 3.5, dur: 1, vel: 0.9 }], { shift: -24, length: 4 }), [{ pitch: 66, start: 3.5, dur: 0.5, vel: 0.9 }]);
 });
+
+import { humToPattern } from '../src/mobile/pitch.js';
+
+test('pitch: hum take -> pattern notes (whistle moved to the lead octave, key snap, bars)', () => {
+  // a whistled C6 D6 E6 G6 (84 86 88 91), slightly sharp, at 120 BPM from 0.5 s
+  const raw = [84.3, 86.2, 87.8, 91.1].map((m, i) => ({ start: 0.5 + i * 0.5, dur: 0.45, midi: m, pitch: Math.round(m), vel: 0.8 }));
+  const cMaj = scalePitchClasses(0, 'major');
+  const { notes, length } = humToPattern(raw, { bpm: 120, bpb: 4, grid: 0.25, startSec: 0.5, pcs: cMaj, role: 'lead' });
+  assert.deepEqual(notes.map((n) => n.pitch), [72, 74, 76, 79]);
+  assert.deepEqual(notes.map((n) => n.start), [0, 1, 2, 3]);
+  assert.equal(length, 4);
+  const bass = humToPattern(raw, { bpm: 120, bpb: 4, grid: 0.5, startSec: 0.5, pcs: cMaj, role: 'bass' });
+  assert.deepEqual(bass.notes.map((n) => n.pitch), [36, 38, 40, 43]);
+  const manual = humToPattern(raw, { bpm: 120, bpb: 4, grid: 0.25, startSec: 0.5, pcs: null, role: 'lead', octave: 1 });
+  assert.deepEqual(manual.notes.map((n) => n.pitch), [84, 86, 88, 91]);
+  // a hummed take already near the lead octave is left where it was sung
+  const hum = [{ start: 0, dur: 0.4, midi: 64.1, pitch: 64 }, { start: 0.5, dur: 0.4, midi: 67, pitch: 67 }];
+  assert.deepEqual(humToPattern(hum, { bpm: 120, pcs: cMaj, role: 'lead' }).notes.map((n) => n.pitch), [64, 67]);
+  assert.equal(humToPattern([], {}).notes.length, 0);
+});

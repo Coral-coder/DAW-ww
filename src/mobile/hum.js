@@ -9,7 +9,7 @@ import { fitNotesToHarmony } from '../gen/fit.js';
 import { PRESETS } from '../audio/index.js';
 import { scheduleClick } from '../audio/metronome.js';
 import { estimateLatency } from '../audio/recorder.js';
-import { yin, yinGeometry, trackPitch, segmentNotes, quantizeNotes, snapNotesToScale, octaveShiftFor, toPatternNotes, freqToMidi, GRIDS } from './pitch.js';
+import { yin, yinGeometry, trackPitch, segmentNotes, humToPattern, freqToMidi, GRIDS } from './pitch.js';
 import { openSheet, bigButton, chips, haptic } from './touch.js';
 import { isMelodic, soundName, pickTrack } from './pages/common.js';
 
@@ -254,20 +254,10 @@ export function openHumSheet(app, { trackId = null } = {}) {
   /** Notes in beats, ready for the pattern, with the current options. */
   function build() {
     const p = get();
-    const pcs = scalePitchClasses(p.key.root, p.key.scale);
-    let q = quantizeNotes(raw, { bpm: p.bpm, grid, startSec });
-    q = snapKey ? snapNotesToScale(q, pcs) : q.map((n) => ({ ...n, pitch: Math.round(n.midi ?? n.pitch) }));
-    const role = track()?.role;
-    const target = role === 'bass' ? 40 : role === 'pad' || role === 'chords' ? 60 : 67;
-    const ps = q.map((n) => n.pitch);
-    const med = ps.length ? ps.slice().sort((a, b) => a - b)[ps.length >> 1] : target;
-    const auto = Math.abs(med - target) > 10 ? octaveShiftFor(ps, target) : 0;
     const bpb = beatsPerBar(p);
-    const end = q.reduce((m, n) => Math.max(m, n.start + n.dur), 0);
-    const length = Math.min(32, Math.max(1, Math.ceil(end / bpb - 1e-6))) * bpb;
-    let notes = toPatternNotes(q, { shift: auto + octave * 12, length });
+    let { notes, length } = humToPattern(raw, { bpm: p.bpm, bpb, grid, startSec, pcs: snapKey ? scalePitchClasses(p.key.root, p.key.scale) : null, role: track()?.role, octave });
     if (fit && notes.length) {
-      try { fitNotesToHarmony(notes, actions.currentProgression(Math.max(1, Math.round(length / bpb)), createRng(7)), { key: p.key }); } catch (e) { console.warn('[hum] fit', e); }
+      try { notes = fitNotesToHarmony(notes, actions.currentProgression(Math.max(1, Math.round(length / bpb)), createRng(7)), { key: p.key }); } catch (e) { console.warn('[hum] fit', e); }
     }
     return { notes, length };
   }

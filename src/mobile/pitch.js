@@ -320,3 +320,24 @@ export function toPatternNotes(notes, { shift = 0, length = Infinity } = {}) {
     pitch: Math.max(0, Math.min(127, nt.pitch + shift)), start: nt.start, dur: Math.min(nt.dur, length - nt.start), vel: nt.vel ?? 0.8,
   }));
 }
+
+/** Octave a role's melodies sit around (MIDI): bass low, pads / chords mid, leads up. */
+export const roleTarget = (role) => (role === 'bass' ? 40 : role === 'pad' || role === 'chords' ? 60 : 72);
+
+/**
+ * Segmented notes (seconds) -> pattern notes (beats) with the Hum sheet's options:
+ * {bpm, bpb, grid, startSec, pcs (key pitch classes, null = no snap), role, octave (manual ±octaves)}.
+ * Whistles / far-off takes move to the role's octave automatically (only when > 10 semitones away).
+ * Returns {notes, length (whole bars, ≤ 32)}.
+ */
+export function humToPattern(raw, { bpm = 120, bpb = 4, grid = 0.25, startSec = 0, pcs = null, role = null, octave = 0 } = {}) {
+  let q = quantizeNotes(raw, { bpm, grid, startSec });
+  q = pcs ? snapNotesToScale(q, pcs) : q.map((n) => ({ ...n, pitch: Math.round(n.midi ?? n.pitch) }));
+  const target = roleTarget(role);
+  const ps = q.map((n) => n.pitch);
+  const med = ps.length ? ps.slice().sort((a, b) => a - b)[ps.length >> 1] : target;
+  const auto = Math.abs(med - target) > 10 ? octaveShiftFor(ps, target) : 0;
+  const end = q.reduce((m, n) => Math.max(m, n.start + n.dur), 0);
+  const length = Math.min(32, Math.max(1, Math.ceil(end / bpb - 1e-6))) * bpb;
+  return { notes: toPatternNotes(q, { shift: auto + octave * 12, length }), length };
+}
