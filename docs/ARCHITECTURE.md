@@ -36,11 +36,12 @@ Project {
   mode: 'pattern' | 'song',
   loop:{enabled,start,end}, metronome,
   tracks: Track[], patterns: {id: Pattern}, clips: Clip[], scenes: Scene[],
-  buses: Bus[], master:{volume, fx: Effect[]}, samples:{id: Sample}, markers:[{id,beat,name}]
+  buses: Bus[], master:{volume, fx: Effect[], automation: AutomationLane[]}, samples:{id: Sample}, markers:[{id,beat,name}]
 }
 Track { id, name, type:'instrument'|'audio'|'code', color, volume, pan, mute, solo, arm,
         fx: Effect[], sends:{busId: 0..1}, instrument: Instrument|null, code?: string,
-        activePatternId, role? }
+        activePatternId, role?, automation: AutomationLane[] }
+AutomationLane { id, target, points:[{beat, value}] (sorted by beat), enabled }
 Instrument { type: 'synth'|'fm'|'organ'|'drums'|'sampler', preset: string|null, params:{} }
 Pattern { id, trackId, name, length(beats), notes: Note[], color }
 Note    { id, pitch, start(beats, relative to pattern), dur(beats), vel }
@@ -59,6 +60,36 @@ Sample  { id, name, mime, data: base64 (original file bytes), duration }
   `clip.length`, starting `clip.offset` beats into it. Audio clips play `sampleId` from `offset`.
 * **Code tracks** play whenever not muted, in both modes; their code is evaluated by `src/code`.
 * Missing instrument/effect params always fall back to the defs' defaults.
+
+## Automation (`src/core/automation.js` — pure helpers)
+
+* Lane `target`: `'volume'` (0..1.5), `'pan'` (-1..1), `'send:<busId>'` (0..1), `'inst:<paramKey>'`
+  (numeric instrument param of the track's *resolved* instrument type), `'fx:<fxId>:<paramKey>'`
+  (numeric param of an insert effect). `project.master.automation` accepts `volume` / `pan`.
+* Points are sorted by beat; values interpolate linearly between points and are held before the
+  first / after the last point. Two points on the same beat make a vertical jump. Lanes without
+  points, disabled lanes and lanes whose target no longer exists are ignored.
+* Automation plays in **song mode only** (timeline positions); pattern mode ignores lanes.
+  While it plays the automated value overrides the static one; the static value is restored on
+  stop / pause / switching to pattern mode / removing the lane.
+* Helpers: `parseTarget`, `valueAt(points, beat)`, `segmentsInWindow(points, b0, b1)`,
+  `controlOverrides(track, beat)`, `toNorm/fromNorm(paramDef, v)` (log/exp curves), `rampPoints`,
+  `lfoPoints`, `replaceRange`.
+* Engine: mixer targets are AudioParam ramps (`ChannelStrip.automate`) scheduled per scheduler
+  window (`Scheduler` `onWindow` hook; `jump:'seek'` cancels what was scheduled ahead, `'wrap'`
+  continues across loop wraps). Instrument params are applied at each window start and effect
+  params at the audible position on every tick (`MixGraph.applyControl`, cheap: only on change).
+  Offline render schedules all mixer ramps up front and, when inst/fx lanes exist, renders in
+  1/16-note steps (suspend → apply params → schedule that step's events).
+
+## Audio recording (`src/audio/recorder.js`, browser-only)
+
+`AudioRecorder(engine)`: `openInput()` (getUserMedia without echo-cancel/NS/AGC), `getLevel()`,
+`start()` → latency-compensated ctx time of the first sample, `stop()` → `{blob, mime, ctxStart}`.
+`actions.toggleRecord()` records audio when audio tracks are armed (switches to song mode, turns the
+loop off for the take, optional 1-bar count-in via `actions.setCountIn`); when the transport stops the
+take is decoded, encoded to WAV (`encodeWav`) and stored as a project sample + an audio clip on every
+armed audio track. Without armed audio tracks Record keeps recording keyboard/MIDI notes into patterns.
 
 ## Store (`src/core/store.js`)
 
