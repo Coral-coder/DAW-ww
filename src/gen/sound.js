@@ -4,6 +4,7 @@
 import { PRESETS } from '../audio/presets.js';
 import { drumInstrumentForGenre } from '../audio/library/drum-machines.js';
 import { getGenre } from './genres.js';
+import { realInstrument } from './production.js';
 
 export const SOUNDFONT_LIBRARY = 'FluidR3_GM';
 
@@ -63,7 +64,8 @@ export function strumFor(inst) {
 /**
  * Instrument def for a role in a genre. Drums: sampled machine + synth kit fallback. Melodic roles: a SoundFont
  * GM instrument where the genre is acoustic (def.fallbackPreset = the genre's synth preset), else the preset.
- * opts.soundfonts === false keeps every role on synth presets.
+ * opts.soundfonts === false keeps every role on synth presets. Acoustic defs are upgraded with production.js
+ * realInstrument (multisample -> MusyngKite -> FluidR3 -> fallbackPreset).
  */
 export function instrumentForRole(role, genreId, opts = {}) {
   const g = getGenre(genreId);
@@ -74,14 +76,12 @@ export function instrumentForRole(role, genreId, opts = {}) {
   }
   const preset = g.presets?.[role] || null;
   const sf = opts.soundfonts === false ? null : GENRE_SOUNDFONTS[g.id]?.[role];
-  if (sf) {
-    return {
-      type: 'soundfont', preset: null,
-      params: { library: SOUNDFONT_LIBRARY, instrument: sf, ...(SF_PARAMS[sf] || {}) },
-      fallbackPreset: preset,
-    };
-  }
-  return { type: PRESETS[preset]?.instrument.type || 'synth', preset, params: {} };
+  const def = sf
+    ? { type: 'soundfont', preset: null, params: { library: SOUNDFONT_LIBRARY, instrument: sf, ...(SF_PARAMS[sf] || {}) }, fallbackPreset: preset }
+    : { type: PRESETS[preset]?.instrument.type || 'synth', preset, params: {} };
+  // best real source: multisampled library (Salamander / VSCO-2 / VCSL / tonejs) -> MusyngKite -> FluidR3 ->
+  // fallbackPreset (src/audio/library/instrument-map.js); opts.realInstruments === false keeps plain FluidR3 GM
+  return opts.realInstruments === false ? def : realInstrument(def, role, g.id, opts);
 }
 
 /** True when an instrument is a sampled / acoustic sound (used by the mixer for EQ / level choices). */

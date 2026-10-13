@@ -58,13 +58,13 @@ test('motif + transposition: a cell moved per bar becomes n("cell".add("<offsets
 });
 
 test('rhythm × harmony: comped chords become n("<chords>").struct("<rhythm>")', () => {
-  const voicings = [[0, 2, 4], [-1, 1, 3], [-2, 0, 2], [-3, -1, 1]]; // voice-led inversions: no common shape
+  const voicings = [[0, 2, 4], [0, 3, 5], [-1, 1, 4], [-1, 2, 4]]; // voice-led inversions: no common shape
   const notes = [];
   voicings.forEach((v, bar) => [0, 0.75, 1.5, 2.5, 3].forEach((t) => v.forEach((d) => notes.push(N(deg(d), bar * 4 + t, 0.5, 0.7)))));
   const r = renderPart(notes, 16, { kind: 'melodic', bpb: 4, key: KEY, spell });
   assert.ok(r.verified);
   assert.match(r.expr, /\.struct\("/);
-  assert.match(r.expr, /^n\("<\[0,2,4\] \[-1,1,3\] \[-2,0,2\] \[-3,-1,1\]>"\)/);
+  assert.match(r.expr, /^n\("<\[0,2,4\] \[0,3,5\] \[-1,1,4\] \[-1,2,4\]>"\)/);
 });
 
 test('chord symbols: parts voiced exactly like the engine voices them become chord().voicing()', () => {
@@ -107,7 +107,8 @@ test('euclid, repetition and <> collapsing in the mini-notation writer', () => {
   }
   const d = renderPart(dr, 32, { kind: 'drums', bpb: 4 });
   assert.ok(d.verified);
-  assert.equal(d.expr, 's("bd*4, [~ cp]*2, <~!7 [~ ~ ~ sd*4]>")');
+  // (voices in kit order: kick, snare, clap, hats…)
+  assert.equal(d.expr, 's("bd*4, <~!7 [~ ~ ~ sd*4]>, [~ cp]*2")');
 });
 
 test('velocities: coarsest faithful pattern (constant, accents, per-bar), within ±0.1 of every note', () => {
@@ -147,7 +148,9 @@ test('the whole arrangement is written (song AND pattern mode), sections as cons
     assert.equal(m, 'song');
     assert.ok(sections.length >= 8);
     for (const s of p.markers) assert.ok(code.includes(`// —— ${s.name} ·`), `marker ${s.name}`);
-    for (const t of p.tracks) assert.match(code, new RegExp(`^_?${t.name.toLowerCase()}: arrange\\(`, 'm'));
+    const { blocks } = songToCode({ ...p, mode });
+    assert.equal(blocks.filter((b) => b.kind === 'instrument').length, p.tracks.filter((t) => t.type === 'instrument').length);
+    for (const b of blocks.filter((x) => x.kind === 'instrument')) assert.match(code, new RegExp(`^_?${b.label}: arrange\\(`, 'm'));
     assert.match(code, /^const \w+_drums\s+= /m);
     assert.match(code, /\.scale\("[A-G]b?\d:/);
     assert.equal(evaluate(code).error, null);
@@ -240,7 +243,7 @@ test('apply-back: unchanged code keeps every humanized note; a section edit rewr
   assert.equal(r2.error, null);
   for (const { id, transpose } of meta.patterns) {
     const pat = q2.patterns[id];
-    assert.ok(pat.notes.length > 0 && pat.notes.every((n) => [43 + transpose, 50 + transpose].includes(n.pitch)), 'edited pattern');
+    assert.ok(pat.notes.length > 0 && pat.notes.every((n) => [31 + transpose, 38 + transpose].includes(n.pitch)), 'edited pattern'); // G1, D2
   }
   const untouched = Object.keys(p.patterns).filter((id) => !meta.patterns.some((x) => x.id === id));
   for (const id of untouched) assert.deepEqual(q2.patterns[id], p.patterns[id], 'other patterns keep their humanized notes');
@@ -270,11 +273,12 @@ test('apply-back: arrangement edits (order, lengths, transposition, new patterns
   const src = q.patterns[lead.consts[a].patterns[0].id];
   const tr = q.patterns[clips[1].patternId];
   assert.deepEqual(tr.notes.map((n) => n.pitch), src.notes.map((n) => n.pitch + 2));
-  assert.deepEqual(q.patterns[clips[2].patternId].notes.map((n) => n.pitch), [72, 74, 76, 79]);
+  // degrees 0 2 4 7 of C5 major: C5 E5 G5 C6 (the new pattern loops over its clip)
+  assert.deepEqual(q.patterns[clips[2].patternId].notes.map((n) => n.pitch).slice(0, 4), [72, 76, 79, 84]);
   // other tracks' clips are untouched; regenerated code reflects the new arrangement and re-applies as a no-op
   assert.deepEqual(q.clips.filter((c) => c.trackId !== t.id), p.clips.filter((c) => c.trackId !== t.id));
   const again = songToCode(q).code;
-  assert.match(again, new RegExp(`^${lead.label}: arrange\\(\\[8, \\w+\\], \\[4, silence\\], \\[8, \\w+\\], \\[4, \\w+\\]`, 'm'));
+  assert.match(again, new RegExp(`^${lead.label}: arrange\\(\\[8, \\w+\\], \\[4, silence\\], \\[8, \\w+(\\.transpose\\(2\\))?\\], \\[4, \\w+\\]`, 'm'));
   const q3 = clone(q);
   assert.equal(applySongCode(q3, again).changed, false);
 });

@@ -20,31 +20,31 @@ import { PRESETS } from '../src/audio/presets.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const expressed = (genre, seed) => {
-  const s = generateSong({ genre, seed, withHarmony: true });
+  const s = generateSong({ genre, seed, withHarmony: true, production: false });
   const report = applyExpression(s, { genre, seed });
   return { s, report };
 };
 
 test('expression: deterministic for a seed, and the input song is otherwise untouched', () => {
-  const a = generateSong({ genre: 'pop', seed: 5 });
+  const a = generateSong({ genre: 'pop', seed: 5, production: false });
   const b = clone(a);
   applyExpression(a, { genre: 'pop', seed: 9 });
   applyExpression(b, { genre: 'pop', seed: 9 });
   assert.deepEqual(clone(a), clone(b));
   // regenerating the same song gives the same expression (pattern ids are random, the result is not)
-  const c = generateSong({ genre: 'pop', seed: 5 });
+  const c = generateSong({ genre: 'pop', seed: 5, production: false });
   applyExpression(c, { genre: 'pop', seed: 9 });
   const strip = (s) => Object.values(s.patterns).map((p) => p.notes.map(({ id, ...n }) => n));
   assert.deepEqual(strip(clone(c)), strip(clone(a)));
   // only notes change: clips, instruments and mix stay as generated
-  const d = generateSong({ genre: 'pop', seed: 5 });
+  const d = generateSong({ genre: 'pop', seed: 5, production: false });
   assert.deepEqual(a.clips.map((x) => [x.start, x.length, x.name]), d.clips.map((x) => [x.start, x.length, x.name]));
   assert.deepEqual(a.tracks.map((t) => t.instrument), d.tracks.map((t) => t.instrument));
 });
 
 test('expression: no notes added or removed, pitches never change, notes stay inside their pattern', () => {
   for (const genre of ['pop', 'jazz', 'rock', 'trap', 'trance', 'funk', 'cinematic', 'blues', 'lofi-hip-hop', 'house']) {
-    const s = generateSong({ genre, seed: 3 });
+    const s = generateSong({ genre, seed: 3, production: false });
     const before = clone(s.patterns);
     applyExpression(s, { genre, seed: 3 });
     for (const [id, p] of Object.entries(s.patterns)) {
@@ -120,7 +120,7 @@ test('expression: legato / bends / vibrato on a lead; phrases; flams on drum fil
 
 test('expression notes -> scheduler events -> trigger extras', () => {
   const p = createProject({ bpm: 120 });
-  const s = generateSong({ genre: 'blues', seed: 4 });
+  const s = generateSong({ genre: 'blues', seed: 4, production: false });
   applyExpression(s, { genre: 'blues', seed: 4 });
   const proj = { ...p, ...s, mode: 'song' };
   const evs = collectEvents(proj, 0, 400, { mode: 'song' }).filter((e) => e.type === 'note');
@@ -169,7 +169,7 @@ function roundTrip(p) {
 test('expression: songs still round-trip through song code (>= 95%)', () => {
   let all = 0, good = 0;
   for (const genre of ['pop', 'jazz', 'blues', 'trap', 'cinematic', 'funk']) {
-    const s = generateSong({ genre, seed: 11 });
+    const s = generateSong({ genre, seed: 11, production: false });
     applyExpression(s, { genre, seed: 11 });
     const p = { ...createProject(), ...s, mode: 'song', swing: 0 };
     const { ok, total } = roundTrip(p);
@@ -267,7 +267,7 @@ import { EFFECT_DEFS } from '../src/audio/effect-defs.js';
 
 test('production: real instruments + finishSong keep every genre harmonically clean, ranges / fx / master valid', () => {
   for (const genre of Object.keys(GENRES)) {
-    const s = generateSong({ genre, seed: 3, withHarmony: true });
+    const s = generateSong({ genre, seed: 3, withHarmony: true, production: false });
     for (const t of s.tracks) t.instrument = realInstrument(t.instrument, t.role, genre);
     const rep = finishSong(s, { genre, seed: 3 });
     const r = analyzeSong(s);
@@ -306,9 +306,19 @@ test('production: realInstrument keeps synths where they belong, upgrades acoust
   assert.equal(masterChainFor('jazz').lufs, -14);
   assert.equal(masterChainFor('cinematic').lufs, -16);
   assert.equal(spaceFor('jazz').character, 'chamber');
-  const s = generateSong({ genre: 'trance', seed: 2 });
+  const s = generateSong({ genre: 'trance', seed: 2, production: false });
   const n = s.tracks.length;
   const added = addLayers(s, { genre: 'trance' });
   assert.equal(s.tracks.length, n + added.length);
   assert.ok(added.some((t) => t.name === 'Lead Octave'));
+});
+
+test('production: generateSong applies finishSong by default (real instruments, expression, master)', () => {
+  const s = generateSong({ genre: 'jazz', seed: 7 });
+  const keys = s.tracks.find((t) => t.role === 'chords');
+  assert.equal(keys.instrument.params.multisample, 'salamander');
+  assert.ok(keys.instrument.params.range && keys.instrument.fallbackPreset);
+  assert.equal(s.master.fx[0].type, 'mastering');
+  const synth = generateSong({ genre: 'jazz', seed: 7, soundfonts: false, production: false });
+  assert.ok(synth.tracks.every((t) => t.instrument.type !== 'soundfont'), 'soundfonts: false keeps synths');
 });

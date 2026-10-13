@@ -506,7 +506,7 @@ test('arrangement: section progressions, orchestration, variation, automation, m
   const bass = h.tracks.find((t) => t.role === 'bass');
   assert.ok(bass.fx.some((f) => f.type === 'ducker' && f.params.sourceTrackId === drums.id), 'bass ducks under the drums');
   assert.ok(h.tracks.filter((t) => !['drums', 'bass'].includes(t.role)).every((t) => t.fx.some((f) => f.type === 'eq8' && f.params.b1On)), 'high-pass on everything but kick & bass');
-  assert.equal(h.master.fx.at(-1).type, 'limiter');
+  assert.ok(['limiter', 'mastering'].includes(h.master.fx.at(-1).type), 'master limiter (or the mastering chain with its limiter) last');
   assert.ok(h.tracks.every((t) => t.volume > 0 && t.volume <= 1.5));
   // automation: filtered intro / build sweeps and rides
   const lanes = h.tracks.flatMap((t) => t.automation);

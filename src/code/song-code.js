@@ -223,7 +223,7 @@ export function formatExpr(expr, indent = '', width = 100) {
       }
     }
   }
-  return expr.replace(/"(<[^"]*>)"/g, (m, mini) => (mini.length > 60 ? strLit(mini, indent) : m));
+  return expr.replace(/"([^"`]*)"/g, (m, mini) => (mini.length > 90 && /[<\[,]/.test(mini) ? strLit(mini, indent) : m));
 }
 
 /** Top-level method-call pieces of an expression: 'n("…").scale("…").lpf(…)' -> ['n("…")', '.scale("…")', '.lpf(…)'] */
@@ -283,25 +283,76 @@ function splitArgs(s) {
   return out;
 }
 
-/** Mini-notation string literal; long alternations become multi-line template strings. */
-function strLit(mini, indent = '') {
-  if (mini.length <= 90 || !mini.startsWith('<') || !mini.endsWith('>')) return `"${mini}"`;
-  const inner = mini.slice(1, -1);
-  const parts = [];
+/** Splits a mini-notation string at top-level occurrences of `sep` (' ' or ','). */
+function splitMini(s, sep) {
+  const out = [];
   let depth = 0, cur = '';
-  for (const c of inner) {
+  for (const c of s) {
     if ('[<{('.includes(c)) depth++;
     else if (']>})'.includes(c)) depth--;
-    if (c === ' ' && depth === 0) { if (cur) parts.push(cur); cur = ''; } else cur += c;
+    if (c === sep && depth === 0) { if (cur.trim()) out.push(cur.trim()); cur = ''; } else cur += c;
   }
-  if (cur) parts.push(cur);
-  const lines = [];
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
+/** Index of the bracket closing the one at 0, or -1. */
+function closeOf(s) {
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    if ('[<{('.includes(s[i])) depth++;
+    else if (']>})'.includes(s[i])) { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
+/**
+ * Lines of a long mini-notation term (indented by `ind`): stacked layers one per line, an alternation / sequence
+ * broken into lines of whole steps, nested ones opened on their own lines when a step alone is too long.
+ */
+function miniLines(mini, ind, width) {
+  if (ind.length + mini.length <= width) return [ind + mini];
+  const layers = splitMini(mini, ',');
+  if (layers.length > 1) {
+    const out = [];
+    layers.forEach((l, i) => {
+      const ls = miniLines(l, ind, width);
+      if (i < layers.length - 1) ls[ls.length - 1] += ',';
+      out.push(...ls);
+    });
+    return out;
+  }
+  const c = closeOf(mini);
+  const suffix = c > 0 ? mini.slice(c + 1) : null;
+  if (c <= 0 || !'<['.includes(mini[0]) || !/^[!*@\d./]*$/.test(suffix)) return [ind + mini];
+  const parts = splitMini(mini.slice(1, c), ' ');
+  const inner = ind + '  ';
+  const out = [ind + mini[0]];
   let line = '';
   for (const p of parts) {
-    if (line && (line + ' ' + p).length > 84 - indent.length) { lines.push(line); line = p; } else line = line ? `${line} ${p}` : p;
+    if (inner.length + p.length > width) {
+      if (line) { out.push(inner + line); line = ''; }
+      out.push(...miniLines(p, inner, width));
+      continue;
+    }
+    if (line && inner.length + line.length + 1 + p.length > width) { out.push(inner + line); line = p; } else line = line ? `${line} ${p}` : p;
   }
-  if (line) lines.push(line);
-  return '`<\n' + lines.map((l) => `${indent}  ${l}`).join('\n') + `\n${indent}>\``;
+  if (line) out.push(inner + line);
+  out.push(ind + mini[c] + suffix);
+  return out;
+}
+
+/** Mini-notation string literal; long ones become multi-line template strings. */
+function strLit(mini, indent = '') {
+  if (mini.length <= 90) return `"${mini}"`;
+  if (splitMini(mini, ',').length > 1) {
+    // stacked layers: one per line (each broken further when long), inside an indented template string
+    const ls = miniLines(mini, '  ', Math.max(40, 88 - indent.length));
+    return '`\n' + ls.map((l) => indent + l).join('\n') + `\n${indent}\``;
+  }
+  const lines = miniLines(mini, '', Math.max(40, 86 - indent.length));
+  if (lines.length < 2) return `"${mini}"`;
+  return '`' + lines.map((l, i) => (i ? indent + l : l)).join('\n') + '`';
 }
 
 /** The note-producing expression for a pattern (no track-level controls), written by the idiom engine. */
@@ -768,6 +819,7 @@ export function songToCode(project, opts = {}) {
 
   const trackInfo = new Map(); // trackId -> { label, kind, consts, entries, body }
   const sectionConsts = new Map(sections.map((s) => [s, []])); // section -> [{name, text}]
+  const globalKnown = []; // every track's section patterns (for layers that double another track)
   for (const track of instTracks) {
     const isDrums = track.instrument?.type === 'drums';
     const kind = isDrums ? 'drums' : 'melodic';
@@ -805,6 +857,19 @@ export function songToCode(project, opts = {}) {
             if (d && Math.abs(d) <= 12 && partSig(r.target, d) === k.sig) { found = k; transpose = d; break; }
           }
         }
+        // a layer of another track (doubled strings, an octave lead): reference that track's section pattern
+        if (!found && r.target.length) {
+          for (const k of globalKnown) {
+            if (k.trackId === track.id || k.kind !== kind || Math.abs(k.len - L) > EPS || k.suffix !== suffix || k.target.length !== r.target.length) continue;
+            const d = kind === 'drums' ? 0 : r.target[0].pitch - k.target[0].pitch;
+            if (Math.abs(d) > 24) continue;
+            if (partSig(r.target, d) !== k.sig && !(partShape(r.target) === partShape(k.target.map((n) => ({ ...n, pitch: n.pitch + d })))
+              && reuseOk(d ? `${k.core}.transpose(${d})` : k.core, r.target, L, bpb, kind))) continue;
+            found = k; transpose = d;
+            info.consts[k.name] = k.meta; // shared: an edit of the const rewrites every track's pattern
+            break;
+          }
+        }
         if (found) {
           ref = { name: found.name, transpose };
           info.consts[found.name].patterns.push({ id: s.patternId, transpose });
@@ -814,8 +879,10 @@ export function songToCode(project, opts = {}) {
           const name = labelFor(`${sec.label}_${label}${startsSection ? '' : '_in'}`, constNames);
           used.add(name);
           const core = r.expr;
-          known.push({ name, sig, shape: partShape(r.target), core, len: L, suffix, target: r.target });
           info.consts[name] = { patterns: [{ id: s.patternId, transpose: 0 }], suffix, core, form: r.form };
+          const k = { name, sig, shape: partShape(r.target), core, len: L, suffix, target: r.target, trackId: track.id, kind, meta: info.consts[name] };
+          known.push(k);
+          globalKnown.push(k);
           sectionConsts.get(sec).push({ name, core, suffix, trackId: track.id });
           ref = { name, transpose: 0 };
         }
@@ -1218,9 +1285,11 @@ function applyArrangement(project, track, entries, ctx) {
   const resolve = (e) => {
     const meta = b.consts?.[e.ref];
     if (meta) {
-      const hit = meta.patterns.find((x) => x.transpose === e.transpose && project.patterns[x.id]);
+      // (a const shared with a layered track lists that track's patterns too: clips only use this track's own)
+      const own = (x) => project.patterns[x.id]?.trackId === track.id;
+      const hit = meta.patterns.find((x) => x.transpose === e.transpose && own(x));
       if (hit) return hit.id;
-      const base = meta.patterns.find((x) => project.patterns[x.id]);
+      const base = meta.patterns.find(own) || meta.patterns.find((x) => project.patterns[x.id]);
       if (!base) return null;
       const bp = project.patterns[base.id];
       const d = kind === 'drums' ? 0 : e.transpose - base.transpose;

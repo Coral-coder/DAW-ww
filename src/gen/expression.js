@@ -29,6 +29,7 @@ const r4 = (x) => Math.round(x * 10000) / 10000;
 const r2 = (x) => Math.round(x * 100) / 100;
 
 const PEDAL_GENRES = new Set(['pop', 'gospel', 'rnb', 'neo-soul', 'lofi-hip-hop', 'cinematic', 'ambient', 'downtempo', 'folk', 'country', 'indie', 'boom-bap', 'trip-hop', 'drill', 'liquid-dnb', 'chillwave', 'kpop', 'soul', 'blues']);
+const VOICING_GENRES = new Set([...PEDAL_GENRES, 'jazz', 'bossa-nova', 'salsa']);
 const LET_RING_GENRES = new Set(['folk', 'country', 'indie', 'pop', 'bossa-nova', 'rock', 'blues', 'afrobeat']);
 const STAB_GENRES = new Set(['funk', 'disco', 'reggae', 'dub', 'house', 'tech-house', 'nu-disco', 'salsa', 'dancehall', 'ska']);
 const BEND_GENRES = new Set(['blues', 'rock', 'metal', 'punk', 'country', 'indie', 'funk', 'soul', 'gospel']);
@@ -157,17 +158,18 @@ export function expressPattern(notes, ctx) {
       stat.pedal += pedalSustain(notes, { length, grid: bpb / 2 });
     } else if (STAB_GENRES.has(genre) && (cls === 'keys' || cls === 'guitar' || cls === 'pluck' || cls === 'organ')) {
       // rhythmic comping: short, slightly varied stabs (off-beat skanks shorter than downbeats)
-      for (const n of notes) {
-        if (n.dur > 0.2 && n.dur <= 1.01) {
-          const off = Math.abs(n.start - Math.round(n.start)) > 0.1;
-          const g = (off ? 0.5 : 0.65) + rng() * 0.12;
-          n.dur = r4(Math.max(0.14, n.dur * g));
-          stat.stacc++;
-        }
+      // (one length per chord hit, so every voice of the stab stops together and song code can still write it)
+      for (const g of chordGroups(notes)) {
+        const d = Math.max(...g.notes.map((n) => n.dur));
+        if (d <= 0.2 || d > 1.01) continue;
+        const off = Math.abs(g.start - Math.round(g.start)) > 0.1;
+        const len = r4(Math.max(0.14, d * ((off ? 0.5 : 0.65) + rng() * 0.12)));
+        for (const n of g.notes) { n.dur = Math.min(n.dur, len); stat.stacc++; }
       }
     }
     // voicing balance: the top voice sings, inner voices recede, the bass of the chord stays solid
-    for (const g of chordGroups(notes)) {
+    // (acoustic / ballad genres only: song code writes one velocity per chord hit, so dance-music stabs keep theirs)
+    for (const g of VOICING_GENRES.has(genre) ? chordGroups(notes) : []) {
       if (g.notes.length < 3) continue;
       const ps = g.notes.map((n) => n.pitch);
       const top = Math.max(...ps), bot = Math.min(...ps);
@@ -187,10 +189,6 @@ export function expressPattern(notes, ctx) {
         const lim = nextChangeAfter(changes, n.start);
         const target = holdLimit(n.start, end, Math.min(nx.start + Math.min(0.06, 0.02 / spb), length), bpb / 2);
         if (target <= lim + 0.05 && target > end + 0.005) { n.dur = r4(target - n.start); stat.legato++; }
-      } else if (!sustained && nx && nx.start - n.start <= 0.26 && n.dur > 0.12) {
-        // busy plucked / keyed passages: slightly detached
-        n.dur = r4(Math.max(0.08, n.dur * (0.78 + rng() * 0.12)));
-        stat.stacc++;
       }
       const durSec = n.dur * spb;
       const leap = pv ? n.pitch - pv.pitch : 0;

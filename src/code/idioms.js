@@ -122,12 +122,18 @@ export function detectSwing(notes, prior = null) {
   }
   for (let v = 0.04; v <= 0.205; v += 0.02) cands.push({ h: 1, d: round(v, 2) });
   for (let v = 0.02; v <= 0.105; v += 0.01) cands.push({ h: 0.5, d: round(v, 2) });
-  let best = none, bestN = onGridCount(none);
+  const base = onGridCount(none);
+  let best = none, bestN = base, bestR = Infinity;
   // notes the swing explains: off the straight grid, on it once un-swung
   const moved = (g) => starts.filter((t) => grooveSnap(t) === null && unswing(t, g) !== t && grooveSnap(unswing(t, g)) !== null).length;
+  // how far the un-swung onsets still sit from their steps (several amounts can put them all on the grid —
+  // the played one leaves the least residue)
+  const residue = (g) => starts.reduce((a, t) => { const u = unswing(t, g); const s = grooveSnap(u); return a + (s === null ? 0 : Math.abs(u - s)); }, 0);
   for (const c of cands) {
     const n = onGridCount(c);
-    if (n > bestN + Math.max(3, starts.length * 0.1) && moved(c) >= Math.max(4, starts.length * 0.15)) { best = c; bestN = n; }
+    if (n <= base + Math.max(3, starts.length * 0.1) || moved(c) < Math.max(4, starts.length * 0.15)) continue;
+    const r = residue(c);
+    if (n > bestN || (n === bestN && r < bestR - 1e-6)) { best = c; bestN = n; bestR = r; }
   }
   return best;
 }
@@ -744,9 +750,9 @@ function structCandidate(st, ctx, degCtxs) {
   }))).join(', ');
   const out = [];
   const harmText = (tok) => barsText(bars.map((runs) => ({ text: runs ? weightedSeq(runs.map((r) => ({ tok: tok(r.ps), w: r.w }))) : '~', w: 1 })));
-  for (const { sc, roots } of degCtxs) {
-    for (const root of roots) out.push({ expr: `n(${q(harmText(degTok(root, sc)))}).struct(${q(rhythm)}).scale(${q(scaleLabel(root, sc))})`, penalty: -3 });
-  }
+  degCtxs.forEach(({ sc, roots }, si) => {
+    for (const root of roots) out.push({ expr: `n(${q(harmText(degTok(root, sc)))}).struct(${q(rhythm)}).scale(${q(scaleLabel(root, sc))})`, penalty: si * 3 - 3 });
+  });
   const nm = `note(${q(harmText(nameTok(ctx.spell)))}).struct(${q(rhythm)})`;
   out.push({ expr: nm, penalty: out.length ? Math.round(nm.length * 0.3) + 6 : 0 });
   return out;
@@ -825,14 +831,16 @@ function melodicCandidates(clean, L, ctx) {
   const out = [];
   const add = (expr, form, penalty = 0) => { if (expr) out.push({ expr: expr + sl, form, score: expr.length + sl.length + penalty }); };
   const layersMini = (tok) => st.layers.map((l) => layerText(l, tok)).join(', ');
-  for (const { sc, roots } of degreeContexts(pitches, key)) {
+  // (the project's scale first: a related scale costs a little more than its name's length)
+  degreeContexts(pitches, key).forEach(({ sc, roots }, si) => {
+    const sp = si * 3;
     for (const root of roots) {
       const scaleCall = `.scale(${q(scaleLabel(root, sc))})`;
-      add(`n(${q(layersMini(degTok(root, sc)))})${scaleCall}`, 'degrees', -2);
-      for (const m of motifCandidate(st, root, sc) || []) add(m + scaleCall, 'motif', -4);
-      for (const a of arpCandidate(st, root, sc) || []) add(a + scaleCall, 'arp', -3);
+      add(`n(${q(layersMini(degTok(root, sc)))})${scaleCall}`, 'degrees', sp - 2);
+      for (const m of motifCandidate(st, root, sc) || []) add(m + scaleCall, 'motif', sp - 4);
+      for (const a of arpCandidate(st, root, sc) || []) add(a + scaleCall, 'arp', sp - 3);
     }
-  }
+  });
   const names = `note(${q(layersMini(nameTok(spell)))})`;
   // scale degrees are the idiom when the part fits a scale: note names only win when clearly shorter
   add(names, 'notes', out.length ? Math.round(names.length * 0.3) + 6 : 0);

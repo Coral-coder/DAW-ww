@@ -251,6 +251,18 @@ limits: no m2 below C4, no M2 below G3, no 3rds below F3, no m9 between voices),
   sections). `generateSong({length: 'short'|'standard'|'extended'|'club', targetMinutes})` → `resolveStructure` (short ≈ 60 %,
   extended ≈ 140 %, club = DJ edit with ≥ 32-bar intro / outro for dance genres); `planSongLength(genre, opts)` previews it.
   Long sections evolve: `planSections` marks a held-back layer that enters halfway (`section.enter`, pattern "(enters)").
+* Anti-monotony (no "3 notes, 231 231 231"): `planSectionHarmony` gives drone / vamp genres section-level movement
+  (`DRONE_PLANS`: psytrance i pedal → bII phrygian tension, bVI–bVII lifts in builds / peaks, bIII relative shift + IV
+  mixture in breaks; techno / minimal / tech-house i ↔ bVII / iv / bVI; ambient 2-bar drifts; any one-chord loop in a
+  non-song form gets the techno plan) and two-chord vamp songs a lifting chorus / contrasting bridge (`LIFTS`); every song
+  has ≥ 2 chord roots. `progressionToNotes(…, {motion})` re-voices returning chords along inversion paths (top-line
+  melody) with phrase-end rhythm answers / breaths; `padPart` voice-leads 4-voice pads, ties common tones and walks
+  held chords through `voicingStates`; `arpFigures` (arp.js) plays figures (1-5-8-10, 1-3-5-8-5-3, 2-octave up/down,
+  pedal, psy…) over a chord-tone ladder with gate patterns, changing figure / octave / density every 4–8 bars; basses
+  answer (psy KBBB riffs with octave / b7 / 5 / 6 cells and 8th-bar fills, `TAIL_STYLES` riff answers, root/drone
+  two-feel). `monotony.js`: `partStats` (distinct pitches per 16 / 8 bars, longest ≤ 3-token cell repetition in bars,
+  bigram entropy), `isMonotonous`, `varyPart` (the guard `generateSong` runs on every part) and `monotonyReport(project)`;
+  enforced by `tests/monotony.test.js`.
 * `extend.js`: grow an existing song (generated or hand-made). `planExtension(project, {bars|minutes|toMinutes, mode, …})`
   (preview: items + summary "Adds Breakdown 3 (16) → Build 3 (8) → Drop 3 (32) = +56 bars / +1:37"), `extendSong` (material:
   varied copies of the template section's patterns — drum variants with fills / build rolls / crashes, lead hook variations

@@ -18,6 +18,7 @@ import { sectionKind, planSections, planSectionHarmony, filterSweepPoints, Autom
 import { resolveStructure } from './form.js';
 import { applyGroove, shapeDynamics, grooveFor } from './groove.js';
 import { instrumentForRole, strumFor } from './sound.js';
+import { finishSong } from './production.js';
 import { mixTrack, createSongBuses, createSongMaster } from './mix.js';
 import { writeMelody, makeMotif, varyMotif } from './melody.js';
 import { DRUM_STYLES, resolveDrumStyle } from './drums.js';
@@ -468,7 +469,7 @@ export function generateSong(opts = {}) {
     t.activePatternId = top ? top.slots[t.id] : null;
   }
   const keyName = pitchClassName(root, keyPrefersFlats(root, scale));
-  return {
+  const song = {
     name: opts.name || `${g.name} in ${keyName}`,
     bpm,
     swing: 0, // the groove (incl. swing) is baked into the notes
@@ -495,5 +496,8 @@ export function generateSong(opts = {}) {
       patternHarmony,
     } : {}),
   };
+  // performance expression, sampled ranges, preset FX, layers, reverb space, mastering (src/gen/production.js)
+  if (opts.production !== false) finishSong(song, { genre: g.id, seed });
+  return song;
 }
 
