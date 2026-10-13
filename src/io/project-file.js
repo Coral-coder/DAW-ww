@@ -1,4 +1,4 @@
-// Project save / load (JSON file format `dawww-project`).
+// Project save / load (JSON file format `daw3-project`).
 import { PROJECT_FORMAT, normalizeProject } from '../core/model.js';
 
 export const PROJECT_EXTENSION = '.daW3';
@@ -27,10 +27,10 @@ export function parseProjectFile(input) {
   }
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Not a valid project file (expected a JSON object).');
   const warnings = [];
-  // Projects saved under earlier names of the app ("*-daw-project") are the same format.
-  if (data.format !== PROJECT_FORMAT && !/-daw-project$/.test(String(data.format || ''))) {
+  // Projects saved under earlier names of the app ("*-daw-project", "daw*-project") are the same format.
+  if (data.format !== PROJECT_FORMAT && !/(-daw|^daw[a-z0-9]*)-project$/.test(String(data.format || ''))) {
     const looksLikeProject = Array.isArray(data.tracks) || (data.patterns && typeof data.patterns === 'object') || typeof data.bpm === 'number';
-    if (!looksLikeProject) throw new Error('Not a daWWW project (missing format, tracks and patterns).');
+    if (!looksLikeProject) throw new Error('Not a daW³ project (missing format, tracks and patterns).');
     warnings.push(data.format ? `Unknown format "${data.format}" — loaded as best effort.` : 'File has no format marker — loaded as best effort.');
   }
   if (data.tracks !== undefined && !Array.isArray(data.tracks)) throw new Error('Invalid project: "tracks" must be an array.');

@@ -4,7 +4,7 @@ import { uid } from './util.js';
 import { normalizeLane } from './automation.js';
 import { normalizePatch } from './patch.js';
 
-export const PROJECT_FORMAT = 'dawww-project';
+export const PROJECT_FORMAT = 'daw3-project';
 export const PROJECT_VERSION = 1;
 
 export const TRACK_COLORS = [

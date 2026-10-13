@@ -147,14 +147,14 @@ function applyValues(node, factory, values, time) {
 // Offline renders: notes reach the Faust processor through its MessagePort, which an
 // OfflineAudioContext does not service while it renders. A tiny echo worklet in the same context
 // gives a round-trip barrier: once it answers, the messages posted before it have been delivered.
-const PING_SRC = "registerProcessor('dawww-ping', class extends AudioWorkletProcessor { constructor() { super(); this.port.onmessage = (e) => this.port.postMessage(e.data); } process() { return true; } });";
+const PING_SRC = "registerProcessor('daw3-ping', class extends AudioWorkletProcessor { constructor() { super(); this.port.onmessage = (e) => this.port.postMessage(e.data); } process() { return true; } });";
 const pings = new WeakMap(); // ctx -> Promise<AudioWorkletNode>
 function pingNode(ctx) {
   if (!pings.has(ctx)) {
     pings.set(ctx, (async () => {
       const url = URL.createObjectURL(new Blob([PING_SRC], { type: 'text/javascript' }));
       await ctx.audioWorklet.addModule(url);
-      return new AudioWorkletNode(ctx, 'dawww-ping', { numberOfInputs: 0, numberOfOutputs: 1 });
+      return new AudioWorkletNode(ctx, 'daw3-ping', { numberOfInputs: 0, numberOfOutputs: 1 });
     })());
   }
   return pings.get(ctx);

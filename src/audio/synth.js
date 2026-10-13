@@ -883,7 +883,7 @@ export class SynthInstrument extends BaseInstrument {
     if (extra.glideFrom != null) {
       const from = midiToFreq(num(extra.glideFrom, pitch, 0, 127) + transpose);
       fsrc.offset.setValueAtTime(from, t);
-      fsrc.offset.exponentialRampToValueAtTime(freq, t + (glide > 0 ? glide : 0.06));
+      fsrc.offset.exponentialRampToValueAtTime(freq, t + (glide > 0 ? glide : num(extra.glideTime, 0.06, 0.005, 2)));
     } else {
       fsrc.offset.setValueAtTime(freq, t);
     }
@@ -1073,6 +1073,22 @@ export class SynthInstrument extends BaseInstrument {
         d.setValueAtTime(base + pe * 100, t);
         d.setTargetAtTime(base, t, ped / 4);
       }
+    }
+    // performance expression (src/audio/mixer.js noteExtra): a bend reached at `at`, delayed vibrato
+    if (extra.bend && Number.isFinite(extra.bend.to)) {
+      const bt = t + Math.max(0, num(extra.bend.at, 0));
+      for (const [d, base] of detuneTargets) d.setTargetAtTime(base + extra.bend.to * 100, bt, num(extra.bend.time, 0.12, 0.01, 2) / 3);
+    }
+    if (extra.vib && num(extra.vib.depth, 0) > 0) {
+      const vo = v.src(ctx.createOscillator());
+      vo.frequency.value = num(extra.vib.rate, 5.2, 0.5, 12);
+      const vg = v.node(ctx.createGain());
+      const d0 = t + num(extra.vib.delay, 0.25, 0, 4);
+      vg.gain.setValueAtTime(0, t);
+      vg.gain.setValueAtTime(0, d0);
+      vg.gain.linearRampToValueAtTime(num(extra.vib.depth, 0, 0, 1) * 100, d0 + 0.35);
+      vo.connect(vg);
+      for (const [d] of detuneTargets) vg.connect(d);
     }
     if (an > 0.01) {
       // Surge-style drift: a very slow random-rate wobble per voice (±3 cents at analog = 1)

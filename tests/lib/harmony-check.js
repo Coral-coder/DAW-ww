@@ -80,9 +80,12 @@ export function analyzeSong(song) {
     const ph = song.patternHarmony?.[pat.id];
     harmony = ph ? ph.harmony : song.harmony;
     len = ph ? ph.length : song.harmonyLength;
+    // a pattern after a key change is judged in its own key
+    keyPcs = ph?.key ? new Set(scalePitchClasses(ph.key.root, ph.key.scale)) : songKeyPcs;
   };
   const bpb = song.timeSig ? song.timeSig[0] * (4 / song.timeSig[1]) : 4;
-  const keyPcs = new Set(scalePitchClasses(song.key.root, song.key.scale));
+  const songKeyPcs = new Set(scalePitchClasses(song.key.root, song.key.scale));
+  let keyPcs = songKeyPcs;
   // blues-type scales: the key's "parent" notes are fine too
   const res = {
     bass: { ok: 0, total: 0 }, notes: { ok: 0, total: 0, clash: 0, clashSustained: 0 },

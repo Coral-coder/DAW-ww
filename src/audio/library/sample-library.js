@@ -13,7 +13,7 @@
 
 export const RAW_HOST = 'https://raw.githubusercontent.com/';
 export const JSDELIVR_HOST = 'https://cdn.jsdelivr.net/gh/';
-export const CACHE_NAME = 'dawww-samples-v1';
+export const CACHE_NAME = 'daw3-samples-v1';
 
 // ------------------------------------------------------------------------------- pure URL helpers
 
@@ -40,7 +40,8 @@ export function normalizeUrl(url) {
   const s = String(url || '');
   let dec = s;
   try { dec = decodeURI(s); } catch { dec = s; }
-  return encodeURI(dec).replace(/#/g, '%23');
+  // decodeURI keeps reserved escapes (%23 '#', %2C ',', …) which encodeURI would double-encode: keep them as they were
+  return encodeURI(dec).replace(/#/g, '%23').replace(/%25(2[3468BbCcFf]|3[AaBbDdFf]|40)/g, '%$1');
 }
 
 const RAW_RE = /^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/(.*)$/;
@@ -165,7 +166,7 @@ export function pickSample(bank, { n = 0, midi = null } = {}) {
 
 const lsGet = (k) => { try { return globalThis.localStorage?.getItem(k) ?? null; } catch { return null; } };
 const lsSet = (k, v) => { try { globalThis.localStorage?.setItem(k, v); } catch { /* private mode */ } };
-const MIRROR_LS = 'dawww-sample-mirror-fail';
+const MIRROR_LS = 'daw3-sample-mirror-fail';
 
 export class SampleLibrary {
   constructor({ concurrency = 6, timeoutMs = 20000, order = ['raw', 'jsdelivr'] } = {}) {
@@ -236,7 +237,7 @@ export class SampleLibrary {
     });
   }
 
-  async _fetchNetwork(url) {
+  async _fetchNetwork(url, maxBytes = 0) {
     const tried = [];
     for (const candidate of mirrorsFor(url, this._orderFor(url))) {
       const mirror = candidate.startsWith(JSDELIVR_HOST) ? 'jsdelivr' : candidate.startsWith(RAW_HOST) ? 'raw' : 'direct';
@@ -244,9 +245,12 @@ export class SampleLibrary {
       try {
         const ac = typeof AbortController !== 'undefined' ? new AbortController() : null;
         if (ac) timer = setTimeout(() => ac.abort(), this.timeoutMs);
-        const res = await fetch(candidate, { signal: ac?.signal, mode: 'cors', credentials: 'omit' });
+        // maxBytes: only the head of the file (single-range requests are CORS-safelisted); servers that ignore it send it all
+        const headers = maxBytes > 0 ? { Range: `bytes=0-${maxBytes - 1}` } : undefined;
+        const res = await fetch(candidate, { signal: ac?.signal, mode: 'cors', credentials: 'omit', headers });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const buf = await res.arrayBuffer();
+        let buf = await res.arrayBuffer();
+        if (maxBytes > 0 && buf.byteLength > maxBytes) buf = buf.slice(0, maxBytes);
         if (!buf.byteLength) throw new Error('empty response');
         if (mirror !== 'direct') this._markMirror(mirror, url, true);
         return { buf, type: res.headers.get('content-type') || '' };
@@ -258,9 +262,13 @@ export class SampleLibrary {
     throw new Error(`could not fetch ${url} (${tried.join('; ')})`);
   }
 
-  /** Raw file bytes (memory -> Cache Storage -> network). Rejects on failure. */
-  fetchBytes(url) {
-    const key = canonicalUrl(url);
+  /**
+   * Raw file bytes (memory -> Cache Storage -> network). Rejects on failure.
+   * opts.maxBytes: fetch only the first maxBytes (HTTP Range) — long multisample recordings; cached under its own key.
+   */
+  fetchBytes(url, { maxBytes = 0 } = {}) {
+    const src = canonicalUrl(url);
+    const key = maxBytes > 0 ? `${src}${src.includes('?') ? '&' : '?'}daw3-head=${maxBytes}` : src;
     const hit = this.bytes.get(key);
     if (hit) return hit;
     const f = this.failures.get(key);
@@ -277,7 +285,7 @@ export class SampleLibrary {
           }
         } catch { /* corrupt entry — refetch */ }
       }
-      const { buf, type } = await this._fetchNetwork(key);
+      const { buf, type } = await this._fetchNetwork(src, maxBytes);
       if (cache) {
         try { await cache.put(key, new Response(buf.slice(0), { headers: { 'content-type': type || 'application/octet-stream' } })); } catch { /* quota */ }
       }
@@ -384,5 +392,5 @@ export class SampleLibrary {
 export const library = new SampleLibrary();
 if (typeof window !== 'undefined') {
   // debugging / automation handle
-  try { window.__dawwwSamples = library; } catch { /* */ }
+  try { window.__daw3Samples = library; } catch { /* */ }
 }

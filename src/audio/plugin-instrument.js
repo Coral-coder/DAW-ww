@@ -47,7 +47,7 @@ export class PluginInstrument {
 
   setParams(params) { this.params = params; this.impl?.setParams(params); }
   reload() { return this.impl?.reload ? this.impl.reload() : this.ready; }
-  trigger(time, pitch, vel, durSec) { this.impl?.trigger(time, pitch, vel, durSec); }
+  trigger(time, pitch, vel, durSec, extra) { this.impl?.trigger(time, pitch, vel, durSec, extra); }
   noteOn(pitch, vel, time) { this.impl?.noteOn(pitch, vel, time); }
   noteOff(pitch, time) { this.impl?.noteOff(pitch, time); }
   allNotesOff(time) { this.impl?.allNotesOff(time); }
@@ -108,6 +108,12 @@ export async function preloadInstrument(def, { sampleRate = 44100 } = {}) {
   try {
     if (def?.type === 'soundfont') {
       const m = await import('../plugins/soundfont.js');
+      if (def.params?.multisample) {
+        // multisampled instrument (falls back to the GM file inside the engine): warm the shared caches
+        const ctx = new OfflineAudioContext(1, 1, sampleRate);
+        const eng = new m.SoundfontEngine(ctx, ctx.destination, def.params);
+        return await eng.ready;
+      }
       await m.loadSoundfontWithStatus(soundfontSourceUrl(def.params || {}), sampleRate);
       return true;
     }

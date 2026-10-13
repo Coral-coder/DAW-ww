@@ -1,5 +1,7 @@
 // Genre library: tempo, feel, harmony, sound palette, arrangement and production tips.
 // Preset and drum-kit ids refer to src/audio/presets.js (owned by the audio module).
+import { fitStructure } from './form.js';
+
 
 export const DRUM_KIT_IDS = ['808', '909', 'trap', 'lofi', 'acoustic', 'rock', 'techno', 'house', 'breaks', 'dnb', 'jazz', 'latin', 'afro', 'reggaeton', 'chip', 'industrial', 'hardstyle', 'phonk', 'garage', 'cinematic'];
 
@@ -19,91 +21,184 @@ export const ROLES = ['drums', 'bass', 'chords', 'pad', 'lead', 'arp', 'fx'];
 const S = (name, bars, energy, roles) => ({ name, bars, energy, roles });
 const ALL = ROLES;
 
-/** Arrangement templates (bars are in the genre's time signature). */
+/**
+ * Arrangement templates (bars are in the genre's time signature). Each genre's standard form is its template fitted to
+ * the genre's realistic length (`minutes` at the default tempo, see form.js): club genres get DJ-friendly forms
+ * (drums-only DJ intro, long breakdown with the melody exposed, two drops, DJ outro), songs get verse / pre / chorus /
+ * bridge / final double chorus forms, jazz plays several solo choruses with changing comping.
+ */
 export const STRUCTURES = {
+  // dubstep / brostep / future bass / glitch (~4–4.5 min)
   edm: [
-    S('Intro', 8, 0.25, ['drums', 'pad', 'fx']), S('Build', 8, 0.6, ['drums', 'chords', 'pad', 'arp', 'fx']),
-    S('Drop', 16, 1, ['drums', 'bass', 'chords', 'lead', 'fx']), S('Breakdown', 8, 0.3, ['pad', 'chords', 'lead']),
-    S('Build', 8, 0.7, ['drums', 'chords', 'arp', 'fx', 'pad']), S('Drop', 16, 1, ['drums', 'bass', 'chords', 'lead', 'arp', 'fx']),
-    S('Outro', 8, 0.2, ['drums', 'pad']),
+    S('Intro', 16, 0.25, ['drums', 'pad', 'fx']), S('Build', 8, 0.6, ['drums', 'chords', 'pad', 'arp', 'fx']),
+    S('Drop', 32, 1, ['drums', 'bass', 'chords', 'lead', 'fx']), S('Verse', 16, 0.55, ['drums', 'bass', 'chords', 'pad']),
+    S('Breakdown', 16, 0.3, ['pad', 'chords', 'lead']), S('Build', 8, 0.7, ['drums', 'chords', 'arp', 'fx', 'pad']),
+    S('Drop', 32, 1, ['drums', 'bass', 'chords', 'lead', 'arp', 'fx']), S('Outro', 16, 0.2, ['drums', 'pad']),
   ],
+  // house / deep / tech house (~6.5–7 min): 32-bar DJ intro, grooves, breakdown, two drops, 32-bar DJ outro
   house: [
-    S('Intro', 16, 0.35, ['drums', 'fx']), S('Groove', 16, 0.6, ['drums', 'bass', 'chords']),
-    S('Breakdown', 8, 0.3, ['pad', 'chords', 'fx']), S('Build', 8, 0.65, ['drums', 'chords', 'arp', 'fx']),
-    S('Drop', 16, 1, ['drums', 'bass', 'chords', 'lead', 'arp', 'pad']), S('Outro', 16, 0.35, ['drums', 'bass']),
+    S('Intro', 16, 0.3, ['drums']), S('Intro', 16, 0.4, ['drums', 'bass', 'fx']),
+    S('Groove', 16, 0.6, ['drums', 'bass', 'chords']), S('Groove', 16, 0.65, ['drums', 'bass', 'chords', 'arp']),
+    S('Breakdown', 16, 0.3, ['pad', 'chords', 'lead', 'fx']), S('Build', 8, 0.65, ['drums', 'chords', 'arp', 'fx']),
+    S('Drop', 32, 1, ['drums', 'bass', 'chords', 'lead', 'arp', 'pad']), S('Groove', 16, 0.7, ['drums', 'bass', 'chords', 'pad']),
+    S('Breakdown', 8, 0.35, ['pad', 'chords', 'lead']), S('Build', 8, 0.7, ['drums', 'chords', 'arp', 'fx']),
+    S('Drop', 32, 1, ['drums', 'bass', 'chords', 'lead', 'arp', 'pad', 'fx']),
+    S('Outro', 16, 0.4, ['drums', 'bass', 'chords']), S('Outro', 16, 0.3, ['drums']),
   ],
+  // techno (~6.5 min): hypnotic, layers come and go
   techno: [
-    S('Intro', 16, 0.35, ['drums']), S('Build', 16, 0.6, ['drums', 'bass', 'arp']),
-    S('Peak', 32, 1, ['drums', 'bass', 'arp', 'lead', 'chords']), S('Break', 8, 0.3, ['pad', 'fx', 'arp']),
-    S('Peak', 16, 1, ['drums', 'bass', 'arp', 'lead', 'chords', 'fx']), S('Outro', 16, 0.35, ['drums', 'bass']),
+    S('Intro', 16, 0.3, ['drums']), S('Intro', 16, 0.4, ['drums', 'bass']),
+    S('Groove', 16, 0.6, ['drums', 'bass', 'arp']), S('Peak', 32, 1, ['drums', 'bass', 'arp', 'lead', 'chords']),
+    S('Break', 16, 0.3, ['pad', 'fx', 'arp']), S('Build', 8, 0.65, ['drums', 'arp', 'fx']),
+    S('Peak', 32, 1, ['drums', 'bass', 'arp', 'lead', 'chords', 'fx']), S('Groove', 16, 0.7, ['drums', 'bass', 'arp', 'chords']),
+    S('Peak', 32, 1, ['drums', 'bass', 'arp', 'lead', 'pad']),
+    S('Outro', 16, 0.4, ['drums', 'bass']), S('Outro', 16, 0.3, ['drums']),
   ],
+  // trance (~7.5 min): drums-only DJ intro, percussion build, long breakdown with the melody exposed, big build, two drops
   trance: [
-    S('Intro', 16, 0.4, ['drums', 'bass']), S('Build', 16, 0.6, ['drums', 'bass', 'arp', 'pad']),
-    S('Breakdown', 16, 0.3, ['pad', 'chords', 'lead']), S('Build', 8, 0.75, ['drums', 'arp', 'fx', 'chords']),
-    S('Drop', 16, 1, ['drums', 'bass', 'lead', 'arp', 'pad', 'chords']), S('Outro', 16, 0.35, ['drums', 'bass']),
+    S('Intro', 16, 0.3, ['drums']), S('Intro', 16, 0.4, ['drums', 'bass', 'fx']),
+    S('Groove', 16, 0.55, ['drums', 'bass', 'arp']), S('Groove', 16, 0.65, ['drums', 'bass', 'arp', 'pad', 'fx']),
+    S('Breakdown', 32, 0.3, ['pad', 'chords', 'lead']), S('Build', 16, 0.75, ['drums', 'arp', 'fx', 'chords', 'pad']),
+    S('Drop', 32, 1, ['drums', 'bass', 'lead', 'arp', 'pad', 'chords']), S('Groove', 16, 0.7, ['drums', 'bass', 'arp', 'pad']),
+    S('Breakdown', 16, 0.35, ['pad', 'lead', 'arp']), S('Build', 16, 0.8, ['drums', 'arp', 'fx', 'chords']),
+    S('Drop', 32, 1, ['drums', 'bass', 'lead', 'arp', 'pad', 'chords', 'fx']),
+    S('Outro', 16, 0.45, ['drums', 'bass', 'arp']), S('Outro', 16, 0.3, ['drums']),
   ],
+  // psytrance (~7.5 min): rolling bass all the way, short breaks, three peaks
+  psytrance: [
+    S('Intro', 16, 0.3, ['drums']), S('Intro', 16, 0.45, ['drums', 'bass', 'fx']),
+    S('Groove', 32, 0.65, ['drums', 'bass', 'arp']), S('Build', 16, 0.75, ['drums', 'bass', 'arp', 'fx']),
+    S('Peak', 32, 1, ['drums', 'bass', 'arp', 'lead', 'pad']), S('Break', 16, 0.35, ['pad', 'lead', 'fx', 'arp']),
+    S('Build', 8, 0.8, ['drums', 'bass', 'arp', 'fx']), S('Peak', 32, 1, ['drums', 'bass', 'arp', 'lead', 'chords']),
+    S('Groove', 16, 0.7, ['drums', 'bass', 'arp', 'chords']), S('Break', 16, 0.4, ['pad', 'chords', 'lead']),
+    S('Build', 8, 0.85, ['drums', 'bass', 'arp', 'fx']), S('Peak', 32, 1, ['drums', 'bass', 'arp', 'lead', 'pad', 'fx']),
+    S('Outro', 16, 0.45, ['drums', 'bass']), S('Outro', 16, 0.3, ['drums']),
+  ],
+  // progressive house (~7 min)
+  progressive: [
+    S('Intro', 16, 0.3, ['drums']), S('Intro', 16, 0.4, ['drums', 'bass', 'fx']),
+    S('Groove', 16, 0.55, ['drums', 'bass', 'arp']), S('Groove', 16, 0.65, ['drums', 'bass', 'arp', 'chords']),
+    S('Breakdown', 32, 0.3, ['pad', 'chords', 'lead']), S('Build', 16, 0.75, ['drums', 'chords', 'arp', 'fx', 'pad']),
+    S('Drop', 32, 1, ['drums', 'bass', 'chords', 'lead', 'arp']), S('Breakdown', 16, 0.35, ['pad', 'chords', 'lead']),
+    S('Build', 8, 0.75, ['drums', 'chords', 'arp', 'fx']), S('Drop', 32, 1, ['drums', 'bass', 'chords', 'lead', 'arp', 'pad']),
+    S('Outro', 16, 0.4, ['drums', 'bass', 'arp']), S('Outro', 16, 0.3, ['drums']),
+  ],
+  // drum & bass (~5 min): 32-bar DJ intro, two drops, a switch-up, DJ outro
   dnb: [
-    S('Intro', 16, 0.3, ['drums', 'pad']), S('Build', 8, 0.6, ['drums', 'pad', 'fx', 'arp']),
-    S('Drop', 16, 1, ['drums', 'bass', 'chords', 'lead']), S('Breakdown', 8, 0.3, ['pad', 'chords', 'lead']),
-    S('Build', 8, 0.7, ['drums', 'chords', 'fx', 'arp']), S('Drop', 16, 1, ['drums', 'bass', 'chords', 'lead', 'arp']),
-    S('Outro', 8, 0.3, ['drums', 'pad']),
+    S('Intro', 16, 0.3, ['drums', 'pad']), S('Intro', 16, 0.45, ['drums', 'pad', 'fx', 'arp']),
+    S('Build', 8, 0.6, ['drums', 'pad', 'fx', 'arp']), S('Drop', 32, 1, ['drums', 'bass', 'chords', 'lead']),
+    S('Switch', 16, 0.75, ['drums', 'bass', 'chords', 'arp']), S('Breakdown', 16, 0.3, ['pad', 'chords', 'lead']),
+    S('Build', 16, 0.7, ['drums', 'chords', 'fx', 'arp']), S('Drop', 32, 1, ['drums', 'bass', 'chords', 'lead', 'arp']),
+    S('Groove', 32, 0.75, ['drums', 'bass', 'chords', 'pad']),
+    S('Outro', 16, 0.4, ['drums', 'bass']), S('Outro', 16, 0.3, ['drums', 'pad']),
   ],
+  // UK garage / 2-step / breakbeat (~5 min): club vocal-song shape
+  garage: [
+    S('Intro', 16, 0.3, ['drums']), S('Intro', 8, 0.45, ['drums', 'bass', 'fx']),
+    S('Verse', 16, 0.6, ['drums', 'bass', 'chords']), S('Build', 8, 0.7, ['drums', 'bass', 'chords', 'pad', 'fx']),
+    S('Drop', 16, 1, ['drums', 'bass', 'chords', 'lead', 'pad']), S('Verse', 16, 0.65, ['drums', 'bass', 'chords', 'arp']),
+    S('Breakdown', 8, 0.35, ['pad', 'chords', 'lead']), S('Build', 8, 0.75, ['drums', 'chords', 'arp', 'fx']),
+    S('Drop', 32, 1, ['drums', 'bass', 'chords', 'lead', 'pad', 'arp']),
+    S('Outro', 16, 0.4, ['drums', 'bass']), S('Outro', 8, 0.3, ['drums']),
+  ],
+  // pop / k-pop (~3.5 min): intro, verse, pre, chorus, verse 2, pre, chorus, bridge, final double chorus, outro
   pop: [
-    S('Intro', 4, 0.3, ['chords', 'pad']), S('Verse', 8, 0.5, ['drums', 'bass', 'chords', 'lead']),
-    S('Pre-Chorus', 4, 0.65, ['drums', 'bass', 'chords', 'pad', 'arp']), S('Chorus', 8, 0.95, ALL),
-    S('Verse', 8, 0.55, ['drums', 'bass', 'chords', 'lead']), S('Pre-Chorus', 4, 0.7, ['drums', 'bass', 'chords', 'pad', 'arp', 'fx']),
-    S('Chorus', 8, 1, ALL), S('Bridge', 8, 0.45, ['pad', 'chords', 'lead']), S('Chorus', 8, 1, ALL),
-    S('Outro', 4, 0.3, ['chords', 'pad']),
+    S('Intro', 8, 0.3, ['chords', 'pad']), S('Verse', 16, 0.5, ['drums', 'bass', 'chords', 'lead']),
+    S('Pre-Chorus', 8, 0.65, ['drums', 'bass', 'chords', 'pad', 'arp']), S('Chorus', 8, 0.95, ALL),
+    S('Verse', 16, 0.55, ['drums', 'bass', 'chords', 'lead']), S('Pre-Chorus', 8, 0.7, ['drums', 'bass', 'chords', 'pad', 'arp', 'fx']),
+    S('Chorus', 8, 1, ALL), S('Bridge', 8, 0.45, ['pad', 'chords', 'lead']), S('Chorus', 16, 1, ALL),
+    S('Outro', 8, 0.3, ['chords', 'pad']),
   ],
+  // trap / drill / phonk (~3 min at 140): intro, hook, 16-bar verses with hooks between
   hiphop: [
-    S('Intro', 4, 0.3, ['chords', 'pad']), S('Verse', 16, 0.7, ['drums', 'bass', 'chords']),
-    S('Hook', 8, 0.9, ['drums', 'bass', 'chords', 'lead', 'pad']), S('Verse', 16, 0.7, ['drums', 'bass', 'chords', 'arp']),
-    S('Hook', 8, 0.95, ['drums', 'bass', 'chords', 'lead', 'pad']), S('Outro', 4, 0.3, ['chords']),
+    S('Intro', 4, 0.3, ['chords', 'pad']), S('Hook', 16, 0.9, ['drums', 'bass', 'chords', 'lead', 'pad']),
+    S('Verse', 16, 0.7, ['drums', 'bass', 'chords']), S('Hook', 16, 0.9, ['drums', 'bass', 'chords', 'lead', 'pad']),
+    S('Verse', 16, 0.7, ['drums', 'bass', 'chords', 'arp']), S('Bridge', 8, 0.5, ['chords', 'pad', 'lead']),
+    S('Hook', 16, 0.95, ['drums', 'bass', 'chords', 'lead', 'pad']), S('Outro', 8, 0.3, ['chords', 'pad']),
   ],
-  rock: [
-    S('Intro', 4, 0.5, ['drums', 'chords']), S('Verse', 8, 0.6, ['drums', 'bass', 'chords']),
-    S('Chorus', 8, 0.95, ['drums', 'bass', 'chords', 'lead', 'pad']), S('Verse', 8, 0.6, ['drums', 'bass', 'chords']),
-    S('Chorus', 8, 1, ['drums', 'bass', 'chords', 'lead', 'pad']), S('Solo', 8, 0.9, ['drums', 'bass', 'chords', 'lead']),
-    S('Chorus', 8, 1, ['drums', 'bass', 'chords', 'lead', 'pad']), S('Outro', 4, 0.5, ['drums', 'chords']),
-  ],
-  ambient: [
-    S('Intro', 8, 0.15, ['pad']), S('Rise', 16, 0.35, ['pad', 'chords', 'arp']),
-    S('Bloom', 16, 0.5, ['pad', 'chords', 'lead', 'arp', 'bass', 'drums']), S('Fade', 16, 0.3, ['pad', 'lead']),
-    S('Outro', 8, 0.1, ['pad']),
-  ],
-  chill: [
-    S('Intro', 4, 0.3, ['chords']), S('A', 8, 0.6, ['drums', 'bass', 'chords']),
-    S('B', 8, 0.75, ['drums', 'bass', 'chords', 'lead', 'pad']), S('Break', 4, 0.35, ['chords', 'pad']),
-    S('A', 8, 0.65, ['drums', 'bass', 'chords', 'arp']), S('B', 8, 0.8, ['drums', 'bass', 'chords', 'lead', 'pad']),
+  // boom bap (~3.5 min at 90): three verses, hooks between
+  boombap: [
+    S('Intro', 4, 0.3, ['chords', 'pad']), S('Hook', 8, 0.9, ['drums', 'bass', 'chords', 'lead', 'pad']),
+    S('Verse', 16, 0.7, ['drums', 'bass', 'chords']), S('Hook', 8, 0.9, ['drums', 'bass', 'chords', 'lead', 'pad']),
+    S('Verse', 16, 0.7, ['drums', 'bass', 'chords', 'arp']), S('Hook', 8, 0.95, ['drums', 'bass', 'chords', 'lead', 'pad']),
+    S('Verse', 16, 0.75, ['drums', 'bass', 'chords', 'pad']), S('Hook', 8, 0.95, ['drums', 'bass', 'chords', 'lead', 'pad', 'arp']),
     S('Outro', 4, 0.3, ['chords']),
   ],
+  rock: [
+    S('Intro', 8, 0.5, ['drums', 'chords']), S('Verse', 16, 0.6, ['drums', 'bass', 'chords']),
+    S('Chorus', 8, 0.95, ['drums', 'bass', 'chords', 'lead', 'pad']), S('Verse', 16, 0.65, ['drums', 'bass', 'chords']),
+    S('Chorus', 8, 1, ['drums', 'bass', 'chords', 'lead', 'pad']), S('Solo', 16, 0.9, ['drums', 'bass', 'chords', 'lead']),
+    S('Bridge', 8, 0.55, ['drums', 'bass', 'chords', 'pad']),
+    S('Chorus', 16, 1, ['drums', 'bass', 'chords', 'lead', 'pad']), S('Outro', 8, 0.5, ['drums', 'chords']),
+  ],
+  // ambient (~6.5 min): slow arc, layers bloom and drift
+  ambient: [
+    S('Intro', 16, 0.15, ['pad']), S('Rise', 16, 0.35, ['pad', 'chords', 'arp']),
+    S('Bloom', 16, 0.5, ['pad', 'chords', 'lead', 'arp', 'bass', 'drums']), S('Drift', 16, 0.4, ['pad', 'lead', 'arp']),
+    S('Bloom', 16, 0.55, ['pad', 'chords', 'lead', 'bass', 'drums']), S('Fade', 16, 0.3, ['pad', 'lead']),
+    S('Outro', 16, 0.1, ['pad']),
+  ],
+  // lo-fi / downtempo: loop-based A/B variations
+  chill: [
+    S('Intro', 4, 0.3, ['chords']), S('A', 8, 0.6, ['drums', 'bass', 'chords']),
+    S('B', 8, 0.75, ['drums', 'bass', 'chords', 'lead', 'pad']), S('A', 8, 0.65, ['drums', 'bass', 'chords', 'arp']),
+    S('B', 8, 0.8, ['drums', 'bass', 'chords', 'lead', 'pad']), S('Break', 4, 0.35, ['chords', 'pad']),
+    S('A', 8, 0.65, ['drums', 'bass', 'chords', 'pad']), S('B', 8, 0.85, ['drums', 'bass', 'chords', 'lead', 'pad', 'arp']),
+    S('Outro', 4, 0.3, ['chords']),
+  ],
+  // jazz (~5 min): head, several solo choruses (comping changes, the piano lays out), trading 4s, head out
   jazz: [
-    S('Intro', 4, 0.35, ['chords', 'bass']), S('Head', 8, 0.6, ['drums', 'bass', 'chords', 'lead']),
-    S('Solo', 16, 0.8, ['drums', 'bass', 'chords', 'lead']), S('Head', 8, 0.65, ['drums', 'bass', 'chords', 'lead']),
-    S('Outro', 4, 0.35, ['chords', 'bass', 'drums']),
+    S('Intro', 4, 0.35, ['chords', 'bass']), S('Head', 32, 0.6, ['drums', 'bass', 'chords', 'lead']),
+    S('Solo', 32, 0.8, ['drums', 'bass', 'chords', 'lead']), S('Solo', 32, 0.85, ['drums', 'bass', 'chords', 'lead']),
+    S('Solo', 32, 0.85, ['drums', 'bass', 'lead']), S('Trading 4s', 16, 0.8, ['drums', 'bass', 'chords', 'lead']),
+    S('Head', 32, 0.65, ['drums', 'bass', 'chords', 'lead']), S('Outro', 4, 0.35, ['chords', 'bass', 'drums']),
   ],
   blues: [
     S('Intro', 4, 0.4, ['drums', 'bass', 'chords']), S('Verse', 12, 0.6, ['drums', 'bass', 'chords']),
     S('Verse', 12, 0.7, ['drums', 'bass', 'chords', 'lead']), S('Solo', 12, 0.9, ['drums', 'bass', 'chords', 'lead', 'pad']),
+    S('Verse', 12, 0.7, ['drums', 'bass', 'chords', 'lead']), S('Solo', 12, 0.9, ['drums', 'bass', 'chords', 'lead']),
     S('Verse', 12, 0.75, ['drums', 'bass', 'chords', 'lead']), S('Outro', 4, 0.4, ['drums', 'bass', 'chords']),
   ],
+  // cinematic (~3.5 min): a clear arc — theme, rise, climax, reflection, second rise, finale
   cinematic: [
     S('Intro', 8, 0.15, ['pad']), S('Theme', 8, 0.4, ['pad', 'chords', 'lead']),
     S('Rise', 8, 0.65, ['pad', 'chords', 'drums', 'arp', 'fx']), S('Climax', 16, 1, ALL),
-    S('Reflection', 8, 0.3, ['pad', 'lead']), S('Finale', 8, 0.9, ALL), S('Outro', 4, 0.15, ['pad']),
+    S('Reflection', 8, 0.3, ['pad', 'lead']), S('Rise', 8, 0.7, ['pad', 'chords', 'drums', 'arp', 'fx']),
+    S('Finale', 16, 0.95, ALL), S('Outro', 8, 0.15, ['pad']),
   ],
+  // funk / disco / reggae / latin (~3.5–4 min)
   groove: [
-    S('Intro', 4, 0.4, ['drums', 'chords']), S('Verse', 8, 0.6, ['drums', 'bass', 'chords']),
-    S('Chorus', 8, 0.9, ['drums', 'bass', 'chords', 'lead', 'pad']), S('Verse', 8, 0.65, ['drums', 'bass', 'chords', 'arp']),
-    S('Chorus', 8, 0.95, ['drums', 'bass', 'chords', 'lead', 'pad']), S('Breakdown', 4, 0.4, ['drums', 'bass']),
-    S('Chorus', 8, 1, ['drums', 'bass', 'chords', 'lead', 'pad', 'arp']), S('Outro', 4, 0.4, ['drums', 'chords']),
+    S('Intro', 4, 0.4, ['drums', 'chords']), S('Verse', 16, 0.6, ['drums', 'bass', 'chords']),
+    S('Chorus', 8, 0.9, ['drums', 'bass', 'chords', 'lead', 'pad']), S('Verse', 16, 0.65, ['drums', 'bass', 'chords', 'arp']),
+    S('Chorus', 8, 0.95, ['drums', 'bass', 'chords', 'lead', 'pad']), S('Breakdown', 8, 0.4, ['drums', 'bass']),
+    S('Chorus', 16, 1, ['drums', 'bass', 'chords', 'lead', 'pad', 'arp']), S('Outro', 8, 0.4, ['drums', 'chords']),
   ],
+  // salsa: verses (son), then the montuno (coro / pregón) and a mambo section
+  salsa: [
+    S('Intro', 8, 0.5, ['drums', 'bass', 'chords']), S('Verse', 16, 0.6, ['drums', 'bass', 'chords', 'lead']),
+    S('Verse', 16, 0.65, ['drums', 'bass', 'chords', 'lead']), S('Montuno', 32, 0.9, ['drums', 'bass', 'chords', 'lead', 'pad']),
+    S('Mambo', 16, 1, ['drums', 'bass', 'chords', 'lead', 'arp']), S('Break', 8, 0.5, ['drums', 'bass']),
+    S('Montuno', 32, 0.95, ['drums', 'bass', 'chords', 'lead', 'pad', 'arp']), S('Outro', 8, 0.5, ['drums', 'bass', 'chords']),
+  ],
+  // hardstyle (~5 min)
   hard: [
-    S('Intro', 16, 0.5, ['drums', 'bass']), S('Breakdown', 16, 0.3, ['pad', 'lead', 'chords']),
-    S('Build', 8, 0.7, ['drums', 'fx', 'chords', 'arp']), S('Drop', 16, 1, ['drums', 'bass', 'lead', 'pad']),
-    S('Break', 8, 0.35, ['pad', 'chords']), S('Drop', 16, 1, ['drums', 'bass', 'lead', 'pad', 'arp']),
-    S('Outro', 8, 0.4, ['drums', 'bass']),
+    S('Intro', 16, 0.45, ['drums', 'bass']), S('Intro', 16, 0.55, ['drums', 'bass', 'fx']),
+    S('Breakdown', 32, 0.3, ['pad', 'lead', 'chords']), S('Build', 8, 0.7, ['drums', 'fx', 'chords', 'arp']),
+    S('Drop', 32, 1, ['drums', 'bass', 'lead', 'pad']), S('Break', 16, 0.35, ['pad', 'chords']),
+    S('Build', 8, 0.75, ['drums', 'fx', 'chords', 'arp']), S('Drop', 32, 1, ['drums', 'bass', 'lead', 'pad', 'arp']),
+    S('Outro', 16, 0.4, ['drums', 'bass']),
   ],
+};
+
+/** Realistic standard song lengths (minutes at the default tempo). */
+export const GENRE_MINUTES = {
+  house: 6.5, 'deep-house': 6.5, 'tech-house': 6.5, techno: 6.5, minimal: 7, trance: 7.5, psytrance: 7.5, 'progressive-house': 7,
+  dubstep: 4.5, brostep: 4, 'future-bass': 3.75, 'drum-and-bass': 5, 'liquid-dnb': 5, jungle: 5, breakbeat: 5, 'uk-garage': 5, 'two-step': 4.5,
+  trap: 3, drill: 3, 'boom-bap': 3.75, 'lofi-hip-hop': 3, phonk: 2.75, rnb: 3.5, 'neo-soul': 4, pop: 3.5, kpop: 3.4, synthwave: 4,
+  chillwave: 3.5, ambient: 6.5, downtempo: 4.5, 'trip-hop': 4.5, idm: 5, glitch: 4, chiptune: 3, rock: 3.75, punk: 2.5, metal: 4, indie: 3.5,
+  funk: 4, disco: 5, 'nu-disco': 5.5, jazz: 5, 'bossa-nova': 3.5, blues: 4, gospel: 4.5, reggae: 3.75, dub: 4.5, dancehall: 3.25,
+  reggaeton: 3.25, afrobeat: 3.5, amapiano: 6, salsa: 4, country: 3.4, folk: 3.5, cinematic: 3.5, industrial: 5.5, hardstyle: 5, eurobeat: 4,
+  footwork: 3,
 };
 
 const DEF = {
@@ -112,8 +207,13 @@ const DEF = {
 };
 
 function G(id, name, family, bpm, defaultBpm, o) {
-  const structure = typeof o.structure === 'string' ? STRUCTURES[o.structure] : o.structure;
-  return { ...DEF, id, name, family, bpm, defaultBpm, ...o, structure: structure.map((s) => ({ ...s, roles: [...s.roles] })) };
+  const template = typeof o.structure === 'string' ? STRUCTURES[o.structure] : o.structure;
+  const minutes = o.minutes ?? GENRE_MINUTES[id];
+  const ts = o.timeSig || DEF.timeSig;
+  const bpb = ts[0] * (4 / ts[1]);
+  // the standard form: the template fitted to the genre's realistic length at its default tempo
+  const structure = minutes ? fitStructure(template, (minutes * defaultBpm) / bpb) : template.map((s) => ({ ...s, roles: [...s.roles] }));
+  return { ...DEF, id, name, family, bpm, defaultBpm, ...o, minutes, structureId: typeof o.structure === 'string' ? o.structure : null, structure };
 }
 
 /** GENRES {id: GenreDef}. See docs/ARCHITECTURE.md "Generators". */
@@ -165,14 +265,14 @@ export const GENRES = {
     scales: ['phrygian', 'minor', 'phrygian-dominant'], drumKit: 'techno', drumStyle: 'psytrance', bassStyle: 'psy', chordStyle: 'stabs',
     progressions: ['psy-phrygian', 'techno-drone', 'drill-phrygian'], melodyStyle: 'riff', arp: { mode: 'random', rate: 0.25, octaves: 2 },
     presets: { drums: 'techno', bass: 'fm-bass', chords: 'pluck', pad: 'dark-pad', lead: 'acid-lead', arp: 'arp-saw', fx: 'laser' },
-    structure: 'trance', fx: ['Resonant filter sweeps', 'Ping-pong delay on FX', 'Tight sidechain/ducking on bass'],
+    structure: 'psytrance', fx: ['Resonant filter sweeps', 'Ping-pong delay on FX', 'Tight sidechain/ducking on bass'],
     tips: ['Rolling 16th bass: three notes between each kick (K-B-B-B).', 'Keep the kick short and punchy so bass fits between.', 'Phrygian riffs and psychedelic FX automation.'],
   }),
   'progressive-house': G('progressive-house', 'Progressive House', 'house', [122, 130], 126, {
     scales: ['minor', 'major'], drumKit: '909', drumStyle: 'progressive', bassStyle: 'offbeat', chordStyle: 'pulse8',
     progressions: ['axis-minor', 'aeolian-loop', 'pop-axis', 'trance-uplift'], melodyStyle: 'hook', arp: { mode: 'up', rate: 0.25, octaves: 2 },
     presets: { drums: '909', bass: 'saw-bass', chords: 'pluck', pad: 'supersaw-pad', lead: 'supersaw-lead', arp: 'arp-pluck', fx: 'riser' },
-    structure: 'edm', fx: ['Long reverb tails', 'Filter builds over 16 bars'],
+    structure: 'progressive', fx: ['Long reverb tails', 'Filter builds over 16 bars'],
     tips: ['Slowly evolving layers: introduce one element every 8 bars.', 'Emotional chord progressions with plucky arps.', 'Long, satisfying builds.'],
   }),
   // ======================= BASS MUSIC =======================
@@ -222,21 +322,21 @@ export const GENRES = {
     swing: 0.08, scales: ['minor', 'dorian'], drumKit: 'breaks', drumStyle: 'breakbeat', bassStyle: 'tech', chordStyle: 'stabs',
     progressions: ['jungle-rave', 'techno-two', 'house-minor-7'], melodyStyle: 'riff',
     presets: { drums: 'breaks', bass: 'acid-bass', chords: 'house-stab', pad: 'dark-pad', lead: 'acid-lead', arp: 'arp-saw', fx: 'noise-sweep' },
-    structure: 'house', fx: ['Parallel-compressed breaks', 'Acid filter automation'],
+    structure: 'garage', fx: ['Parallel-compressed breaks', 'Acid filter automation'],
     tips: ['Syncopated, funky break patterns with ghost snares.', 'Acid or reese basslines.', 'Big-beat style FX and stabs.'],
   }),
   'uk-garage': G('uk-garage', 'UK Garage', 'garage', [128, 136], 132, {
     swing: 0.55, scales: ['minor', 'dorian'], drumKit: 'garage', drumStyle: 'garage', bassStyle: 'garage', chordStyle: 'house',
     progressions: ['garage-stabs', 'house-minor-7', 'deep-house-9'], melodyStyle: 'vocal',
     presets: { drums: 'garage', bass: 'sub-bass', chords: 'organ-drawbar', pad: 'warm-pad', lead: 'electric-piano', arp: 'arp-pluck', fx: 'noise-sweep' },
-    structure: 'house', fx: ['Swing on the hats', 'Pitched vocal chops', 'Organ stabs with short reverb'],
+    structure: 'garage', fx: ['Swing on the hats', 'Pitched vocal chops', 'Organ stabs with short reverb'],
     tips: ['Heavy swing on 16th hats is essential.', 'Skippy kicks, shuffling snares and organ/m7 stabs.', 'Chopped R&B vocals as hooks.'],
   }),
   'two-step': G('two-step', '2-Step', 'garage', [128, 136], 132, {
     swing: 0.6, scales: ['minor', 'dorian'], drumKit: 'garage', drumStyle: 'two-step', bassStyle: 'garage', chordStyle: 'house',
     progressions: ['garage-stabs', 'house-minor-7', 'neo-soul-251'], melodyStyle: 'vocal',
     presets: { drums: 'garage', bass: 'sub-bass', chords: 'electric-piano', pad: 'warm-pad', lead: 'fm-epiano', arp: 'arp-pluck', fx: 'noise-sweep' },
-    structure: 'house', fx: ['Swing', 'Short plate on snares', 'Sub-bass sidechain'],
+    structure: 'garage', fx: ['Swing', 'Short plate on snares', 'Sub-bass sidechain'],
     tips: ['No kick on 2 and 4 — the "skipping" kick pattern defines 2-step.', 'Snares on 2 and 4 with shuffled ghost hits.', 'Bouncy sub bass with octave jumps.'],
   }),
   // ======================= HIP-HOP / URBAN =======================
@@ -258,7 +358,7 @@ export const GENRES = {
     swing: 0.55, humanize: 0.3, scales: ['minor', 'dorian'], drumKit: 'acoustic', drumStyle: 'boom-bap', bassStyle: 'boom-bap', chordStyle: 'whole',
     progressions: ['boom-bap-soul', 'house-minor-7', 'jazz-turnaround', 'minor-ii-v-i'], melodyStyle: 'sparse',
     presets: { drums: 'acoustic', bass: 'finger-bass', chords: 'electric-piano', pad: 'strings', lead: 'vibraphone', arp: 'arp-pluck', fx: 'noise-sweep' },
-    structure: 'hiphop', fx: ['Vinyl saturation', 'Low-pass on samples', 'Compressed, punchy drums'],
+    structure: 'boombap', fx: ['Vinyl saturation', 'Low-pass on samples', 'Compressed, punchy drums'],
     tips: ['Hard kick and snare (2 & 4) with swung hats.', 'Jazz/soul sampled chords, chopped and filtered.', 'Leave space in the mids for the vocal.'],
   }),
   'lofi-hip-hop': G('lofi-hip-hop', 'Lo-fi Hip-Hop', 'hiphop', [70, 90], 80, {
@@ -487,7 +587,7 @@ export const GENRES = {
     humanize: 0.2, scales: ['minor', 'major', 'harmonic-minor'], drumKit: 'latin', drumStyle: 'salsa', bassStyle: 'tumbao', chordStyle: 'montuno',
     progressions: ['salsa-montuno', 'salsa-minor', 'andalusian', 'harmonic-minor-cadence'], melodyStyle: 'hook',
     presets: { drums: 'latin', bass: 'upright-bass', chords: 'grand-piano', pad: 'brass-section', lead: 'brass-lead', arp: 'arp-pluck', fx: 'noise-sweep' },
-    structure: 'groove', fx: ['Room reverb', 'Brass section stereo spread'],
+    structure: 'salsa', fx: ['Room reverb', 'Brass section stereo spread'],
     tips: ['Everything locks to the clave (son 3-2 or 2-3).', 'Piano montuno syncopations and tumbao bass anticipations.', 'Brass mambo sections for climaxes.'],
   }),
   // ======================= COUNTRY / FOLK =======================

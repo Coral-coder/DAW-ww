@@ -33,7 +33,7 @@ export function soundfontSourceUrl(params = {}) {
 export function pluginKey(def) {
   const p = def?.params || {};
   switch (def?.type) {
-    case 'soundfont': return 'sf:' + soundfontSourceUrl(p);
+    case 'soundfont': return 'sf:' + soundfontSourceUrl(p) + (p.multisample ? `|ms:${p.multisample}|${(p.range || []).join(',')}` : '');
     case 'faust': return p.code ? 'faust:' + hashString(p.code) : (p.url ? 'faust-url:' + p.url : null);
     case 'wam': return p.url ? 'wam:' + p.url : null;
     default: return null;

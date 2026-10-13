@@ -94,7 +94,7 @@ export function showEffectMenu(pos, onPick) {
 }
 
 // ============================================================================ helpers
-const USER_PRESET_KEY = 'dawww-user-presets';
+const USER_PRESET_KEY = 'daw3-user-presets';
 function loadUserPresets() {
   try { return JSON.parse(localStorage.getItem(USER_PRESET_KEY) || '{}') || {}; } catch { return {}; }
 }
@@ -912,11 +912,11 @@ export function createDevicePanel(app) {
 
   function isSampleDrag(e) {
     const t = e.dataTransfer?.types || [];
-    return [...t].includes('application/x-dawww-sample') || [...t].includes('Files');
+    return [...t].includes('application/x-daw3-sample') || [...t].includes('Files');
   }
   async function handleSampleDrop(e, onId) {
     e.preventDefault();
-    const id = e.dataTransfer.getData('application/x-dawww-sample');
+    const id = e.dataTransfer.getData('application/x-daw3-sample');
     if (id && store.get().samples[id]) { onId(id); return; }
     const files = [...(e.dataTransfer.files || [])].filter((f) => /^audio\//.test(f.type) || /\.(wav|mp3|ogg|flac|aiff?|m4a)$/i.test(f.name));
     if (!files.length) { app.toast?.('Drop an audio file (wav, mp3, ogg, flac…)', { level: 'warn' }); return; }
@@ -1232,14 +1232,14 @@ export function createDevicePanel(app) {
     // drag to reorder (HTML5 DnD on the header) — not on plugboard channels (cables set the order)
     shell.head.draggable = !patched;
     shell.head.addEventListener('dragstart', (e) => {
-      e.dataTransfer.setData('application/x-dawww-fx', fx.id);
+      e.dataTransfer.setData('application/x-daw3-fx', fx.id);
       e.dataTransfer.effectAllowed = 'move';
       shell.el.classList.add('dragging');
     });
     shell.head.addEventListener('dragend', () => { shell.el.classList.remove('dragging'); chain.querySelectorAll('.drop-before,.drop-after').forEach((x) => x.classList.remove('drop-before', 'drop-after')); });
     shell.el.addEventListener('dragover', (e) => {
       const types = [...(e.dataTransfer?.types || [])];
-      if (!types.includes('application/x-dawww-fx') && !types.includes('application/x-dawww-effect')) return;
+      if (!types.includes('application/x-daw3-fx') && !types.includes('application/x-daw3-effect')) return;
       e.preventDefault();
       const r = shell.el.getBoundingClientRect();
       const after = e.clientX > r.left + r.width / 2;
@@ -1250,8 +1250,8 @@ export function createDevicePanel(app) {
     shell.el.addEventListener('drop', (e) => {
       const after = shell.el.classList.contains('drop-after');
       shell.el.classList.remove('drop-before', 'drop-after');
-      const id = e.dataTransfer.getData('application/x-dawww-fx');
-      const newType = e.dataTransfer.getData('application/x-dawww-effect');
+      const id = e.dataTransfer.getData('application/x-daw3-fx');
+      const newType = e.dataTransfer.getData('application/x-daw3-effect');
       e.preventDefault();
       if (id) { if (id !== fx.id) moveEffect(tgt, id, index + (after ? 1 : 0)); } else if (newType && EFFECT_DEFS[newType]) addEffect(tgt, newType, {}, index + (after ? 1 : 0));
     });
@@ -1286,13 +1286,13 @@ export function createDevicePanel(app) {
   function addEffectCard(tgt) {
     const b = h('button.dv-add-fx', { type: 'button', title: 'Add an insert effect (EQ, compressor, reverb, delay, distortion…)' }, icon('plus', 18), h('span', 'Add effect'));
     b.addEventListener('click', (e) => showEffectMenu(e, (type, params) => addEffect(tgt, type, params)));
-    b.addEventListener('dragover', (e) => { const t = [...(e.dataTransfer?.types || [])]; if (t.includes('application/x-dawww-fx') || t.includes('application/x-dawww-effect')) { e.preventDefault(); b.classList.add('drop'); } });
+    b.addEventListener('dragover', (e) => { const t = [...(e.dataTransfer?.types || [])]; if (t.includes('application/x-daw3-fx') || t.includes('application/x-daw3-effect')) { e.preventDefault(); b.classList.add('drop'); } });
     b.addEventListener('dragleave', () => b.classList.remove('drop'));
     b.addEventListener('drop', (e) => {
       b.classList.remove('drop');
       e.preventDefault();
-      const id = e.dataTransfer.getData('application/x-dawww-fx');
-      const type = e.dataTransfer.getData('application/x-dawww-effect');
+      const id = e.dataTransfer.getData('application/x-daw3-fx');
+      const type = e.dataTransfer.getData('application/x-daw3-effect');
       if (id) moveEffect(tgt, id, tgt.fx.length);
       else if (type && EFFECT_DEFS[type]) addEffect(tgt, type);
     });

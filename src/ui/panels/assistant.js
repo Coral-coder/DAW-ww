@@ -8,7 +8,7 @@ import * as theory from '../../theory/index.js';
 import * as genres from '../../gen/genres.js';
 import * as audio from '../../audio/index.js';
 
-const LS_TAB = 'dawww-assistant-tab';
+const LS_TAB = 'daw3-assistant-tab';
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } };
 const cap = (s) => String(s || '').replace(/(^|[-\s])\w/g, (m) => m.toUpperCase()).replace(/-/g, ' ');

@@ -23,4 +23,4 @@ createServer(async (req, res) => {
   } catch {
     res.writeHead(404).end('Not found');
   }
-}).listen(port, () => console.log(`daWWW running at http://localhost:${port}`));
+}).listen(port, () => console.log(`daW³ running at http://localhost:${port}`));

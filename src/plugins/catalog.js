@@ -102,7 +102,7 @@ const faustEntry = (type) => ([id, p]) => ({
   type,
   category: FAUST_CATS[id] || (type === 'effect' ? 'Effect' : 'Synth'),
   description: p.description,
-  author: 'daWWW · Faust libraries (GRAME)',
+  author: 'daW³ · Faust libraries (GRAME)',
   license: 'MIT / Faust libraries (LGPL-with-exception, STK)',
   source: { code: p.code },
   homepage: FAUST_HOME,

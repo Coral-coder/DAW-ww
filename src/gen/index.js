@@ -1,4 +1,4 @@
-// daWWW generators — pure, deterministic with `rng` from createRng(seed). Re-exports every generator module.
+// daW³ generators — pure, deterministic with `rng` from createRng(seed). Re-exports every generator module.
 export * from './genres.js';
 export * from './drums.js';
 export * from './harmony.js';
@@ -12,6 +12,8 @@ export * from './assistant.js';
 export { generateBassline as generateBass } from './bass.js';
 export * from './groove.js';
 export * from './arrange.js';
+export * from './form.js';
 export * from './mix.js';
 export * from './sound.js';
 export * from './rides.js';
+export * from './extend.js';

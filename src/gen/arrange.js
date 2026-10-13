@@ -4,17 +4,9 @@ import { createRng } from '../core/util.js';
 import { getProgression, romanToChord, scalePitchClasses, chordPitchClasses, SCALES } from '../theory/index.js';
 import { createAutomationLane } from '../core/automation.js';
 import { pickGenreProgression } from './harmony.js';
+import { sectionKind } from './form.js';
 
-/** Map a section name to an arrangement function. */
-export function sectionKind(name = '') {
-  const n = name.toLowerCase();
-  if (/intro/.test(n)) return 'intro';
-  if (/outro|fade out|ending/.test(n)) return 'outro';
-  if (/build|pre|rise|lift/.test(n)) return 'build';
-  if (/break|bridge|reflection|fade|calm/.test(n)) return 'break';
-  if (/drop|chorus|hook|peak|climax|finale|bloom|^b$|solo/.test(n)) return 'main';
-  return 'verse';
-}
+export { sectionKind };
 
 /** Harmonic type of a section: which progression it uses. */
 export function sectionType(name = '') {
@@ -35,11 +27,11 @@ const MELODIC = ['bass', 'chords', 'pad', 'lead', 'arp'];
  * Rules: first verse is sparse (no pad / arp), later verses add a layer; the first chorus holds back the arp when a
  * lead sings (the last chorus lifts with everything); at most 5 melodic layers; fx only on transitions.
  */
-export function planSections(genre, { bpb = 4, available } = {}) {
+export function planSections(genre, { bpb = 4, available, structure, evolve = true } = {}) {
   const counts = {};
   const typeCounts = {};
   let beat = 0;
-  const out = genre.structure.map((s, index) => {
+  const out = (structure || genre.structure).map((s, index) => {
     counts[s.name] = (counts[s.name] || 0) + 1;
     const kind = sectionKind(s.name);
     const type = sectionType(s.name);
@@ -67,6 +59,15 @@ export function planSections(genre, { bpb = 4, available } = {}) {
     // at most five melodic layers at once
     while (s.roles.filter((r) => MELODIC.includes(r)).length > 5) drop(['arp', 'pad'].find(has));
     if (s.kind === 'outro' && has('lead')) drop('lead');
+  }
+  // long sections evolve: in a repeated (or 32-bar) groove / drop a held-back layer enters halfway (s.enter)
+  if (evolve) {
+    for (const s of out) {
+      if (s.bars < 16 || !(s.kind === 'verse' || s.kind === 'main') || (s.occurrence < 2 && s.bars < 32)) continue;
+      if (s.roles.filter((r) => MELODIC.includes(r)).length >= 5) continue;
+      const role = ['arp', 'pad', 'chords'].find((r) => !s.roles.includes(r) && (!available || available.has(r)));
+      if (role) s.enter = [role];
+    }
   }
   for (let i = 0; i < out.length; i++) { out[i].prev = out[i - 1] || null; out[i].next = out[i + 1] || null; }
   return out;

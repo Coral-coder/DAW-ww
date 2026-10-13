@@ -56,7 +56,7 @@ test('detectPluginKind by extension and by content', () => {
   assert.equal(detectPluginKind('https://x/FluidR3_GM/marimba-mp3.js'), 'soundfont');
   assert.equal(detectPluginKind('https://x/FluidR3_GM/marimba-ogg.js?x=1'), 'soundfont');
   assert.equal(detectPluginKind('https://x/plugin.json'), 'manifest');
-  assert.equal(detectPluginKind('https://x/daWWW.json'), 'manifest');
+  assert.equal(detectPluginKind('https://x/daW3.json'), 'manifest');
   assert.equal(detectPluginKind('https://x/wam/index.js'), 'wam');
   assert.equal(detectPluginKind('https://x/a.txt'), null);
   assert.equal(detectPluginKind('https://x/a.js', 'MIDI.Soundfont.marimba = { "A0": "data:audio/mp3;base64,AA" }'), 'soundfont');
@@ -68,7 +68,7 @@ test('detectPluginKind by extension and by content', () => {
 
 test('validateManifest + manifestUrls + joinUrl', () => {
   const base = `${J}/o/r@main/`;
-  const ok = validateManifest('{"name":"Fat Synth","kind":"faust","entry":"dsp/fat.dsp","description":"big"}', base + 'daWWW.json');
+  const ok = validateManifest('{"name":"Fat Synth","kind":"faust","entry":"dsp/fat.dsp","description":"big"}', base + 'daW3.json');
   assert.ok(ok.ok, ok.errors.join());
   assert.equal(ok.manifest.url, `${J}/o/r@main/dsp/fat.dsp`);
   assert.equal(ok.manifest.type, 'instrument');
@@ -80,7 +80,7 @@ test('validateManifest + manifestUrls + joinUrl', () => {
   assert.equal(bad.errors.length, 4);
   assert.equal(validateManifest('{nope').ok, false);
   assert.equal(validateManifest([]).ok, false);
-  assert.deepEqual(manifestUrls('https://github.com/o/r'), [`${J}/o/r/daWWW.json`, `${J}/o/r/plugin.json`]);
+  assert.deepEqual(manifestUrls('https://github.com/o/r'), [`${J}/o/r/daW3.json`, `${J}/o/r/plugin.json`]);
   assert.equal(joinUrl('https://a.b/c/d.json', 'e/f.dsp'), 'https://a.b/c/e/f.dsp');
   assert.equal(joinUrl('https://a.b/c/', '../x.js'), 'https://a.b/x.js');
   assert.equal(nameFromUrl('https://x/FluidR3_GM/marimba-mp3.js'), 'marimba');

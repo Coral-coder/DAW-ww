@@ -81,4 +81,4 @@ export function createXView(app) { return { el, show?(), hide?() } }
 `index.html` links every CSS file above. Run the app with `npm start` (http://localhost:5173, add `?nowelcome`
 to skip the welcome dialog). Chromium for automated checks: Playwright is pre-configured
 (`PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`); install `playwright-core` in a scratch dir under /tmp/claude-0/,
-never in the repo. `window.dawww` exposes the app object for automation.
+never in the repo. `window.daw3` exposes the app object for automation.

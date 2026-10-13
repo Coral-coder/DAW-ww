@@ -1,7 +1,7 @@
 # Sample library (real drum machines & Strudel sounds)
 
 `src/audio/library/*` streams the same sample collections [Strudel](https://strudel.cc) uses, straight
-from their GitHub repositories, at runtime. **daWWW does not bundle or redistribute any of these
+from their GitHub repositories, at runtime. **daW³ does not bundle or redistribute any of these
 files**: users' browsers fetch them from the original repositories (exactly like strudel.cc), and every
 sampled sound falls back to a synthesized one when the network is unavailable.
 
@@ -57,7 +57,7 @@ real velocity layers for VCSL.
 * Mirrors: `raw.githubusercontent.com` first, `cdn.jsdelivr.net/gh/<owner>/<repo>@<ref>/…` second
   (`library.setMirrorOrder()` swaps them). jsDelivr refuses GitHub repos > 50 MB (tidal-drum-machines,
   Dirt-Samples), so raw is the reliable primary; a mirror that keeps failing for a repo is tried last.
-* Raw bytes: memory + Cache Storage (`dawww-samples-v1`) → reloads are instant and work offline.
+* Raw bytes: memory + Cache Storage (`daw3-samples-v1`) → reloads are instant and work offline.
   Decoded `AudioBuffer`s are cached per sample rate. 6 concurrent fetches, 20 s timeout, failures
   remembered for 30 s. Events: `library.on('progress' | 'decoded' | 'error', fn)`.
 * Offline render: sampled drum instruments expose `ready` (awaited like plugin instruments) and code tracks

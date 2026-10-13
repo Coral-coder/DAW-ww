@@ -66,7 +66,7 @@ const BUS_TEMPLATES = [
   { label: 'Empty bus', name: 'Bus', fx: () => [], help: 'Blank return track' },
 ];
 
-const LS_KEY = 'dawww-mixer';
+const LS_KEY = 'daw3-mixer';
 function loadPrefs() {
   try { return { narrow: false, showBuses: true, ...JSON.parse(localStorage.getItem(LS_KEY) || '{}') }; } catch { return { narrow: false, showBuses: true }; }
 }

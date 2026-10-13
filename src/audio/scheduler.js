@@ -4,7 +4,7 @@
 // collectEvents(project, b0, b1, opts) returns every event whose (unswung) onset lies in the
 // half-open beat window [b0, b1). Windows are contiguous so nothing is doubled or dropped.
 // Event shapes (beat = absolute song/transport beat, swing already applied):
-//   { type:'note',  trackId, beat, pitch, vel, dur }            dur in beats
+//   { type:'note',  trackId, beat, pitch, vel, dur, x? }        dur in beats; x = note expression {glide, gt, bend, bendAt, vib, flam}
 //   { type:'audio', trackId, beat, clip, offset, dur }          offset: beats into the clip (added to clip.offset)
 //   { type:'code',  trackId, beat, dur, value }                 dur in beats (legato applied)
 //   { type:'click', beat, accent }
@@ -102,7 +102,10 @@ function pushPatternNotes(out, track, pat, anchor, offset, lo, hi, b0, b1, swing
       if (!inWin(s, from, to) || s < lo - EPS) continue;
       let dur = n.dur > 0 ? n.dur : 0.25;
       if (s + dur > hi) dur = Math.max(0.01, hi - s); // cut at clip end
-      out.push({ type: 'note', trackId: track.id, beat: applySwing(s, swing), pitch: n.pitch, vel: n.vel ?? 0.8, dur });
+      const ev = { type: 'note', trackId: track.id, beat: applySwing(s, swing), pitch: n.pitch, vel: n.vel ?? 0.8, dur };
+      // performance expression (src/gen/expression.js): slide-in, bend, vibrato -> instrument trigger `extra`
+      if (n.glide != null || n.bend != null || n.vib != null || n.flam != null) ev.x = { glide: n.glide, gt: n.gt, bend: n.bend, bendAt: n.bendAt, vib: n.vib, flam: n.flam };
+      out.push(ev);
     }
   }
 }

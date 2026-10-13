@@ -7,6 +7,8 @@ import { getGenre } from './genres.js';
 
 /** Mix balance by role in dB, for loudness-normalised instruments (see LEVEL_FIX); drums / bass peak around -4..-6 dBFS. */
 export const ROLE_TRIM_DB = { drums: -2.5, bass: -4.5, chords: -7, pad: -10, lead: -8, arp: -12, fx: -12 };
+/** Global fader offset: leaves the master limiter ~1 dB of work at most (measured, see report). */
+export const MIX_HEADROOM_DB = -2;
 /** Sub-heavy basses read low on a K-weighted meter but carry most of the energy: anchor them a little lower. */
 const SUB_BASSES = new Set(['808-bass', 'sub-bass', 'reese-bass', 'wobble-bass', 'dub-bass']);
 
@@ -107,7 +109,7 @@ export function createSongMaster(genreId) {
     volume: 0.9,
     fx: [
       createEffect('compressor', { threshold: acoustic ? -14 : -12, ratio: 1.8, attack: 0.03, release: 0.25, knee: 10, makeup: 0, mix: 1 }),
-      createEffect('limiter', { gain: acoustic ? 1.5 : 2.5, threshold: -1.5, release: 0.12, ceiling: -0.5 }),
+      createEffect('limiter', { gain: 0, threshold: -1.5, release: 0.12, ceiling: -0.5 }),
     ],
     automation: [],
   };
@@ -130,7 +132,7 @@ export function mixTrack(track, ctx) {
     + (role === 'bass' && sidechain ? 2 : 0) // the ducker takes ~2 dB out on average
     + (role === 'bass' && sf ? -3 : 0) // sampled basses sustain (walking / finger lines) and read hot in the mix
     + (role === 'drums' && ['cinematic', 'ambient'].includes(g.family) ? -4 : 0); // orchestral percussion supports, it doesn't lead
-  track.volume = Math.round(clamp(0.8 * dbToGain(trim), 0.02, 1.5) * 1000) / 1000;
+  track.volume = Math.round(clamp(0.8 * dbToGain(trim + MIX_HEADROOM_DB), 0.02, 1.5) * 1000) / 1000;
   const fx = [];
   const sends = {};
   const [rev, dly] = ctx.buses || [];

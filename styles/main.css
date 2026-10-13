@@ -1,4 +1,4 @@
-/* daWWW — core styles */
+/* daW³ — core styles */
 :root {
   --bg: #0f1116;
   --bg-2: #151821;
@@ -262,3 +262,11 @@ canvas.meter { width: 10px; background: #000; border-radius: 2px; image-renderin
   .lcd { min-width: 84px; padding: 2px 6px; }
   .transport-btn { width: 30px; }
 }
+
+/* Song wizard length + Extend song dialog */
+.wizard-length-line { margin: 4px 0 0; font-size: 12px; }
+.extend-dialog { display: flex; flex-direction: column; gap: 10px; }
+.extend-dialog .row { gap: 10px; align-items: flex-end; }
+.extend-quicks { gap: 6px !important; }
+.extend-preview { margin: 0; padding: 8px 10px; border-radius: 6px; background: var(--bg-3); font-weight: 600; }
+.extend-hint { margin: 0; }

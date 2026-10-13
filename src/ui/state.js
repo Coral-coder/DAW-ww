@@ -25,7 +25,7 @@ export class UIState extends Emitter {
       expertMode: false,
     };
     try {
-      const saved = JSON.parse(localStorage.getItem('dawww-ui') || '{}');
+      const saved = JSON.parse(localStorage.getItem('daw3-ui') || '{}');
       for (const k of PERSIST_KEYS) if (k in saved) this.state[k] = saved[k];
     } catch { /* storage unavailable */ }
   }
@@ -41,7 +41,7 @@ export class UIState extends Emitter {
       try {
         const out = {};
         for (const k of PERSIST_KEYS) out[k] = this.state[k];
-        localStorage.setItem('dawww-ui', JSON.stringify(out));
+        localStorage.setItem('daw3-ui', JSON.stringify(out));
       } catch { /* ignore */ }
       this.emit('change', changed, this.state);
     }

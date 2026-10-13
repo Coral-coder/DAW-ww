@@ -2,9 +2,16 @@
 // Downloads one instrument file (≈2 MB of base64 MP3/OGG per note), decodes every note once
 // (in-memory bank cache shared by live playback and offline renders) and plays each MIDI note
 // from the nearest sampled note, repitched with playbackRate.
-import { parseSoundfontText, dataUrlToBytes, nearestSampleIndex, playbackRateFor } from './soundfont-parse.js';
+//
+// params.multisample (optional): a real multisampled instrument from src/audio/library/multisample-data.js
+// (velocity layers, round robins, loops, release samples) tried first; params.range [lo, hi] limits which of
+// its notes are downloaded. Fallback order: multisample -> midi-js file of params.library -> FluidR3_GM;
+// when everything fails `ready` resolves false and the Instrument wrapper switches to its fallbackPreset.
+import { parseSoundfontText, dataUrlToBytes } from './soundfont-parse.js';
 import { fetchText, forget, releaseMemory } from './fetch-cache.js';
-import { setStatus, soundfontSourceUrl, friendlyError, userError } from './status.js';
+import { setStatus, soundfontSourceUrl, friendlyError, userError, pluginKey } from './status.js';
+import { soundfontUrl } from './gm.js';
+import { loadMultisampleBank, zoneBankFromSoundfont, playSampleVoice, releaseSampleVoice, MS_SETS } from '../audio/library/multisample.js';
 
 const banks = new Map(); // url -> Promise<{ name, midis:number[], buffers:AudioBuffer[] }>
 
@@ -83,100 +90,94 @@ export class SoundfontEngine {
     this.out = ctx.createGain();
     this.out.connect(output);
     this.voices = [];
-    this.bank = null;
+    this.bank = null; // zone bank (multisample or wrapped midi-js bank)
     this.url = null;
+    this.source = null; // 'multisample:<id>' | 'soundfont:<library>' — what actually plays
     this.error = null;
     this.ready = Promise.resolve(false);
     this.setParams(params);
   }
 
-  get key() { return 'sf:' + this.url; }
+  get key() { return pluginKey({ type: 'soundfont', params: this.p }); }
 
   setParams(p) {
     this.p = p || {};
     const t = this.ctx.currentTime;
     try { this.out.gain.setTargetAtTime(clamp(Number(this.p.gain ?? 0.8), 0, 2), t, 0.01); } catch { this.out.gain.value = this.p.gain ?? 0.8; }
     const url = soundfontSourceUrl(this.p);
-    if (url !== this.url) {
-      this.url = url;
+    const src = `${url}|${this.p.multisample || ''}|${(this.p.range || []).join(',')}`;
+    if (src !== this.url) {
+      this.url = src;
       this.bank = null;
-      this.ready = this._load(url);
+      this.ready = this._load(src);
     }
   }
 
   reload() {
-    const url = this.url;
+    const url = soundfontSourceUrl(this.p);
     this.url = null;
     return resetSoundfont(url).then(() => { this.setParams(this.p); return this.ready; });
   }
 
-  _load(url) {
+  async _load(src) {
     this.error = null;
-    return loadSoundfontWithStatus(url, this.ctx.sampleRate).then((bank) => {
-      if (this.url === url) this.bank = bank;
-      return true;
-    }, (e) => {
-      if (this.url === url) this.error = e.message;
-      return false;
-    });
+    const p = this.p;
+    const key = this.key;
+    const sr = this.ctx.sampleRate;
+    const ms = p.multisample && MS_SETS[p.multisample] ? p.multisample : null;
+    const range = Array.isArray(p.range) && p.range.length === 2 ? p.range : null;
+    const current = () => this.url === src;
+    if (ms) {
+      setStatus(key, { state: 'loading', progress: 0, message: `Downloading ${MS_SETS[ms].name}…` });
+      try {
+        const bank = await loadMultisampleBank(ms, { sampleRate: sr, range, onProgress: (f) => setStatus(key, { state: 'loading', progress: f, message: `Downloading ${MS_SETS[ms].name}…` }) });
+        if (!current()) return false;
+        this.bank = bank;
+        this.source = `multisample:${ms}`;
+        setStatus(key, { state: 'ready', progress: 1, message: `${bank.files} samples`, info: { name: MS_SETS[ms].name, samples: bank.files, source: this.source, license: MS_SETS[ms].license } });
+        return true;
+      } catch (e) {
+        console.warn('[soundfont] multisample failed, falling back to the GM soundfont:', e?.message || e);
+      }
+    }
+    // midi-js soundfont: the requested library, then FluidR3_GM (the smallest, most widely cached set)
+    const urls = [soundfontSourceUrl(p)];
+    if (!p.url && p.library && p.library !== 'FluidR3_GM') urls.push(soundfontUrl('FluidR3_GM', p.instrument, p.format));
+    let lastErr = null;
+    for (const url of urls) {
+      try {
+        const bank = await loadSoundfontWithStatus(url, sr);
+        if (!current()) return false;
+        this.bank = zoneBankFromSoundfont(bank);
+        this.source = `soundfont:${/\/(FluidR3_GM|MusyngKite|FatBoy)\//.exec(url)?.[1] || 'custom'}`;
+        if (key !== 'sf:' + url) setStatus(key, { state: 'ready', progress: 1, message: `${bank.buffers.length} samples`, info: { name: bank.name, samples: bank.buffers.length, source: this.source } });
+        return true;
+      } catch (e) { lastErr = e; }
+    }
+    if (current()) {
+      this.error = lastErr?.message || 'Could not load the instrument samples.';
+      setStatus(key, { state: 'error', error: this.error, message: this.error });
+    }
+    return false;
   }
 
   _active() { return this.voices.filter((v) => !v.done); }
 
-  _start(pitch, vel, time) {
+  _start(pitch, vel, time, extra = {}) {
     const bank = this.bank;
     if (!bank) return null;
-    const ctx = this.ctx;
-    const t = Math.max(time ?? ctx.currentTime, ctx.currentTime);
-    const p = this.p;
-    const note = pitch + Number(p.tune || 0);
-    const idx = nearestSampleIndex(bank.midis, note);
-    if (idx < 0) return null;
+    const t = Math.max(time ?? this.ctx.currentTime, this.ctx.currentTime);
     // voice limit: release the oldest voices first
     const active = this._active();
-    const maxV = clamp(Math.round(p.polyphony ?? 32), 1, 64);
+    const maxV = clamp(Math.round(this.p.polyphony ?? 32), 1, 64);
     for (let i = 0; i <= active.length - maxV; i++) this._release(active[i], t, 0.015);
-
-    const src = ctx.createBufferSource();
-    src.buffer = bank.buffers[idx];
-    src.playbackRate.value = playbackRateFor(note, bank.midis[idx], Number(p.fine || 0));
-    const g = ctx.createGain();
-    const vs = clamp(Number(p.velSens ?? 0.7), 0, 1);
-    const v = clamp(Number(vel ?? 0.8), 0, 1);
-    const amp = ((1 - vs) + vs * v * v) * (bank.norm || 1);
-    const att = Math.max(0.001, Number(p.attack ?? 0.002));
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(amp, t + att);
-    src.connect(g);
-    g.connect(this.out);
-    src.start(t);
-    const voice = { pitch, src, g, start: t, done: false, released: false };
-    src.onended = () => {
-      voice.done = true;
-      try { g.disconnect(); } catch { /* */ }
-      const i = this.voices.indexOf(voice);
-      if (i >= 0) this.voices.splice(i, 1);
-    };
-    this.voices.push(voice);
-    return voice;
+    return playSampleVoice(this, bank, pitch, vel, t, extra);
   }
 
-  _release(voice, time, fast = 0) {
-    if (!voice || voice.released || voice.done) return;
-    voice.released = true;
-    const t = Math.max(time ?? this.ctx.currentTime, voice.start);
-    const rel = fast || Math.max(0.01, Number(this.p.release ?? 0.4));
-    const gp = voice.g.gain;
-    try {
-      if (gp.cancelAndHoldAtTime) gp.cancelAndHoldAtTime(t);
-      else { gp.cancelScheduledValues(t); }
-      gp.setTargetAtTime(0, t, rel / 5);
-      voice.src.stop(t + rel + 0.05);
-    } catch { /* already stopped */ }
-  }
+  _release(voice, time, fast = 0) { releaseSampleVoice(this, voice, time, fast); }
 
-  trigger(time, pitch, vel, durSec) {
-    const v = this._start(pitch, vel, time);
+  trigger(time, pitch, vel, durSec, extra) {
+    const v = this._start(pitch, vel, time, extra || {});
     if (v) this._release(v, time + Math.max(0.005, durSec));
   }
 

@@ -1,4 +1,4 @@
-// daWWW music theory — pure functions, no DOM / audio. Re-exports every theory module.
+// daW³ music theory — pure functions, no DOM / audio. Re-exports every theory module.
 export * from './notes.js';
 export * from './scales.js';
 export * from './chords.js';

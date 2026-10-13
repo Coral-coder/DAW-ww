@@ -216,6 +216,91 @@ function makeImpulse(ctx, decay, size, damping) {
   return buf;
 }
 
+/**
+ * Reverb characters for the realistic impulse generator (makeSpaceImpulse). er: early-reflection taps, erSpan: s over
+ * which they arrive (scaled by size), erGain, tail: s before the diffuse tail starts, build: tail density build-up
+ * (s), low / high: T60 multipliers of the low (< 400 Hz) and high (> 3.5 kHz) bands (damping pulls highs further
+ * down), width: stereo width of the tail, decayMul: decay scaling.
+ */
+export const REVERB_CHARACTERS = {
+  room: { er: 16, erSpan: 0.03, erGain: 0.75, tail: 0.006, build: 0.01, low: 1.05, high: 0.5, width: 0.85, decayMul: 1 },
+  chamber: { er: 12, erSpan: 0.045, erGain: 0.55, tail: 0.01, build: 0.025, low: 1.15, high: 0.6, width: 0.95, decayMul: 1 },
+  hall: { er: 9, erSpan: 0.075, erGain: 0.42, tail: 0.018, build: 0.055, low: 1.3, high: 0.5, width: 1, decayMul: 1 },
+  plate: { er: 0, erSpan: 0, erGain: 0, tail: 0.0015, build: 0.004, low: 0.85, high: 0.85, width: 1, decayMul: 1 },
+  ambience: { er: 20, erSpan: 0.028, erGain: 0.9, tail: 0.004, build: 0.006, low: 0.9, high: 0.45, width: 0.8, decayMul: 0.45 },
+};
+
+/** 'auto' character from size / decay (rooms are small and short, halls big and long). */
+export function reverbCharacter(p) {
+  const c = p.character || 'auto';
+  if (c !== 'auto') return c;
+  if (p.size < 0.33 || p.decay < 0.9) return 'room';
+  if (p.decay >= 3.2 || p.size >= 0.75) return 'hall';
+  return 'chamber';
+}
+
+/**
+ * Realistic stereo impulse response (deterministic): early reflections (image-source-like taps, different per
+ * channel), then a diffuse tail that builds up and decays per band — lows ring longer, highs die first
+ * (frequency-dependent T60, `damping` steepens the highs) — with decorrelated channels for width.
+ */
+function makeSpaceImpulse(ctx, decay, size, damping, character) {
+  const sr = ctx.sampleRate;
+  const ch = REVERB_CHARACTERS[character] || REVERB_CHARACTERS.hall;
+  const key = `space|${sr}|${character}|${decay.toFixed(3)}|${size.toFixed(3)}|${damping.toFixed(3)}`;
+  const hit = irCache.get(key);
+  if (hit) return hit;
+  const T = Math.max(0.1, decay * ch.decayMul);
+  const tLow = T * ch.low, tMid = T, tHigh = T * (ch.high + (1 - ch.high) * (1 - damping) * 0.6) * (1 - 0.35 * damping);
+  const len = Math.max(256, Math.floor(sr * (Math.max(tLow, tMid) * 1.05 + ch.tail + 0.02)));
+  const buf = ctx.createBuffer(2, len, sr);
+  const a = (fc) => 1 - Math.exp((-2 * Math.PI * fc) / sr);
+  const aLow = a(400), aHigh = a(3500);
+  const k = -6.907755 / sr; // ln(1/1000) per sample: -60 dB at T seconds
+  const L = buf.getChannelData(0), R = buf.getChannelData(1);
+  const t0 = Math.floor(ch.tail * (0.5 + size) * sr);
+  const build = Math.max(1, ch.build * (0.5 + size) * sr);
+  for (let c = 0; c < 2; c++) {
+    const d = c ? R : L;
+    const rng = createRng(9011 + c * 4049 + Math.round(size * 100));
+    let lp = 0, lp2 = 0;
+    const dl = 1 + (c ? 0.03 : -0.03); // slightly different decay per side (a living, non-static tail)
+    const eL = Math.exp(k / (tLow * dl)), eM = Math.exp(k / (tMid * dl)), eH = Math.exp(k / (tHigh * dl));
+    let gL = 1, gM = 1, gH = 1;
+    for (let i = 0; i < len; i++) {
+      if (i >= t0) {
+        const w = rng() * 2 - 1;
+        lp += aLow * (w - lp); // low band
+        lp2 += aHigh * (w - lp2); // < 3.5 kHz
+        const low = lp, high = w - lp2, mid = lp2 - lp;
+        const env = 1 - Math.exp(-(i - t0) / build);
+        d[i] = (low * gL * 1.4 + mid * gM + high * gH * 0.9) * env;
+      }
+      gL *= eL; gM *= eM; gH *= eH;
+    }
+    // early reflections: sparse taps growing denser, quieter and darker with distance
+    for (let j = 0; j < ch.er; j++) {
+      const x = (j + 0.5) / ch.er;
+      const tt = 0.0025 + ch.erSpan * (0.55 + 0.9 * size) * Math.pow(x, 1.35) * (0.85 + rng() * 0.3);
+      const pos = Math.floor(tt * sr);
+      if (pos + 2 >= len) continue;
+      const amp = ch.erGain * Math.pow(1 - x * 0.85, 1.2) * (rng() < 0.5 ? -1 : 1) * (0.7 + rng() * 0.3);
+      const sm = 0.25 + 0.5 * x; // later taps are smeared (absorption)
+      d[pos] += amp * (1 - sm); d[pos + 1] += amp * sm * 0.7; d[pos + 2] += amp * sm * 0.3;
+    }
+  }
+  // tail width: mid / side
+  if (ch.width !== 1) {
+    for (let i = 0; i < len; i++) {
+      const m = (L[i] + R[i]) * 0.5, sd = (L[i] - R[i]) * 0.5 * ch.width;
+      L[i] = m + sd; R[i] = m - sd;
+    }
+  }
+  if (irCache.size > 12) irCache.delete(irCache.keys().next().value);
+  irCache.set(key, buf);
+  return buf;
+}
+
 // ------------------------------------------------------------------------------ shell
 function createShell(ctx) {
   const input = ctx.createGain();
@@ -698,7 +783,8 @@ const BUILDERS = {
     let irKey = '';
     let timer = null;
     const swap = (p) => {
-      const buf = makeImpulse(ctx, p.decay, p.size, p.damping);
+      const character = reverbCharacter(p);
+      const buf = character === 'classic' ? makeImpulse(ctx, p.decay, p.size, p.damping) : makeSpaceImpulse(ctx, p.decay, p.size, p.damping, character);
       const c = ctx.createConvolver();
       c.normalize = true;
       c.buffer = buf;
@@ -721,7 +807,7 @@ const BUILDERS = {
         setP(pre.delayTime, p.predelay, ctx, im);
         setP(lo.frequency, p.lowcut, ctx, im);
         setP(hi.frequency, p.highcut, ctx, im);
-        const k = `${p.decay}|${p.size}|${p.damping}`;
+        const k = `${p.decay}|${p.size}|${p.damping}|${p.character}`;
         if (k !== irKey) {
           irKey = k;
           if (!conv || im || isOffline(ctx)) swap(p);
@@ -907,6 +993,87 @@ const BUILDERS = {
         ms.setMonoBelow(p.monoBelow, im);
         setP(out.gain, dbToGain(p.output), ctx, im);
       },
+    };
+  },
+
+  // Mastering chain in one device: tone (low shelf, tilt around 1 kHz, air shelf) -> glue compressor (slow, low
+  // ratio; the node's built-in make-up gain is cancelled) -> soft saturation -> stereo width of the highs only
+  // (side = side + (w-1)·HP(side), so w = 1 is bit-transparent) -> limiter (native look-ahead compressor at
+  // ratio 20 + a 4x-oversampled soft clipper as true-peak safety) -> ceiling.
+  mastering(ctx, sh) {
+    const lowSh = ctx.createBiquadFilter(); lowSh.type = 'lowshelf'; lowSh.frequency.value = 90;
+    const tiltLo = ctx.createBiquadFilter(); tiltLo.type = 'lowshelf'; tiltLo.frequency.value = 900;
+    const tiltHi = ctx.createBiquadFilter(); tiltHi.type = 'highshelf'; tiltHi.frequency.value = 1100;
+    const air = ctx.createBiquadFilter(); air.type = 'highshelf'; air.frequency.value = 11000;
+    const glue = ctx.createDynamicsCompressor();
+    const glueMk = ctx.createGain();
+    const drvIn = ctx.createGain();
+    const drv = ctx.createWaveShaper(); drv.oversample = '2x';
+    drvIn.gain.value = 1;
+    const drvOut = ctx.createGain();
+    const dry = ctx.createGain(); const wetSat = ctx.createGain();
+    const satSum = stereoGain(ctx);
+    // highs-only width
+    const split = ctx.createChannelSplitter(2);
+    const merge = ctx.createChannelMerger(2);
+    const lToS = ctx.createGain(); lToS.gain.value = 0.5;
+    const rToS = ctx.createGain(); rToS.gain.value = -0.5;
+    const hp1 = ctx.createBiquadFilter(); hp1.type = 'highpass'; hp1.Q.value = Math.SQRT1_2;
+    const hp2 = ctx.createBiquadFilter(); hp2.type = 'highpass'; hp2.Q.value = Math.SQRT1_2;
+    const extra = ctx.createGain(); extra.gain.value = 0; // (width - 1)
+    const extraNeg = ctx.createGain(); extraNeg.gain.value = -1;
+    const passL = ctx.createGain(); const passR = ctx.createGain();
+    // limiter
+    const limIn = ctx.createGain();
+    const lim = ctx.createDynamicsCompressor();
+    lim.ratio.value = 20; lim.knee.value = 0; lim.attack.value = 0.001;
+    const limMk = ctx.createGain();
+    const clip = ctx.createWaveShaper(); clip.oversample = '4x';
+    clip.curve = makeCurve((x) => {
+      const a = Math.abs(x), k = 0.89; // knee from -1 dB to the ceiling
+      return a <= k ? x : Math.sign(x) * (k + (1 - k) * Math.tanh((a - k) / (1 - k)));
+    }, 8192);
+    const ceil = ctx.createGain();
+    sh.fxIn.connect(lowSh); lowSh.connect(tiltLo); tiltLo.connect(tiltHi); tiltHi.connect(air);
+    air.connect(glue); glue.connect(glueMk);
+    glueMk.connect(dry); dry.connect(satSum);
+    glueMk.connect(drvIn); drvIn.connect(drv); drv.connect(drvOut); drvOut.connect(wetSat); wetSat.connect(satSum);
+    satSum.connect(split);
+    split.connect(passL, 0); split.connect(passR, 1);
+    passL.connect(merge, 0, 0); passR.connect(merge, 0, 1);
+    split.connect(lToS, 0); split.connect(rToS, 1); lToS.connect(hp1); rToS.connect(hp1); hp1.connect(hp2); hp2.connect(extra);
+    extra.connect(merge, 0, 0); extra.connect(extraNeg); extraNeg.connect(merge, 0, 1);
+    merge.connect(limIn); limIn.connect(lim); lim.connect(limMk); limMk.connect(clip); clip.connect(ceil); ceil.connect(sh.wet);
+    // compressor make-up per the Web Audio spec: (1 / curve(0 dBFS))^0.6 — cancelled so levels stay predictable
+    const autoMakeupDb = (thr, ratio) => 0.6 * Math.max(0, -thr) * (1 - 1 / Math.max(1, ratio));
+    let curDrive = null;
+    return {
+      apply(p, im) {
+        setP(lowSh.gain, p.low, ctx, im);
+        setP(tiltLo.gain, -p.tilt / 2, ctx, im); setP(tiltHi.gain, p.tilt / 2, ctx, im);
+        setP(air.gain, p.air, ctx, im);
+        setP(glue.threshold, p.glueThreshold, ctx, im); setP(glue.ratio, p.glueRatio, ctx, im);
+        setP(glue.attack, p.glueAttack, ctx, im); setP(glue.release, p.glueRelease, ctx, im); setP(glue.knee, 6, ctx, im);
+        setP(glueMk.gain, dbToGain(-autoMakeupDb(p.glueThreshold, p.glueRatio)), ctx, im);
+        if (curDrive !== p.drive) {
+          curDrive = p.drive;
+          const k = dbToGain(p.drive);
+          drv.curve = makeCurve((x) => Math.tanh(x * k) / Math.tanh(k), 4096);
+        }
+        // the saturator is mixed in parallel, deeper with more drive (unity level at the input)
+        const sat = clamp(p.drive / 12, 0, 1);
+        setP(wetSat.gain, sat, ctx, im); setP(dry.gain, 1 - sat, ctx, im);
+        const kd = dbToGain(p.drive);
+        setP(drvOut.gain, Math.tanh(kd) / kd, ctx, im); // unity small-signal gain: only the peaks are rounded off
+        setP(hp1.frequency, p.widthFreq, ctx, im); setP(hp2.frequency, p.widthFreq, ctx, im);
+        setP(extra.gain, p.width - 1, ctx, im);
+        setP(limIn.gain, dbToGain(p.gain), ctx, im);
+        const thr = p.ceiling - 1;
+        setP(lim.threshold, thr, ctx, im); setP(lim.release, p.release, ctx, im);
+        setP(limMk.gain, dbToGain(-autoMakeupDb(thr, 20)) / dbToGain(p.ceiling), ctx, im);
+        setP(ceil.gain, dbToGain(p.ceiling), ctx, im);
+      },
+      getReduction: () => lim.reduction + glue.reduction,
     };
   },
 

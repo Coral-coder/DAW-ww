@@ -2,7 +2,7 @@
 // generation, file import/export. Views may also call store.transact directly
 // for local edits.
 import { h, icon } from './dom.js';
-import { modal, toast, fileInput, confirmDialog, contextMenu, promptText, select } from './components.js';
+import { modal, toast, fileInput, confirmDialog, contextMenu, promptText, select, button } from './components.js';
 import {
   createProject, createTrack, createPattern, createClip, createEffect, createNote, createScene,
   beatsPerBar, songLengthBeats, patternsForTrack, TRACK_COLORS, DRUM_PADS,
@@ -309,7 +309,7 @@ export function createActions(app) {
   // every armed audio track at the beat where it was heard.
   const recorder = new AudioRecorder(engine);
   let audioTake = null; // { trackIds, loop, ctxStart, finishing }
-  const prefKey = 'dawww-countin';
+  const prefKey = 'daw3-countin';
   const getCountIn = () => { try { return localStorage.getItem(prefKey) === '1'; } catch { return false; } };
   const setCountIn = (v) => { try { localStorage.setItem(prefKey, v ? '1' : '0'); } catch { /* */ } ui.set({ countIn: !!v }); };
   ui.set({ countIn: getCountIn(), audioRecording: false });
@@ -830,7 +830,7 @@ export function createActions(app) {
     const seed = opts.seed ?? rngSeed();
     let partial;
     try {
-      partial = gen.generateSong({ genre, key: opts.key, root: opts.key, scale: opts.scale, bpm: opts.bpm, seed });
+      partial = gen.generateSong({ genre, key: opts.key, root: opts.key, scale: opts.scale, bpm: opts.bpm, seed, length: opts.length, targetMinutes: opts.targetMinutes });
     } catch (e) {
       console.error(e);
       toast('Song generation failed: ' + e.message, { level: 'error' });
@@ -934,7 +934,12 @@ export function createActions(app) {
     return [
       { header: 'Create' },
       { label: 'Full song from genre…', icon: 'wand', onClick: () => showSongWizard() },
-      { label: `Regenerate song (${GENRES[p.genre]?.name || 'current genre'})`, icon: 'dice', onClick: () => generateSong({ genre: p.genre || 'house', key: p.key.root, scale: p.key.scale, bpm: p.bpm }) },
+      { label: `Regenerate song (${GENRES[p.genre]?.name || 'current genre'})`, icon: 'dice', submenu: Object.entries(gen.LENGTH_PRESETS).map(([id, lp]) => {
+        const g = GENRES[p.genre || 'house'] || GENRES.house;
+        const est = gen.planSongLength(g, { length: id, bpm: p.bpm });
+        return { label: `${lp.label} · ${gen.formatMinutes(est.minutes)} (${est.bars} bars)`, onClick: () => generateSong({ genre: p.genre || 'house', key: p.key.root, scale: p.key.scale, bpm: p.bpm, length: id }) };
+      }) },
+      { label: 'Extend song…', icon: 'plus', disabled: !p.clips.length, onClick: () => showExtendDialog() },
       '-',
       { header: 'Add a generated part' },
       { label: 'Drums', icon: 'drum', onClick: () => generatePart('drums') },
@@ -972,26 +977,168 @@ export function createActions(app) {
     const scaleSel = select({ options: [{ value: '', label: 'Genre default' }, ...Object.entries(SCALES).map(([id, s]) => ({ value: id, label: s.name }))], value: '', onChange: (v) => { scale = v || null; } });
     const bpmInput = h('input', { type: 'text', placeholder: 'auto', style: { width: '70px' } });
     bpmInput.addEventListener('keydown', (e) => e.stopPropagation());
+    bpmInput.addEventListener('input', () => syncLength());
+    // song length: presets with the minutes they give for this genre / tempo (live)
+    let length = 'standard';
+    const lengthSel = h('select.wizard-length', { title: 'Song length. Standard = the genre\'s usual length; Club = DJ edit with long intro / outro (dance genres)' });
+    lengthSel.addEventListener('change', () => { length = lengthSel.value; syncLength(); });
+    const lengthInfo = h('span.muted.wizard-length-info');
+    const syncLength = () => {
+      const g = GENRES[genre];
+      if (!g) return;
+      const b = parseInt(bpmInput.value) || g.defaultBpm;
+      lengthSel.replaceChildren(...Object.entries(gen.LENGTH_PRESETS).map(([id, lp]) => {
+        const est = gen.planSongLength(g, { length: id, bpm: b });
+        return h('option', { value: id }, `${lp.label} · ${gen.formatMinutes(est.minutes)}`);
+      }));
+      lengthSel.value = length;
+      const est = gen.planSongLength(g, { length, bpm: b });
+      lengthInfo.textContent = `≈ ${gen.formatMinutes(est.minutes)} · ${est.bars} bars · ${est.structure.map((x) => x.name).filter((n, i, a) => n !== a[i - 1]).join(' → ')}`;
+    };
     const info = h('p.muted');
     const syncFields = () => {
       const g = GENRES[genre];
       bpmInput.placeholder = String(g?.defaultBpm || 'auto');
       info.textContent = g?.tips?.length ? `Tip: ${g.tips[0]}` : '';
+      syncLength();
     };
     renderGrid(); syncFields();
     const body = h('div.wizard-step',
       search, h('div', { style: { maxHeight: '46vh', overflow: 'auto' } }, grid),
-      h('div.row.wrap', h('label.field', 'Key', rootSel), h('label.field', 'Scale', scaleSel), h('label.field', 'BPM', bpmInput)),
+      h('div.row.wrap', h('label.field', 'Key', rootSel), h('label.field', 'Scale', scaleSel), h('label.field', 'BPM', bpmInput), h('label.field', 'Length', lengthSel)),
+      h('p.wizard-length-line', lengthInfo),
       info);
     modal({
       title: 'Create a song', width: 860, body,
       actions: [
         { label: 'Cancel' },
         { label: 'Just set genre', onClick: () => applyGenreDefaults(genre) },
-        { label: 'Generate song', primary: true, onClick: () => { bpm = parseInt(bpmInput.value) || null; generateSong({ genre, key: root, scale: scale || undefined, bpm: bpm || undefined }); } },
+        { label: 'Generate song', primary: true, onClick: () => { bpm = parseInt(bpmInput.value) || null; generateSong({ genre, key: root, scale: scale || undefined, bpm: bpm || undefined, length }); } },
       ],
     });
     setTimeout(() => search.focus(), 30);
+  }
+
+  // ---------------------------------------------------------------- extend / shorten the song
+  /** Show [a, b) beats in the arrange view (after the arrangement grew). */
+  function revealInArrange(a, b) {
+    if (ui.get('view') !== 'arrange') ui.set({ view: 'arrange' });
+    setTimeout(() => app.views?.arrange?.revealRange?.(a, b), 60);
+  }
+
+  /** Extend the song by an amount (one undo step). opts: see gen.extendSong. -> the extension (or null) */
+  function extendSongBy(opts = {}) {
+    let res = null;
+    try {
+      store.transact('Extend song', (p) => {
+        res = gen.extendSong(p, opts);
+        if (!res.items.length) return;
+        gen.applyExtension(p, res);
+        if (p.mode !== 'song') p.mode = 'song';
+      });
+    } catch (e) {
+      console.error(e);
+      toast('Could not extend the song: ' + e.message, { level: 'error' });
+      return null;
+    }
+    if (!res?.items.length) { toast('Nothing to extend — the arrangement is empty.', { level: 'warn' }); return null; }
+    const first = res.items[0];
+    revealInArrange(first.start, first.start + res.addBeats);
+    const p = get();
+    toast(`${res.summary.replace(/^Adds /, 'Added ')} → ${gen.formatMinutes(gen.songEnd(p) / p.bpm)} total`, { level: 'success', timeout: 6000 });
+    return res;
+  }
+
+  /**
+   * "Extend song…" dialog: amount (bars / minutes, quick buttons), mode, live preview. opts preset the dialog:
+   * {mode, markerId (insert before), templateMarkerId (extend this section), at}
+   */
+  function showExtendDialog(preset = {}) {
+    const p0 = get();
+    if (!p0.clips.length) { toast('Generate or arrange a song first — there is nothing to extend yet.', { level: 'warn' }); return; }
+    const seed = rngSeed();
+    const bpb = beatsPerBar(p0);
+    const st = { mode: preset.mode || 'continue', unit: 'bars', amount: preset.bars ?? 32, kind: preset.kind || '', markerId: preset.markerId || null };
+    if (preset.templateMarkerId) {
+      const sec = gen.songSections(p0).find((x) => x.markerId === preset.templateMarkerId);
+      if (sec && preset.bars == null) st.amount = Math.max(4, Math.round(sec.bars));
+    }
+    const optsNow = () => {
+      const o = { mode: st.mode, seed };
+      if (st.unit === 'minutes') o.minutes = Math.max(0.1, Number(st.amount) || 1);
+      else if (st.unit === 'to') o.toMinutes = Number(st.amount) || 6;
+      else o.bars = Math.max(4, Math.round(Number(st.amount) || 16));
+      if (st.mode === 'insert-section') {
+        if (preset.templateMarkerId) {
+          o.templateMarkerId = preset.templateMarkerId;
+          const ms = [...(get().markers || [])].sort((a, b) => a.beat - b.beat);
+          const i = ms.findIndex((m) => m.id === preset.templateMarkerId);
+          if (ms[i + 1]) o.markerId = ms[i + 1].id; else o.at = gen.songEnd(get());
+        } else {
+          if (st.markerId) o.markerId = st.markerId; else o.at = preset.at ?? 0;
+          if (st.kind) o.kind = st.kind;
+        }
+      }
+      return o;
+    };
+    const modeSel = select({ options: Object.entries(gen.EXTEND_MODES).map(([id, m]) => ({ value: id, label: m.label })), value: st.mode, onChange: (v) => { st.mode = v; sync(); } });
+    const amountIn = h('input.extend-amount', { type: 'number', min: '1', step: '1', value: String(st.amount), style: { width: '76px' } });
+    amountIn.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') applyBtn.click(); });
+    amountIn.addEventListener('input', () => { st.amount = amountIn.value; sync(); });
+    const unitSel = select({ options: [{ value: 'bars', label: 'bars' }, { value: 'minutes', label: 'minutes' }, { value: 'to', label: 'minutes total (extend to)' }], value: st.unit, onChange: (v) => { st.unit = v; sync(); } });
+    const quick = (label, unit, amount) => {
+      return button(label, () => { st.unit = unit; st.amount = amount; amountIn.value = String(amount); unitSel.setValue(unit); sync(); }, { cls: 'small extend-quick' });
+    };
+    const markerOpts = () => [...(get().markers || [])].sort((a, b) => a.beat - b.beat).map((m) => ({ value: m.id, label: `before ${m.name} (bar ${Math.floor(m.beat / bpb) + 1})` }));
+    const markerSel = select({ options: markerOpts(), value: st.markerId || markerOpts()[0]?.value || '', onChange: (v) => { st.markerId = v; sync(); } });
+    if (!st.markerId) st.markerId = markerOpts()[0]?.value || null;
+    const kindSel = select({ options: [{ value: '', label: 'Auto (genre)' }, { value: 'break', label: 'Breakdown / bridge' }, { value: 'build', label: 'Build-up' }, { value: 'main', label: 'Drop / chorus' }, { value: 'verse', label: 'Verse / groove' }, { value: 'solo', label: 'Solo' }], value: st.kind, onChange: (v) => { st.kind = v; sync(); } });
+    const insertRow = h('div.row.wrap.extend-insert', h('label.field', 'Where', markerSel), h('label.field', 'Section', kindSel));
+    const hint = h('p.muted.extend-hint');
+    const preview = h('p.extend-preview');
+    const sync = () => {
+      const p = get();
+      insertRow.style.display = st.mode === 'insert-section' && !preset.templateMarkerId ? '' : 'none';
+      hint.textContent = preset.templateMarkerId && st.mode === 'insert-section'
+        ? `Extends "${(p.markers || []).find((m) => m.id === preset.templateMarkerId)?.name || 'section'}" with a varied repeat; everything after it moves right.`
+        : gen.EXTEND_MODES[st.mode]?.hint || '';
+      try {
+        const plan = gen.planExtension(p, optsNow());
+        preview.textContent = plan.items.length ? `${plan.summary} → ${gen.formatMinutes(plan.newEnd / p.bpm)} total` : plan.summary;
+        applyBtn.disabled = !plan.items.length;
+      } catch (e) {
+        preview.textContent = 'Preview failed: ' + e.message;
+      }
+    };
+    const body = h('div.extend-dialog',
+      h('div.row.wrap', h('label.field', 'Mode', modeSel), h('label.field', 'Amount', h('span.row', amountIn, unitSel))),
+      h('div.row.wrap.extend-quicks', quick('+16 bars', 'bars', 16), quick('+32 bars', 'bars', 32), quick('+1 min', 'minutes', 1), quick('+2 min', 'minutes', 2), quick('to 6 min', 'to', 6)),
+      insertRow, hint, preview,
+      h('p.muted', `Now ${gen.formatMinutes(gen.songEnd(p0) / p0.bpm)} (${gen.songEnd(p0) / bpb} bars). New sections re-use and vary your patterns, follow the song's chords, continue its automation and keep the same mix. One undo step.`));
+    let applyBtn;
+    const dlg = modal({
+      title: preset.templateMarkerId ? 'Extend this section' : st.mode === 'insert-section' ? 'Insert a section' : 'Extend song', width: 600, body,
+      actions: [
+        { label: 'Cancel' },
+        { label: 'Extend', primary: true, onClick: () => { extendSongBy(optsNow()); } },
+      ],
+    });
+    applyBtn = [...dlg.el.querySelectorAll('.modal-footer button')].pop();
+    applyBtn.classList.add('extend-apply');
+    sync();
+    setTimeout(() => amountIn.focus(), 30);
+  }
+
+  /** Remove the section that starts at a marker and close the gap (one undo step). */
+  function removeSectionAt(markerId) {
+    const m = (get().markers || []).find((x) => x.id === markerId);
+    if (!m) return;
+    let r = null;
+    store.transact('Remove section', (p) => { r = gen.removeSection(p, { markerId }); });
+    if (!r) return;
+    const p = get();
+    toast(`Removed "${m.name}" (${r.beats / beatsPerBar(p)} bars) — now ${gen.formatMinutes(gen.songEnd(p) / p.bpm)}. Ctrl+Z to undo.`, { level: 'success' });
+    revealInArrange(Math.max(0, r.start - beatsPerBar(p) * 4), r.start + beatsPerBar(p) * 8);
   }
 
   async function showLocalProjects() {
@@ -1019,7 +1166,7 @@ export function createActions(app) {
       return b;
     };
     const body = h('div',
-      h('div.welcome-hero', h('div.logo-mark', { style: { width: '48px', height: '48px', fontSize: '26px', margin: '0 auto', borderRadius: '12px' } }, '⚡'), h('h1', 'daWWW'), h('p', 'Sequence, synthesize, sample, generate and live-code — every genre, right in your browser.')),
+      h('div.welcome-hero', h('div.logo-mark', { style: { width: '48px', height: '48px', fontSize: '26px', margin: '0 auto', borderRadius: '12px' } }, '⚡'), h('h1', 'daW³'), h('p', 'Sequence, synthesize, sample, generate and live-code — every genre, right in your browser.')),
       h('div.welcome-actions',
         card('wand', 'Generate a song', 'Pick a genre and get a full arrangement to remix', () => showSongWizard()),
         card('drum', 'Start with a beat', 'Drum machine + step sequencer', () => { addTrack('drums'); generatePart('drums', { trackId: get().tracks.at(-1).id }); ui.set({ view: 'rack' }); }),
@@ -1063,7 +1210,7 @@ export function createActions(app) {
           h('li', 'Export WAV mixdowns, stems, MIDI or Strudel code.')))),
       h('div.section-title', 'Shortcuts'),
       h('table.shortcut-table', sc.map(([k, v]) => h('tr', h('td', h('kbd', k)), h('td', v)))));
-    modal({ title: 'daWWW — Help', body, width: 860, actions: [{ label: 'Close', primary: true }] });
+    modal({ title: 'daW³ — Help', body, width: 860, actions: [{ label: 'Close', primary: true }] });
   }
 
   // ---------------------------------------------------------------- boot / autosave
@@ -1094,7 +1241,7 @@ export function createActions(app) {
     recorder, startAudioRecording, finishAudioRecording, getCountIn, setCountIn, liveNoteOff, enableMidiInput, ensureAudio,
     setGenre, applyGenreDefaults, newProject, openProject, saveProject, renameProject, loadProjectObject,
     exportWav, exportMidiFile, exportCode, importMidiFile, importStrudel, renderCodeToTracks, importSamples, placeSample, sampleToSampler,
-    generatePart, generateSong, newProgression, currentProgression, applyAssistantAction,
+    generatePart, generateSong, newProgression, currentProgression, applyAssistantAction, showExtendDialog, extendSongBy, removeSectionAt,
     mainMenuItems, generateMenuItems, showSongWizard, showHelp, showWelcome, showLocalProjects,
     undo: () => { const l = store.undo(); if (l) app.setStatus?.(`Undo: ${l}`); },
     redo: () => { const l = store.redo(); if (l) app.setStatus?.(`Redo: ${l}`); },

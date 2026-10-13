@@ -1,4 +1,4 @@
-# daWWW — Architecture & Module Contracts
+# daW³ — Architecture & Module Contracts
 
 Zero-dependency, browser-native DAW. Plain ES modules (no bundler, no npm runtime deps),
 served statically. Pure-logic modules (theory, generators, code engine, io) must also run
@@ -218,7 +218,7 @@ limits: no m2 below C4, no M2 below G3, no 3rds below F3, no m9 between voices),
   basses keep strong beats / chord starts on chord tones and approach notes never grind against the current chord.
   `colorChord(chord, flavor, rng, {key})` takes extensions from the key (no maj7 on a dorian IV, no m9 on iii).
   Quality is enforced by `tests/harmony-quality.test.js` (all genres × seeds; rules in `tests/lib/harmony-check.js`).
-* `song.js`: `generateSong({genre, key?, scale?, bpm?, seed, withHarmony?}) -> partial project
+* `song.js`: `generateSong({genre, key?, scale?, bpm?, seed, withHarmony?, length?, targetMinutes?}) -> partial project
   {bpm, swing, key, genre, tracks, patterns, clips, scenes, markers}` using model factories (`withHarmony` adds
   `harmony` [{startBeat, durBeats, roman, root, type, bass, name}] + `harmonyLength` for analysis/tests).
 * Production layer used by `generateSong` (all pure, deterministic):
@@ -240,7 +240,27 @@ limits: no m2 below C4, no M2 below G3, no 3rds below F3, no m9 between voices),
   - `rides.js`: `addRides` — sparse automation lanes a producer would ride: per-section volume rides, pre-chorus pad swells,
     lead delay throws on phrase endings, pad width, breakdown filter dips, acid cutoff / resonance.
   `generateSong` returns `buses` + `master` too (the UI uses them) and, with `withHarmony`, `patternHarmony {patId: {harmony,
-  length}}` — the exact chords each pattern was written over (sections use different progressions).
+  length, key?}}` — the exact chords each pattern was written over (sections use different progressions; `key` is set on
+  patterns after a last-chorus key change, which pop / gospel / rock / country songs sometimes make — `sections[i].modulation`).
+* Song length / form (`form.js`, pure, no imports): every genre has a realistic standard length (`genre.minutes`, e.g. trance
+  7.5, house / techno 6.5, dnb 5, dubstep 4.5, pop 3.5, trap 3, lo-fi 3, jazz 5, ambient 6.5) and its `structure` is its
+  template (`STRUCTURES` in genres.js: DJ forms with drums-only intros / long breakdowns / two drops / DJ outros, verse–pre–
+  chorus–bridge–double-chorus songs, jazz head–solos–trading–head…) fitted to it by `fitStructure(structure, targetBars)`
+  (repeats / removes idiomatic blocks — EDM breakdown→build→drop, verse→pre→chorus, extra solo choruses — and doubles / halves
+  sections). `generateSong({length: 'short'|'standard'|'extended'|'club', targetMinutes})` → `resolveStructure` (short ≈ 60 %,
+  extended ≈ 140 %, club = DJ edit with ≥ 32-bar intro / outro for dance genres); `planSongLength(genre, opts)` previews it.
+  Long sections evolve: `planSections` marks a held-back layer that enters halfway (`section.enter`, pattern "(enters)").
+* `extend.js`: grow an existing song (generated or hand-made). `planExtension(project, {bars|minutes|toMinutes, mode, …})`
+  (preview: items + summary "Adds Breakdown 3 (16) → Build 3 (8) → Drop 3 (32) = +56 bars / +1:37"), `extendSong` (material:
+  varied copies of the template section's patterns — drum variants with fills / build rolls / crashes, lead hook variations
+  fitted to the section chords, octave lifts, an arp entering; same tracks / mix; automation lanes with points in the template
+  continue; the master fade moves to the new end) and `applyExtension(project, ext)` (mutates; inserting shifts later clips —
+  split at the insert point —, markers, automation, sections, loop). Modes: `continue` (EDM breakdown→build→drop, songs
+  bridge→double chorus then verse rounds, jazz more solos, loops A/B variations; before the outro when there is one),
+  `repeat-last`, `extend-outro` (peels layers away), `insert-section` (at a marker / beat, `kind` or `templateMarkerId`).
+  `removeSection(project, {markerId | start, end})` cuts a section and closes the gap. Sections come from the markers
+  (`songSections`), 8-bar parts without markers. UI: Create ▸ Extend song…, Arrange ▸ More ▸ Extend / Insert, marker menu
+  (Insert section here… / Extend this section by… / Shorten / remove section) → `actions.showExtendDialog` (one undo step).
 * `assistant.js`: `getRecommendations(project, context) -> [{id, level:'tip'|'warn'|'idea', title, text, action?: {label, kind, payload}}]`
   (context = { selectedTrackId, selectedPatternId, view }). Actions are applied by the UI via `applyAssistantAction`.
 
@@ -308,7 +328,7 @@ Web-native stand-ins for VSTs, as instrument types `soundfont` / `faust` / `wam`
 to reload lives in `params`: soundfont `{library, instrument, url?}`, faust `{name, code, url?,
 values:{address: value}}`, wam `{name, url, state}`.
 * Pure (Node-tested in `tests/plugins.test.js`): `github.js` (`resolveGitHubUrl` → jsDelivr,
-  `detectPluginKind`, `validateManifest` for `daWWW.json`/`plugin.json` `{name, kind, entry, type?}`),
+  `detectPluginKind`, `validateManifest` for `daW3.json`/`plugin.json` `{name, kind, entry, type?}`),
   `soundfont-parse.js` (midi-js file parser, note names), `gm.js` (128 GM names, libraries),
   `catalog.js` (+ `faust-library.js` sources), `status.js` (load-status registry keyed by `pluginKey(def)`).
 * Runtime: `soundfont.js` (bank cache, repitch, ADSR), `faust.js` (@grame/faustwasm from jsDelivr,

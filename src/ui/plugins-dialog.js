@@ -222,7 +222,7 @@ export function openPluginsDialog(app, opts = {}) {
           h('li', h('b', 'Faust'), ' — a .dsp source file, compiled in your browser. Instruments use the freq / gain / gate convention; anything with audio inputs works as an effect.'),
           h('li', h('b', 'SoundFont'), ' — a midi-js-soundfonts instrument file (…/instrument-mp3.js) like those in gleitz/midi-js-soundfonts.'),
           h('li', h('b', 'Web Audio Module 2.0'), ' — an ES module whose default export is the WAM class (experimental; runs live).'),
-          h('li', h('b', 'Repository'), ' — a repo/folder link with a daWWW.json or plugin.json manifest: ', h('code', '{"name": "My Synth", "kind": "faust", "entry": "synth.dsp", "type": "instrument"}'), '.'))));
+          h('li', h('b', 'Repository'), ' — a repo/folder link with a daW3.json or plugin.json manifest: ', h('code', '{"name": "My Synth", "kind": "faust", "entry": "synth.dsp", "type": "instrument"}'), '.'))));
   }
 
   // ------------------------------------------------------------------ faust tab

@@ -1,6 +1,6 @@
 <div align="center">
 
-# d a W W W
+# d a W ³
 
 `· · · — — — · · ·`
 
@@ -62,6 +62,6 @@ The blueprints are not hidden, merely [unlabelled](docs/ARCHITECTURE.md). The [f
 
 <sub>no dependencies were harmed. no servers were consulted. the audio never leaves your room.</sub>
 
-`▚▚▚  d a W W W  ▚▚▚`
+`▚▚▚  d a W ³  ▚▚▚`
 
 </div>

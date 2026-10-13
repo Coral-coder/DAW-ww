@@ -8,7 +8,7 @@ import { beatsPerBar, patternsForTrack, createPattern, createScene, TRACK_COLORS
 import { uid, deepClone } from '../../core/util.js';
 import { drawPatternNotes, hexToRgb, rgba, isDrumTrack, sceneLengthBeats, scenesToArrangement, COLOR_NAMES } from './arrange.js';
 
-const DT_SLOT = 'application/x-dawww-slot';
+const DT_SLOT = 'application/x-daw3-slot';
 const RING_R = 7;
 const RING_C = 2 * Math.PI * RING_R;
 const MELODIC_ROLES = ['chords', 'bass', 'lead', 'arp', 'pad'];

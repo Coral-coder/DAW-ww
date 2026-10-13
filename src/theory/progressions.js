@@ -85,7 +85,7 @@ export const PROGRESSIONS = {
   'phrygian-flamenco': P('Flamenco (iv–bIII–bII–I)', ['iv', 'bIII', 'bII', 'I'], 'phrygian-dominant', ['flamenco', 'latin', 'metal', 'cinematic'], ['passionate', 'spanish'], 'Phrygian cadence resolving to a major tonic (Am–G–F–E in E).'),
   'metal-power': P('Metal power (i5–bVI5–bVII5–i5)', ['i5', 'bVI5', 'bVII5', 'i5'], 'minor', ['metal', 'rock', 'industrial', 'punk'], ['aggressive', 'heavy'], 'Power-chord aeolian riffing.'),
   'metal-tritone': P('Metal chromatic (i5–bII5–i5–bV5)', ['i5', 'bII5', 'i5', 'bV5'], 'minor', ['metal', 'industrial'], ['evil', 'heavy'], 'Half-step and tritone moves — the devil\'s interval.'),
-  'cinematic-epic': P('Cinematic epic (i–bVI–bIII–bVII)', ['i', 'bVI', 'bIII', 'bVII', 'i', 'bVI', 'iv', 'V'], 'minor', ['cinematic', 'orchestral', 'trailer'], ['epic', 'dawww'], 'Hans-Zimmer-style minor loop ending on a dominant.'),
+  'cinematic-epic': P('Cinematic epic (i–bVI–bIII–bVII)', ['i', 'bVI', 'bIII', 'bVII', 'i', 'bVI', 'iv', 'V'], 'minor', ['cinematic', 'orchestral', 'trailer'], ['epic', 'daw3'], 'Hans-Zimmer-style minor loop ending on a dominant.'),
   'chromatic-mediant': P('Chromatic mediants (I–bVI–I–bIII)', ['I', 'bVI', 'I', 'bIII'], 'major', ['cinematic', 'orchestral', 'synthwave'], ['awe', 'wonder'], 'Mediant shifts sharing one common tone — magical film sound.'),
   'lydian-float': P('Lydian float (I–II)', ['I', 'II', 'I', 'II'], 'lydian', ['cinematic', 'ambient', 'chillwave', 'idm', 'indie'], ['dreamy', 'wonder'], 'Major II from Lydian #4 — the "flying" sound.'),
   'dark-tension': P('Tension (i–bVI–ii°–V)', ['i', 'bVI', 'ii°', 'V'], 'minor', ['cinematic', 'trailer', 'metal'], ['suspense'], 'Predominant ii° + dominant V build suspense.'),
@@ -112,7 +112,7 @@ export const PROGRESSIONS = {
   'folk-ballad': P('Folk ballad (I–V–vi–iii–IV)', ['I', 'V', 'vi', 'iii', 'IV', 'IV', 'V', 'V'], 'major', ['folk', 'country', 'indie', 'cinematic'], ['heartfelt'], 'Canon-like storytelling progression.'),
   'indie-dreamy': P('Indie dreamy (Imaj7–vi7–IVmaj7–V)', ['Imaj7', 'vi7', 'IVmaj7', 'V'], 'major', ['indie', 'chillwave', 'shoegaze', 'pop'], ['dreamy', 'wistful'], 'Soft major sevenths for jangly guitars.'),
   'kpop-drama': P('K-pop drama (vi–IV–V–iii–vi)', ['vi', 'IV', 'V', 'iii'], 'major', ['kpop', 'jpop', 'eurobeat', 'trance'], ['dramatic', 'catchy'], 'Deceptive iii keeps the chorus in motion.'),
-  'eurobeat': P('Eurobeat (i–bVI–bVII–i)', ['i', 'bVI', 'bVII', 'i'], 'minor', ['eurobeat', 'hardstyle', 'trance', 'italo-disco'], ['hyper', 'dawww'], 'Fast Initial-D style minor drive.'),
+  'eurobeat': P('Eurobeat (i–bVI–bVII–i)', ['i', 'bVI', 'bVII', 'i'], 'minor', ['eurobeat', 'hardstyle', 'trance', 'italo-disco'], ['hyper', 'daw3'], 'Fast Initial-D style minor drive.'),
   'hardstyle-euphoric': P('Euphoric hardstyle (bVI–bVII–i–v)', ['bVI', 'bVII', 'i', 'v'], 'minor', ['hardstyle', 'trance', 'eurobeat'], ['euphoric', 'massive'], 'Big euphoric lead progression.'),
   'footwork-soul': P('Footwork soul chop (i7–bVImaj7)', ['i7', 'i7', 'bVImaj7', 'bVImaj7'], 'minor', ['footwork', 'juke', 'jungle', 'breakbeat'], ['frantic', 'soulful'], 'Chopped soul-sample harmony.'),
   'jungle-rave': P('Jungle rave (i–bVII–bVI–bVII)', ['i', 'bVII', 'bVI', 'bVII'], 'minor', ['jungle', 'breakbeat', 'drum-and-bass', 'hardcore'], ['rave', 'nostalgic'], 'Rave-era minor loop under chopped breaks.'),
@@ -261,7 +261,7 @@ export function analyzeProgression(romans, keyRoot = 0, scaleId = 'major', opts 
 
 function borrowText(roman, label, iv) {
   const flavour = {
-    8: 'adds drama and cinematic weight', 10: 'gives an anthemic, rock lift', 3: 'darkens the colour with a dawww edge',
+    8: 'adds drama and cinematic weight', 10: 'gives an anthemic, rock lift', 3: 'darkens the colour with a daw3 edge',
     5: 'brings a bittersweet, nostalgic sadness', 1: 'adds dark Neapolitan tension', 2: 'brightens with a Lydian lift',
     7: 'creates a strong leading-tone pull home', 9: 'adds a Dorian brightness to the minor key', 0: 'switches the tonic colour',
   };
@@ -333,7 +333,7 @@ export function suggestNextChords(romans = [], keyRoot = 0, scaleId = 'major', g
       add('bVI', 0.55, 'iv → bVI keeps the predominant area, delaying resolution.');
     }
     if (lastIv === 8) {
-      add('bVII', 0.88, 'bVI → bVII → i is the dawww aeolian climb (film, trance, metal).');
+      add('bVII', 0.88, 'bVI → bVII → i is the daw3 aeolian climb (film, trance, metal).');
       add('bIII', 0.78, 'bVI → bIII follows the epic minor loop (i–bVI–bIII–bVII).');
       add('V', 0.7, 'bVI → V is a dramatic half-step bass fall into the dominant (Andalusian).');
       add('iv', 0.6, 'bVI → iv keeps the subdominant mood darker.');
@@ -427,7 +427,7 @@ export function suggestNextChords(romans = [], keyRoot = 0, scaleId = 'major', g
     add('iv', 0.5 + (lastIv === 5 ? 0.2 : 0), 'iv borrowed from the parallel minor gives a bittersweet, nostalgic colour.');
     add('bVI', 0.48, 'bVI borrowed from the parallel minor adds drama.');
     add('bVII', 0.5, 'bVII borrowed from Mixolydian gives an anthemic, rock lift.');
-    add('bIII', 0.35, 'bIII borrowed from the parallel minor adds a dawww, bluesy edge.');
+    add('bIII', 0.35, 'bIII borrowed from the parallel minor adds a daw3, bluesy edge.');
   } else {
     add('IV', 0.45, 'IV borrowed from Dorian brightens the minor key (funk, house, neo-soul).');
     add('V', 0.5, 'Major V borrowed from harmonic minor creates a strong leading-tone pull to i.');
