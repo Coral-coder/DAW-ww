@@ -636,7 +636,7 @@ export function songToCode(project) {
 
 // ---------------------------------------------------------------------------- code -> project
 
-const COMPLEX_RE = /\b(rand|irand|perlin|choose|chooseCycles|randcat|wchoose|shuffle|scramble|sometimes\w*|often|rarely|almostNever|almostAlways|someCycles\w*|degrade\w*|undegradeBy|sine|cosine|saw|isaw|square|tri|sine2|saw2|square2|tri2|rand2|segment|range)\b/;
+const COMPLEX_RE = /\b(rand|irand|perlin|choose|chooseCycles|randcat|wchoose|shuffle|scramble|sometimes\w*|often|rarely|almostNever|almostAlways|someCycles\w*|degrade\w*|undegradeBy|sine|cosine|saw|isaw|square|tri|sine2|saw2|square2|tri2|rand2)\b/;
 
 /** Normalised code for "did the user change this?" comparisons. */
 export function normCode(s) {
@@ -729,7 +729,7 @@ export function patternToNotes(pattern, { bpb, kind, prefer = [], text = '' } = 
   const cycles = Math.max(16, Math.ceil((2 * maxLen) / bpb) * 2);
   let r;
   try { r = eventsToNotes(pattern, { cycles, bpb, kind }); } catch (e) { return { complex: `error: ${e.message}` }; }
-  if (COMPLEX_RE.test(stripComments(text)) || /"[^"]*[?|][^"]*"/.test(stripComments(text))) return { complex: 'uses randomness or continuous signals', ...r };
+  if (COMPLEX_RE.test(stripComments(text).replace(/"[^"]*"|`[^`]*`|'[^']*'/g, '""')) || /"[^"]*[?|][^"]*"/.test(stripComments(text))) return { complex: 'uses randomness or continuous signals', ...r };
   const period = findPeriod(r.notes, cycles, bpb, prefer);
   if (period === null) return { complex: `doesn't repeat within ${cycles} bars`, ...r };
   return { ...r, length: period, notes: r.notes.filter((n) => n.start < period - EPS).map((n) => ({ ...n, dur: Math.min(n.dur, Math.max(0.01, period * 4)) })) };
