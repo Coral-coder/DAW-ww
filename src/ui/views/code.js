@@ -196,8 +196,8 @@ export function createCodeView(app) {
       start: b.start, end: b.end,
     }));
     const labelBar = (res.labels || []).map((l) => bars.findIndex((b) => l.start >= b.start && l.start < b.end));
-    // live-coder code: one arrange() plays every part — an event belongs to the const its tokens come from
-    const locBar = (ev) => { for (const l of ev.locations || []) { const i = bars.findIndex((b) => l.start >= b.start && l.start < b.end); if (i >= 0) return i; } return -1; };
+    // live-coder code: one arrange() plays every part — an event belongs to the (last) part const its tokens come from
+    const locBar = (ev) => { let hit = -1; for (const l of ev.locations || []) { const i = bars.findIndex((b) => l.start >= b.start && l.start < b.end); if (i >= 0) hit = i; } return hit; };
     songMeta = { code: song.code, res, bars, labelBar, locBar, live: song.mode === 'live' };
     return songMeta;
   }
@@ -1096,7 +1096,7 @@ export function createCodeView(app) {
     drawGrid(ctx, H, xOf, c0, c1, top, bpb);
     // per-lane pitch ranges / drum rows
     const info = lanes.map(() => ({ lo: 127, hi: 0, drums: new Map() }));
-    const evLane = (ev) => { const bi = ev.block !== undefined ? meta.labelBar[ev.block] : -1; return bi >= 0 ? laneOf.get(meta.bars[bi]) ?? -1 : -1; };
+    const evLane = (ev) => { const bi = meta.live ? meta.locBar(ev) : ev.block !== undefined ? meta.labelBar[ev.block] : -1; return bi >= 0 ? laneOf.get(meta.bars[bi]) ?? -1 : -1; };
     for (const ev of songViz.events) {
       const li = evLane(ev);
       if (li < 0) continue;
