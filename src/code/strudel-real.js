@@ -200,32 +200,31 @@ function stripTopLevelAwait(code) {
   return code;
 }
 
-// samples("github:a/b") — double quotes would make the URL mini-notation (a parse error in Strudel too);
-// treat string arguments of the sound-registry functions as plain strings (same length, offsets kept)
-const PLAIN_ARG_FNS = /\b(samples|soundAlias|aliasBank|loadSoundfont|addVoicings|setSoundfontUrl)\s*\(/g;
-function plainRegistryArgs(src) {
-  if (!PLAIN_ARG_FNS.test(src)) return src;
-  PLAIN_ARG_FNS.lastIndex = 0;
-  const chars = src.split('');
-  for (const m of src.matchAll(PLAIN_ARG_FNS)) {
-    let depth = 0;
-    for (let k = m.index + m[0].length - 1; k < src.length; k++) {
-      const c = src[k];
-      if (c === '(') depth++;
-      else if (c === ')') { if (--depth === 0) break; }
-      else if (c === '"') {
-        const end = src.indexOf('"', k + 1);
-        if (end < 0) break;
-        const inner = src.slice(k + 1, end);
-        if (!inner.includes("'") && !inner.includes('\n')) { chars[k] = "'"; chars[end] = "'"; }
-        k = end;
-      } else if (c === "'" || c === '`') {
-        const end = src.indexOf(c, k + 1);
-        if (end < 0) break;
-        k = end;
-      }
+// Double-quoted strings that are plainly not mini-notation keep being plain strings (same length, so
+// every offset is kept): object keys ({"gain": .5}, obj["key"]) and the arguments of the sound-registry
+// functions (samples("github:user/repo") — mini-notation would choke on the URL, in Strudel too).
+const PLAIN_ARG_FNS = new Set(['samples', 'soundAlias', 'aliasBank', 'loadSoundfont', 'addVoicings', 'setSoundfontUrl']);
+function plainStrings(src, ast) {
+  const at = [];
+  const lit = (n) => n && n.type === 'Literal' && typeof n.value === 'string' && n.raw?.[0] === '"' && !n.value.includes("'") && !n.raw.includes('\\') && at.push(n);
+  const visit = (node) => {
+    if (!node || typeof node.type !== 'string') return;
+    if (node.type === 'Property' && !node.computed) lit(node.key);
+    else if (node.type === 'MemberExpression' && node.computed) lit(node.property);
+    else if (node.type === 'CallExpression' && node.callee.type === 'Identifier' && PLAIN_ARG_FNS.has(node.callee.name)) {
+      const all = (n) => { if (!n || typeof n.type !== 'string') return; lit(n); for (const k of Object.keys(n)) { const v = n[k]; if (Array.isArray(v)) v.forEach(all); else if (v && typeof v === 'object' && typeof v.type === 'string') all(v); } };
+      node.arguments.forEach(all);
     }
-  }
+    for (const k of Object.keys(node)) {
+      const v = node[k];
+      if (Array.isArray(v)) v.forEach(visit);
+      else if (v && typeof v === 'object' && typeof v.type === 'string') visit(v);
+    }
+  };
+  ast.body.forEach(visit);
+  if (!at.length) return src;
+  const chars = src.split('');
+  for (const n of at) { chars[n.start] = "'"; chars[n.end - 1] = "'"; }
   return chars.join('');
 }
 
@@ -241,7 +240,6 @@ export function evaluateStrudel(source) {
   const result = { patterns: [], entries: [], labels: [], cps: null, error: null, warnings: [], widgets: [], engine: 'strudel' };
   let src = String(source ?? '');
   if (src.charCodeAt(0) === 0xfeff) src = ' ' + src.slice(1); // keep offsets
-  src = plainRegistryArgs(src);
 
   let ast;
   try {
@@ -251,6 +249,7 @@ export function evaluateStrudel(source) {
     return result;
   }
   if (!ast.body.length) return result; // only comments / whitespace
+  src = plainStrings(src, ast);
   const labels = topLabels(ast);
   result.labels = labels.map(({ name, muted, start, end }) => ({ name, muted, start, end }));
 
@@ -308,7 +307,8 @@ export function evaluateStrudel(source) {
   };
   let ret;
   try {
-    const fn = new Function(...scopeNames, ...extraNames, `${out}\n`);
+    // a block (as Strudel's own eval does) so `const chorus = …` may shadow a Strudel name
+    const fn = new Function(...scopeNames, ...extraNames, `{\n${out}\n}`);
     ret = fn(...scopeValues, ...extraValues);
   } catch (e) {
     result.error = errMsg(e);
