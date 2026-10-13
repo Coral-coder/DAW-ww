@@ -113,8 +113,11 @@ export function createCodeView(app) {
       try { err = strudel.evaluate(prefix)?.error; } catch (e) { err = String(e?.message || e); }
       if (err) {
         const b = blocks[i];
-        const offset = b.text.search(/\S/);
-        return code.slice(0, b.start + Math.max(0, offset)).split('\n').length;
+        // point at the block's `$:` line (or its first real code line), not a leading comment
+        const lines = b.text.split('\n');
+        let li = lines.findIndex((l) => /^\s*(\$|[A-Za-z_]\w*):(?!:)/.test(l));
+        if (li < 0) li = Math.max(0, lines.findIndex((l) => l.trim() && !l.trim().startsWith('//')));
+        return code.slice(0, b.start).split('\n').length + li;
       }
     }
     return null;

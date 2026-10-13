@@ -284,15 +284,20 @@ export function createActions(app) {
   async function liveNoteOn(pitch, vel = 0.8, trackId = ui.get('selectedTrackId')) {
     const t = get().tracks.find((x) => x.id === trackId);
     if (!t || t.type !== 'instrument') { if (!t) toast('Select an instrument track to play it'); return; }
-    await ensureAudio();
-    engine.noteOn(trackId, pitch, vel);
-    liveHeld.set(pitch, { trackId, startBeat: engine.getPosition(), vel });
+    const held = { trackId, startBeat: engine.getPosition(), vel };
+    liveHeld.set(pitch, held);
     app.emitLiveNote?.(pitch, true);
+    // noteOff awaits `ready`, so a quick release during audio start-up can't leave a stuck note.
+    held.ready = ensureAudio().then(() => {
+      held.startBeat = engine.getPosition();
+      engine.noteOn(trackId, pitch, vel);
+    }).catch(() => {});
   }
-  function liveNoteOff(pitch) {
+  async function liveNoteOff(pitch) {
     const held = liveHeld.get(pitch);
     liveHeld.delete(pitch);
     if (!held) return;
+    await held.ready;
     engine.noteOff(held.trackId, pitch);
     app.emitLiveNote?.(pitch, false);
     if (ui.get('recording') && engine.isPlaying) {

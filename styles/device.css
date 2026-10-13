@@ -166,3 +166,9 @@ select.dv-preset:focus { border: 0; outline: 1px solid var(--accent); }
 .dv-instrument .dv-viz { flex-direction: column; margin: 0; gap: 4px; }
 .dv-instrument .dv-viz-canvas { width: 156px; height: 40px; }
 .dv-instrument .dv-drums, .dv-instrument .dv-sampler, .dv-instrument .dv-drawbars { margin: 0; flex: none; }
+
+/* folded param sections become slim vertical tabs */
+.dv-params .param-section:not([open]) { width: 26px; min-width: 26px; padding: 0; display: flex; }
+.dv-params .param-section:not([open]) > summary { writing-mode: vertical-rl; padding: 8px 5px; white-space: nowrap; flex: 1; }
+.dv-params .param-section:not([open]) > summary::before { transform: rotate(90deg); }
+.dv-params .param-section:not([open]):hover { border-color: var(--accent); }

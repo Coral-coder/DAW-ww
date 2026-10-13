@@ -132,6 +132,8 @@ const RANDOM_RANGES = {
 };
 const RANDOM_SKIP = new Set(['gain', 'polyphony', 'transpose', 'bendRange', 'rootNote', 'kit', 'sampleId', 'start', 'end', 'loopStart', 'loopEnd', 'slices', 'toneCut', 'tune', 'fine', 'velToAmp', 'velSens', 'keyScale', 'pitchEnvAmt']);
 const RANDOM_ENUMS = /Wave$|^algorithm$|^vibrato$|^percHarmonic$/;
+/** Secondary sections start folded (as slim vertical tabs) so the chain stays compact. */
+const DEFAULT_CLOSED = new Set(['Unison', 'LFO 1', 'LFO 2', 'Voice', 'Band 1', 'Band 8']);
 const OP_RATIOS = [0.5, 1, 1, 1, 2, 2, 3, 4, 5, 7];
 
 // Hammond drawbar colours: brown (sub), white (octaves), black (non-octave harmonics)
@@ -547,7 +549,7 @@ export function createDevicePanel(app) {
   function paramsBlock(defs, values, scope, onChange) {
     const panel = paramPanel({
       defs, values, onChange,
-      sectionsOpen: Object.fromEntries(defs.map((d) => d.section || 'Main').map((s) => [s, sectionsOpen[`${scope}:${s}`] ?? true])),
+      sectionsOpen: Object.fromEntries(defs.map((d) => d.section || 'Main').map((s) => [s, sectionsOpen[`${scope}:${s}`] ?? !DEFAULT_CLOSED.has(s)])),
       onSectionToggle: (s, o) => { sectionsOpen[`${scope}:${s}`] = o; },
     });
     const last = {};

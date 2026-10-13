@@ -50,10 +50,10 @@ export const PROGRESSIONS = {
   'funk-vamp': P('Funk one-chord vamp (I9)', ['I9', 'I9'], 'major', ['funk', 'disco', 'afrobeat'], ['groovy'], 'One dominant 9 chord — the groove is the song.'),
   'dorian-vamp': P('Dorian vamp (i7–IV7)', ['i7', 'IV7'], 'minor', ['funk', 'house', 'deep-house', 'neo-soul', 'latin', 'afrobeat', 'nu-disco', 'acid-jazz'], ['groovy', 'hopeful'], 'Minor i with a major IV — the Dorian sound (Oye Como Va).'),
   // ---------- Blues ----------
-  'twelve-bar-blues': P('12-bar blues', ['I7', 'I7', 'I7', 'I7', 'IV7', 'IV7', 'I7', 'I7', 'V7', 'IV7', 'I7', 'V7'], 'major', ['blues', 'rock', 'rockabilly', 'jazz', 'boogie', 'country'], ['gritty', 'classic'], 'The classic 12-bar form ending with a V turnaround.'),
-  'quick-change-blues': P('12-bar blues (quick change)', ['I7', 'IV7', 'I7', 'I7', 'IV7', 'IV7', 'I7', 'I7', 'V7', 'IV7', 'I7', 'V7'], 'major', ['blues', 'rock', 'jazz'], ['gritty'], 'Quick change to IV in bar 2.'),
+  'twelve-bar-blues': P('12-bar blues', ['I7', 'I7', 'I7', 'I7', 'IV7', 'IV7', 'I7', 'I7', 'V7', 'IV7', 'I7', 'V7'], 'any', ['blues', 'rock', 'rockabilly', 'jazz', 'boogie', 'country'], ['gritty', 'classic'], 'The classic 12-bar form ending with a V turnaround.'),
+  'quick-change-blues': P('12-bar blues (quick change)', ['I7', 'IV7', 'I7', 'I7', 'IV7', 'IV7', 'I7', 'I7', 'V7', 'IV7', 'I7', 'V7'], 'any', ['blues', 'rock', 'jazz'], ['gritty'], 'Quick change to IV in bar 2.'),
   'minor-blues': P('Minor blues (12 bars)', ['i7', 'i7', 'i7', 'i7', 'iv7', 'iv7', 'i7', 'i7', 'bVI7', 'V7', 'i7', 'V7'], 'minor', ['blues', 'jazz', 'rock', 'trip-hop'], ['dark', 'soulful'], 'Minor 12-bar with bVI7–V7 turnaround.'),
-  'eight-bar-blues': P('8-bar blues', ['I7', 'V7', 'IV7', 'IV7', 'I7', 'V7', 'I7', 'V7'], 'major', ['blues', 'gospel', 'folk'], ['soulful'], 'Compact 8-bar blues.'),
+  'eight-bar-blues': P('8-bar blues', ['I7', 'V7', 'IV7', 'IV7', 'I7', 'V7', 'I7', 'V7'], 'any', ['blues', 'gospel', 'folk'], ['soulful'], 'Compact 8-bar blues.'),
   // ---------- Minor / dark ----------
   'aeolian-loop': P('Epic minor (i–bVI–bIII–bVII)', ['i', 'bVI', 'bIII', 'bVII'], 'minor', ['trance', 'edm', 'pop', 'synthwave', 'hardstyle', 'reggaeton', 'cinematic', 'dubstep', 'future-bass', 'progressive-house', 'eurobeat', 'liquid-dnb'], ['epic', 'emotional'], 'The axis in minor — the sound of epic EDM and film.'),
   'andalusian': P('Andalusian cadence (i–bVII–bVI–V)', ['i', 'bVII', 'bVI', 'V'], 'minor', ['flamenco', 'latin', 'rock', 'metal', 'cinematic', 'surf', 'pop'], ['dramatic', 'spanish'], 'Descending tetrachord ending on a major V.'),
@@ -140,7 +140,7 @@ export function findProgressions({ genre, mood, mode } = {}) {
   const tags = genre ? [genre, ...(GENRE_TAG_ALIASES[genre] || [])] : null;
   return Object.entries(PROGRESSIONS)
     .filter(([, p]) => (!tags || p.genres.some((g) => tags.includes(g))) && (!mood || p.moods.includes(mood))
-      && (!mode || p.mode === mode || (mode === 'minor' && p.mode !== 'major' && p.mode !== 'lydian') || (mode === 'major' && (p.mode === 'major' || p.mode === 'lydian'))))
+      && (!mode || p.mode === mode || (mode === 'minor' && p.mode !== 'major' && p.mode !== 'lydian') || (mode === 'major' && (p.mode === 'major' || p.mode === 'lydian' || p.mode === 'any'))))
     .map(([id, p]) => ({ id, ...p }));
 }
 

@@ -29,7 +29,7 @@ const SNAP_OPTIONS = [
   { value: '0.125', label: 'Snap: 1/8 beat' },
   { value: 'off', label: 'Snap: Off' },
 ];
-const COLOR_NAMES = ['Red', 'Orange', 'Yellow', 'Lime', 'Teal', 'Cyan', 'Blue', 'Indigo', 'Violet', 'Purple', 'Pink', 'Grey'];
+export const COLOR_NAMES = ['Red', 'Orange', 'Yellow', 'Lime', 'Teal', 'Cyan', 'Blue', 'Indigo', 'Violet', 'Purple', 'Pink', 'Grey'];
 
 const TOOLS = [
   { id: 'pointer', icon: 'pointer', label: 'Pointer', tip: 'Pointer — click to select (Shift adds), drag to move, drag edges to resize/trim, Alt-drag copies, drag empty space to rubber-band select, double-click to create/edit' },

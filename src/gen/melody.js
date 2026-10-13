@@ -189,6 +189,9 @@ export function generateMelody(opts = {}) {
         const t = base + h.t;
         if (t >= length - 1e-6 || pitches[j] == null) return;
         let d = h.d;
+        // "avoid notes": a sustained non-chord tone a half step above a chord tone clashes — resolve it
+        const tones = chordTonesAt(t);
+        if (d >= 0.5 && !tones.includes(pitches[j]) && tones.some((x) => mod12(pitches[j] - x) === 1)) pitches[j] = nearest(tones, pitches[j]);
         if (isLastBar && j === rhythm.length - 1 && style !== 'riff') d = Math.max(d, bpb - h.t - 0.1);
         d = Math.min(d, length - t);
         const vel = (h.t === 0 ? 0.9 : h.t % 1 === 0 ? 0.82 : 0.7) * (0.93 + rng() * 0.07);

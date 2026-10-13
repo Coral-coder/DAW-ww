@@ -6,7 +6,7 @@ import { h, icon } from '../dom.js';
 import { button, iconButton, toggle, contextMenu, promptText, confirmDialog, toast } from '../components.js';
 import { beatsPerBar, patternsForTrack, createPattern, createScene, TRACK_COLORS } from '../../core/model.js';
 import { uid, deepClone } from '../../core/util.js';
-import { drawPatternNotes, hexToRgb, rgba, isDrumTrack, sceneLengthBeats, scenesToArrangement } from './arrange.js';
+import { drawPatternNotes, hexToRgb, rgba, isDrumTrack, sceneLengthBeats, scenesToArrangement, COLOR_NAMES } from './arrange.js';
 
 const DT_SLOT = 'application/x-heroic-slot';
 const RING_R = 7;
@@ -297,7 +297,7 @@ export function createSessionView(app) {
       { label: 'Duplicate (new copy in this slot)', icon: 'copy', onClick: () => duplicateIntoSlot(sc.id, t.id, pid) },
       { label: 'Copy to scene', icon: 'scenes', submenu: p.scenes.filter((s) => s.id !== sc.id).map((s) => ({ label: s.name, onClick: () => setSlot(s.id, t.id, pid, 'Copy slot') })) },
       { label: 'Generate', icon: 'wand', submenu: generateItems(sc, t) },
-      { label: 'Color', submenu: TRACK_COLORS.map((c) => ({ label: h('span.ses-swatch-row', h('span.ses-swatch', { style: { background: c } }), c), onClick: () => store.transact('Pattern color', (pp) => { if (pp.patterns[pid]) pp.patterns[pid].color = c; }) })) },
+      { label: 'Color', submenu: TRACK_COLORS.map((c, i) => ({ label: h('span.ses-swatch-row', h('span.ses-swatch', { style: { background: c } }), COLOR_NAMES[i] || c), onClick: () => store.transact('Pattern color', (pp) => { if (pp.patterns[pid]) pp.patterns[pid].color = c; }) })) },
       '-',
       { label: 'Clear slot', icon: 'x', onClick: () => setSlot(sc.id, t.id, null, 'Clear slot') },
       { label: 'Delete pattern everywhere…', icon: 'trash', onClick: async () => { if (await confirmDialog('Delete pattern', `Delete "${pat.name}" from every scene and the arrangement?`)) actions.deletePattern(pid); } },

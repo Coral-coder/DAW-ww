@@ -488,7 +488,7 @@ export function createAssistantPanel(app) {
     }
     let described = null;
     try { described = gen.describeGenre ? gen.describeGenre(id) : null; } catch { described = null; }
-    if (typeof described === 'string' && described.trim()) wrap.appendChild(h('div.as-describe', described.split(/\n+/).filter(Boolean).slice(0, 8).map((l) => h('p', l))));
+    if (typeof described === 'string' && described.trim()) wrap.appendChild(h('div.as-describe', described.split(/\n+/).filter((l) => l.trim() && !(g.tips || []).includes(l.trim())).slice(0, 6).map((l) => h('p', l))));
     else if (described && typeof described === 'object' && (described.summary || described.text)) wrap.appendChild(explain(described.summary || described.text));
     const inRange = p.bpm >= (g.bpm?.[0] ?? 0) && p.bpm <= (g.bpm?.[1] ?? 999);
     wrap.appendChild(h('div.as-facts',

@@ -342,7 +342,7 @@ export function createBrowserPanel(app) {
     let described = null;
     try { described = o.gen.describeGenre ? o.gen.describeGenre(id) : null; } catch { described = null; }
     const body = h('div.br-genre-modal');
-    if (typeof described === 'string') body.appendChild(h('div.br-genre-desc', described.split(/\n+/).map((l) => h('p', l))));
+    if (typeof described === 'string') body.appendChild(h('div.br-genre-desc', described.split(/\n+/).filter((l) => l.trim() && !(g.tips || []).includes(l.trim())).map((l) => h('p', l))));
     else if (described && typeof described === 'object') {
       if (described.summary || described.text || described.description) body.appendChild(h('p.br-genre-lead', described.summary || described.text || described.description));
     }

@@ -268,12 +268,13 @@ export function generateBassline(opts = {}) {
     }
     case 'blues': {
       // boogie: root 3 5 6 b7 6 5 3 on swung 8ths (triplet positions)
-      const fig = [0, 4, 7, 9, 10, 9, 7, 4];
       for (let b = 0; b < bars; b++) {
         for (let k = 0; k < Math.min(8, bpb * 2); k++) {
           const t = b * bpb + Math.floor(k / 2) + (k % 2 ? 2 / 3 : 0);
           if (t >= length) continue;
           const c = chordAt(t);
+          const third = chordToneOffset(c.chord, '3');
+          const fig = [0, third, 7, 9, 10, 9, 7, third];
           push(rootPitch(c) + fig[k], t, k % 2 ? 0.3 : 0.6, k % 2 ? 0.7 : 0.88);
         }
       }
