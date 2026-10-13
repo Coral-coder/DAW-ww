@@ -17,6 +17,11 @@
 //   bells    — a modal-bell sparkle (cinematic, ambient, experimental)
 //   organ    — a tonewheel organ bed (gospel, soul, rock)
 //   impact   — impacts on drops / chorus downbeats and accelerating snare rolls into them
+//   chop     — a vocal-chop hook: short syncopated "sung" syllables on chord tones, answering in the lead's rests (the
+//              groove's hook where no lead sings — house, garage, future bass, pop / r&b drops, dnb)
+//
+// Long sections evolve in 8-bar phrases: melodic extras enter one phrase after another (the first plays throughout),
+// the chop answers every other phrase when a lead sings, the last phrase of the section is the fullest.
 //
 // Density rule: at most `maxLayers(section)` melodic layers sound at once (3 in intros / outros, 4 in breaks, 5–6 in
 // verses, 6 in builds, 7–8 in the biggest choruses), extras enter by genre priority. Every melodic layer is written
@@ -37,15 +42,15 @@ import { applyGroove, shapeDynamics } from './groove.js';
 import { mixTrack } from './mix.js';
 import { faustFor } from './plugins.js';
 import { realInstrumentDef } from '../audio/library/instrument-map.js';
-import { toStrudel } from './strudel-sounds.js';
+import { toStrudel, hookSafe } from './strudel-sounds.js';
 import { AutomationBuilder, ARP_HOME } from './arrange.js';
 
 const hash = (...xs) => xs.reduce((h, x) => (Math.imul(h ^ (typeof x === 'number' ? x : [...String(x)].reduce((a, c) => a * 31 + c.charCodeAt(0), 7)), 2654435761) >>> 0), 0x2545f491);
 const EPS = 1e-6;
 
-export const EXTRA_ROLES = ['perc', 'top', 'sub', 'counter', 'strings', 'brass', 'guitar', 'color', 'texture', 'vox', 'bells', 'organ', 'impact'];
+export const EXTRA_ROLES = ['perc', 'top', 'sub', 'counter', 'strings', 'brass', 'guitar', 'color', 'texture', 'vox', 'bells', 'organ', 'impact', 'chop'];
 /** Extra roles that count as melodic layers (sub doubles the bass, perc / top / impact are drums). */
-const MELODIC_EXTRA = new Set(['counter', 'strings', 'brass', 'guitar', 'color', 'texture', 'vox', 'bells', 'organ']);
+const MELODIC_EXTRA = new Set(['counter', 'strings', 'brass', 'guitar', 'color', 'texture', 'vox', 'bells', 'organ', 'chop']);
 const BASE_MELODIC = ['bass', 'chords', 'pad', 'lead', 'arp'];
 
 const INFO = {
@@ -62,26 +67,29 @@ const INFO = {
   bells: { name: 'Bells', color: TRACK_COLORS[5], mix: 'arp', db: -4 },
   organ: { name: 'Organ', color: TRACK_COLORS[6], mix: 'pad', db: -3.5 },
   impact: { name: 'Impacts', color: TRACK_COLORS[10], mix: 'drums', db: -6, hpf: 28 },
+  chop: { name: 'Vocal Chops', color: TRACK_COLORS[3], mix: 'lead', db: -6, hpf: 250 },
 };
 
 // ------------------------------------------------------------------------------------------- who plays per genre
 const FAMILY_EXTRAS = {
-  house: ['perc', 'vox', 'impact'], techno: ['perc', 'texture', 'impact'], trance: ['perc', 'counter', 'vox', 'impact', 'texture'],
-  bass: ['sub', 'impact', 'vox', 'perc', 'texture'], dnb: ['top', 'sub', 'perc', 'impact', 'texture'], breaks: ['top', 'perc', 'sub', 'impact'],
-  garage: ['perc', 'vox', 'sub', 'impact'], hiphop: ['perc', 'counter', 'impact', 'texture'], soul: ['strings', 'guitar', 'perc', 'organ', 'counter'],
-  pop: ['strings', 'guitar', 'perc', 'counter', 'vox', 'impact'], retro: ['counter', 'perc', 'texture', 'impact'], ambient: ['texture', 'bells', 'counter'],
+  // house: a sub under the pluck bass, the counter answer, an organ / Rhodes comp doubling the stabs, vocal chops
+  house: ['perc', 'sub', 'counter', 'organ', 'chop', 'vox', 'texture', 'impact'], techno: ['perc', 'texture', 'impact'],
+  trance: ['perc', 'sub', 'counter', 'strings', 'vox', 'impact', 'texture'],
+  bass: ['sub', 'impact', 'vox', 'perc', 'texture'], dnb: ['top', 'sub', 'perc', 'chop', 'impact', 'texture'], breaks: ['top', 'perc', 'sub', 'impact'],
+  garage: ['perc', 'chop', 'vox', 'sub', 'impact'], hiphop: ['perc', 'counter', 'chop', 'impact', 'texture'], soul: ['strings', 'guitar', 'perc', 'organ', 'counter'],
+  pop: ['strings', 'guitar', 'perc', 'counter', 'vox', 'chop', 'texture', 'impact'], retro: ['counter', 'perc', 'texture', 'impact'], ambient: ['texture', 'bells', 'counter'],
   chill: ['texture', 'guitar', 'perc', 'strings', 'counter'], experimental: ['perc', 'bells', 'texture', 'impact'], rock: ['guitar', 'perc', 'strings'],
   funk: ['guitar', 'brass', 'perc', 'strings', 'counter'], jazz: ['counter', 'brass'], latin: ['perc', 'counter', 'strings'], blues: ['counter', 'perc'],
   caribbean: ['perc', 'guitar', 'brass', 'counter'], african: ['perc', 'guitar', 'brass', 'color'], americana: ['color', 'perc', 'counter', 'strings'],
   cinematic: ['brass', 'perc', 'counter', 'bells', 'texture', 'impact', 'vox'], industrial: ['perc', 'texture', 'impact', 'sub'], hard: ['impact', 'vox', 'perc'],
 };
 export const GENRE_EXTRAS = {
-  'tech-house': ['perc', 'impact'], minimal: ['perc', 'texture'], 'deep-house': ['perc', 'texture', 'vox', 'impact'],
-  'future-bass': ['vox', 'perc', 'impact', 'texture'], footwork: ['perc', 'vox', 'sub'], 'liquid-dnb': ['sub', 'perc', 'counter', 'vox', 'texture'],
-  jungle: ['top', 'sub', 'perc', 'impact', 'texture'], trap: ['counter', 'perc', 'impact', 'texture'], drill: ['counter', 'perc', 'impact'],
-  phonk: ['perc', 'impact', 'counter'], 'boom-bap': ['perc', 'brass', 'counter', 'texture'], 'lofi-hip-hop': ['guitar', 'perc', 'texture'],
-  'neo-soul': ['guitar', 'strings', 'perc', 'counter', 'organ'], gospel: ['organ', 'strings', 'brass', 'perc', 'counter'], rnb: ['guitar', 'strings', 'perc', 'counter', 'vox'],
-  kpop: ['strings', 'perc', 'counter', 'vox', 'impact', 'guitar'], chiptune: ['counter', 'perc'], eurobeat: ['counter', 'perc', 'impact', 'vox'],
+  'tech-house': ['perc', 'sub', 'chop', 'texture', 'impact'], minimal: ['perc', 'texture'], 'deep-house': ['perc', 'organ', 'counter', 'chop', 'texture', 'vox', 'impact'],
+  'future-bass': ['chop', 'vox', 'perc', 'impact', 'texture'], footwork: ['perc', 'vox', 'sub'], 'liquid-dnb': ['sub', 'perc', 'counter', 'strings', 'chop', 'vox', 'texture', 'impact'],
+  jungle: ['top', 'sub', 'perc', 'impact', 'texture'], trap: ['counter', 'perc', 'chop', 'impact', 'texture'], drill: ['counter', 'perc', 'impact'],
+  phonk: ['perc', 'impact', 'counter'], 'boom-bap': ['perc', 'brass', 'counter', 'texture'], 'lofi-hip-hop': ['guitar', 'perc', 'texture', 'counter'],
+  'neo-soul': ['guitar', 'strings', 'perc', 'counter', 'organ'], gospel: ['organ', 'strings', 'brass', 'perc', 'counter'], rnb: ['guitar', 'strings', 'perc', 'counter', 'vox', 'chop', 'texture'],
+  kpop: ['strings', 'perc', 'counter', 'vox', 'chop', 'impact', 'guitar'], chiptune: ['counter', 'perc'], eurobeat: ['counter', 'perc', 'impact', 'vox'],
   punk: ['guitar', 'perc'], metal: ['guitar', 'vox', 'impact'], indie: ['guitar', 'color', 'perc', 'strings', 'organ'],
   disco: ['strings', 'guitar', 'brass', 'perc', 'vox'], 'nu-disco': ['guitar', 'perc', 'vox', 'strings', 'impact'], 'bossa-nova': ['perc', 'counter', 'strings'],
   salsa: ['perc', 'counter', 'guitar'], reggaeton: ['perc', 'sub', 'vox', 'impact'], dancehall: ['perc', 'color', 'sub', 'vox'], reggae: ['guitar', 'perc', 'brass', 'counter'],
@@ -102,6 +110,8 @@ export function maxLayers(s) {
 
 const SLOW = new Set(['cinematic', 'ambient', 'bossa-nova', 'folk', 'jazz']);
 const ALWAYS_BRASS = new Set(['funk', 'salsa', 'afrobeat', 'reggae', 'gospel', 'disco', 'boom-bap', 'jazz']);
+/** Club families: the drop is the hook section, every drop carries the counter answer; the organ comps grooves too. */
+const CLUB = new Set(['house', 'trance', 'dnb', 'garage', 'bass']);
 const TRANCEY = new Set(['trance', 'psytrance', 'progressive-house', 'hardstyle', 'eurobeat', 'future-bass', 'liquid-dnb', 'deep-house', 'house', 'amapiano', 'metal', 'cinematic']);
 
 /** Does extra `role` play in section `s` (by its function), given the base roles R? */
@@ -115,6 +125,7 @@ function wants(role, s, R, g, finalMain) {
     case 'counter':
       if (!has('lead') || /trad/i.test(s.name)) return false;
       if (SLOW.has(g.id)) return k !== 'intro' && k !== 'outro' && (k !== 'main' || s.occurrence > 1 || finalMain || g.id !== 'jazz');
+      if (CLUB.has(g.family) && k === 'main') return true;
       return (k === 'main' && (s.occurrence > 1 || finalMain)) || (k === 'verse' && s.occurrence > 1);
     case 'strings': return (has('chords') || has('pad')) && (k === 'main' || (k === 'build' && s.energy >= 0.6) || s.type === 'bridge');
     case 'brass': return k === 'main' && (ALWAYS_BRASS.has(g.id) || s.occurrence > 1 || finalMain) && !(g.id === 'jazz' && s.name.toLowerCase() === 'solo' && s.occurrence < 2);
@@ -123,7 +134,8 @@ function wants(role, s, R, g, finalMain) {
     case 'texture': return (['intro', 'break', 'outro'].includes(k) || g.family === 'ambient' || g.id === 'cinematic') && R.some((r) => r !== 'drums' && r !== 'fx');
     case 'vox': return (k === 'main' && has('lead')) || (k === 'break' && TRANCEY.has(g.id) && R.some((r) => r === 'pad' || r === 'chords'));
     case 'bells': return k === 'main' || (k === 'break' && (g.id === 'cinematic' || g.family === 'ambient'));
-    case 'organ': return has('chords') && (k === 'main' || (g.id === 'gospel' && k !== 'intro'));
+    case 'organ': return has('chords') && (k === 'main' || (g.id === 'gospel' && k !== 'intro') || (CLUB.has(g.family) && k === 'verse' && s.occurrence > 1));
+    case 'chop': return has('drums') && (k === 'main' || (k === 'verse' && s.energy >= 0.55) || (k === 'build' && s.energy >= 0.6));
     case 'impact': return k === 'main' && !!s.prev && s.prev.kind !== 'main';
     default: return false;
   }
@@ -181,7 +193,10 @@ const sample = (gm, role, fallbackPreset, params = {}) => realInstrumentDef(gm, 
  */
 export function extraInstrument(role, g, opts = {}) {
   const def = extraInstrumentDef(role, g, opts);
-  return opts.strudel !== false && opts.soundfonts !== false ? toStrudel(def) : def;
+  if (opts.strudel === false || opts.soundfonts === false) return def;
+  // the vox layer doubles the lead an octave down: an airy vowel pad, not a GM "oohs" sample
+  if (role === 'vox') return { type: 'strudel', preset: 'sd-vox-pad', params: {}, fallbackPreset: 'choir-pad' };
+  return hookSafe(toStrudel(def), role, g);
 }
 
 function extraInstrumentDef(role, g, opts = {}) {
@@ -217,6 +232,8 @@ function extraInstrumentDef(role, g, opts = {}) {
       const gm = ['metal', 'cinematic', 'hardstyle', 'trance', 'psytrance', 'gospel'].includes(g.id) ? 'choir_aahs' : 'voice_oohs';
       return sf ? sample(gm, 'pad', 'choir-pad', { attack: 0.08, release: 0.6 }) : { type: 'synth', preset: 'choir-pad', params: {} };
     }
+    case 'chop': // vocal chops: short, dry "oohs" (a choir sample played staccato) — the sound layer may give it its own patch
+      return sf ? sample('voice_oohs', 'lead', 'choir-pad', { attack: 0.005, release: 0.12 }) : { type: 'synth', preset: 'choir-pad', params: {} };
     case 'texture': return { type: 'synth', preset: 'ambient-pad', params: {} };
     case 'bells': return { type: 'synth', preset: 'celesta', params: {} };
     case 'organ': return { type: 'organ', preset: 'organ-drawbar', params: {} };
@@ -425,6 +442,59 @@ function topVoices(notes, k, which = 'top') {
   return out.sort((a, b) => a.start - b.start);
 }
 
+/** Vocal-chop cells (16th steps, length in 16ths): syncopated syllables that leave the kick's quarter notes free. */
+const CHOP_CELLS = [
+  [[3, 1], [6, 2], [11, 1], [14, 2]], [[2, 1], [3, 1], [7, 2], [10, 1], [14, 1]], [[0, 1], [3, 2], [8, 1], [11, 2]],
+  [[6, 1], [7, 1], [10, 2], [14, 2]], [[3, 1], [6, 1], [9, 1], [12, 3]],
+];
+
+/**
+ * Vocal-chop hook: a 1-bar syncopated cell (an answer cell every 4th bar) of short syllables on one held chord tone
+ * (the "word"), stepping up to the next chord tone on the cell's last hit; it only sounds in the lead's rests.
+ */
+function chopPart(g, s, { bpb, progression, lead = [], len, rng }) {
+  const ci = rng.int(0, CHOP_CELLS.length - 1);
+  const cell = CHOP_CELLS[ci];
+  const answer = CHOP_CELLS[(ci + 1 + rng.int(0, CHOP_CELLS.length - 2)) % CHOP_CELLS.length];
+  const chordAt = (t) => progression.find((c) => t >= c.startBeat - EPS && t < c.startBeat + c.durBeats - EPS) || progression[progression.length - 1];
+  const busy = (a, b) => lead.some((n) => n.start < b - EPS && n.start + n.dur > a + EPS);
+  const anchor = 72 + rng.int(0, 3);
+  const out = [];
+  for (let bar = 0; bar * bpb < len - EPS; bar++) {
+    const c = bar % 4 === 3 ? answer : cell;
+    // a bar where the lead leaves no room for the (nearly) whole cell stays empty — no stray single syllables
+    const free = c.filter(([st, l]) => !busy(bar * bpb + st / 4 - 0.05, bar * bpb + st / 4 + (l / 4) * 0.8));
+    if (free.length < Math.max(3, c.length - 1)) continue;
+    c.forEach(([st, l], i) => {
+      if (st / 4 >= bpb) return;
+      const t = bar * bpb + st / 4;
+      const d = (l / 4) * 0.8;
+      if (t >= len - EPS || busy(t - 0.05, t + d)) return;
+      const ch = chordAt(t + 0.01);
+      if (!ch?.chord) return;
+      const pcs = chordPitchClasses(ch.chord.root, ch.chord.type);
+      const tones = [];
+      for (let m = 67; m <= 81; m++) if (pcs.includes(mod12(m))) tones.push(m);
+      if (!tones.length) return;
+      let p = tones.reduce((a, b) => (Math.abs(b - anchor) < Math.abs(a - anchor) ? b : a), tones[0]);
+      if (i === c.length - 1) p = tones.find((x) => x > p) ?? p;
+      const n = note(p, t, d, st % 4 === 0 ? 0.72 : st % 2 === 0 ? 0.66 : 0.6, len);
+      if (n) out.push(n);
+    });
+  }
+  return out;
+}
+
+/**
+ * 8-bar phrase plan of an extra melodic layer in a long section (>= 16 bars): the k-th melodic extra enters k phrases
+ * in (the last phrase always plays), the chop answers every other phrase when a lead sings. null = plays throughout.
+ */
+export function phraseMask(s, k, role, hasLead) {
+  const P = Math.floor(s.bars / 8);
+  if (P < 2 || !(s.kind === 'main' || s.kind === 'verse')) return null;
+  return Array.from({ length: P }, (_, p) => (role === 'chop' && hasLead ? p % 2 === 1 || p === P - 1 : p >= Math.min(k, P - 1)));
+}
+
 const GUITAR_STYLE = { funk: 'offbeat', disco: 'offbeat', 'nu-disco': 'offbeat', reggae: 'skank', dub: 'skank', salsa: 'montuno', 'neo-soul': 'arp', rnb: 'arp', soul: 'arp', gospel: 'arp' };
 
 /** Notes of one melodic extra role over a section's progression (chord tones / chord-scale aware generators). */
@@ -472,13 +542,15 @@ function melodicPart(role, g, s, ctx) {
       const notes = arpFigures(progression, { mode: 'down', rate: 1, beatsPerBar: bpb, length: len, lo: 72, hi: 96, gate: 0.9, rng, vel: 0.4 + e * 0.2 });
       return notes.filter((n, i) => i % 2 === 0 || rng.chance(0.3));
     }
+    case 'chop':
+      return chopPart(g, s, { bpb, progression, lead, len, rng });
     case 'organ':
       return topVoices(progressionToNotes(progression, { style: 'whole', rng, beatsPerBar: bpb, length: len, vel: 0.5 + e * 0.15, motion: true, motionRange: [55, 79] }), 4);
     default: return [];
   }
 }
 
-const GROOVE_ROLE = { perc: 'drums', top: 'drums', impact: 'drums', sub: 'bass', counter: 'lead', strings: 'pad', brass: 'chords', guitar: 'chords', color: 'arp', texture: 'pad', vox: 'lead', bells: 'arp', organ: 'pad' };
+const GROOVE_ROLE = { chop: 'lead', perc: 'drums', top: 'drums', impact: 'drums', sub: 'bass', counter: 'lead', strings: 'pad', brass: 'chords', guitar: 'chords', color: 'arp', texture: 'pad', vox: 'lead', bells: 'arp', organ: 'pad' };
 const VARY_ROLE = { counter: 'lead', strings: 'pad', brass: 'chords', guitar: 'chords', color: 'arp', bells: 'arp', organ: 'chords' };
 
 /**
@@ -527,6 +599,7 @@ export function addOrchestra(ctx) {
     // (only where the main kit sits out — it plays its own build fill, two snare parts would double)
     const roll = made.has('impact') && s.kind === 'build' && s.next?.kind === 'main' && s.bars >= 2 && !s.roles.includes('drums');
     if (roll && !roles.includes('impact')) roles.push('impact');
+    const melodicOrder = roles.filter((r) => MELODIC_EXTRA.has(r));
     for (const role of roles) {
       const t = made.get(role);
       if (!t) continue;
@@ -539,6 +612,9 @@ export function addOrchestra(ctx) {
       else if (role === 'sub') notes = subPart(bass, len); // already grooved / modulated with the bass
       else notes = melodicPart(role, g, s, { bpb, rng, progression, root, scale, lead, len });
       notes = notes.filter((n) => n && n.start < len - EPS && n.dur > 0);
+      // layers come and go in 8-bar phrases inside long sections (not static 32-bar blocks)
+      const mask = MELODIC_EXTRA.has(role) ? phraseMask(s, melodicOrder.indexOf(role), role, lead.length > 0) : null;
+      if (mask) notes = notes.filter((n) => mask[Math.min(mask.length - 1, Math.floor(n.start / (8 * bpb) + EPS))]);
       if (!notes.length) continue;
       if (VARY_ROLE[role]) varyPart(notes, { role: VARY_ROLE[role], genre: g.id, progression, bpb, length: len, rng: createRng(hash(seed, s.index, role, 'vary')) });
       if (GROOVE_ROLE[role] === 'drums' && role !== 'impact') {

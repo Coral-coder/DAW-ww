@@ -20,7 +20,7 @@ import { applyGroove, shapeDynamics, grooveFor } from './groove.js';
 import { instrumentForRole, strumFor } from './sound.js';
 import { finishSong } from './production.js';
 import { mixTrack, createSongBuses, createSongMaster } from './mix.js';
-import { writeMelody, makeMotif, varyMotif } from './melody.js';
+import { writeMelody, makeMotif, varyMotif, leadIdiom, makeLeadIdea, writeLead, LEAD_IDIOMS } from './melody.js';
 import { DRUM_STYLES, resolveDrumStyle } from './drums.js';
 import { createEffect } from '../core/model.js';
 import { addRides } from './rides.js';
@@ -337,6 +337,13 @@ export function generateSong(opts = {}) {
 
   // ---- motifs: one idea per section type, re-used (with variation) whenever the section returns
   const melodyMode = ['riff', 'ambient'].includes(g.melodyStyle) ? 'classic' : 'motif';
+  // genres with an idiomatic lead vocabulary (house stab-hooks, trance gates, pop phrases, …): src/gen/melody.js writeLead
+  const idiom = leadIdiom(g.id);
+  const ideas = idiom ? {
+    hook: makeLeadIdea({ idiom, rng: createRng(hash(seed, 'ih')), hook: true }),
+    verse: makeLeadIdea({ idiom, rng: createRng(hash(seed, 'iv')), hook: false }),
+    bridge: makeLeadIdea({ idiom, rng: createRng(hash(seed, 'ib')), hook: false }),
+  } : null;
   const mDensity = g.melodyStyle === 'sparse' ? 0.3 : g.melodyStyle === 'vocal' ? 0.55 : 0.65;
   const motifs = {
     verse: makeMotif({ rng: createRng(hash(seed, 'mv')), bpb, density: mDensity }),
@@ -409,7 +416,13 @@ export function generateSong(opts = {}) {
       } else if (role === 'pad') {
         notes = padPart(progression, { range: PAD_RANGE, rng: createRng(hash(seed, 'pad', s.type)), length: len, vel: 0.5 + s.energy * 0.15 });
       } else if (role === 'lead') {
-        if (melodyMode === 'classic' || s.name.toLowerCase() === 'solo') {
+        if (ideas && s.name.toLowerCase() !== 'solo') {
+          const breakLike = (s.kind === 'break' && s.type !== 'bridge') || s.kind === 'intro' || s.kind === 'outro';
+          const mode = s.kind === 'main' ? 'hook' : s.kind === 'build' ? 'build' : breakLike ? 'break' : 'verse';
+          const idea = s.type === 'bridge' ? ideas.bridge : mode === 'verse' ? ideas.verse : ideas.hook;
+          const I = LEAD_IDIOMS[idiom];
+          notes = writeLead({ progression, key: root, scale, idea, mode, bpb, length: len, rng: rrng, range: I.range, center: I.center + (s.kind === 'main' ? 2 : 0) });
+        } else if (melodyMode === 'classic' || s.name.toLowerCase() === 'solo') {
           notes = generateRoleNotes('lead', { genre: g.id, key: root, scale, progression, bars: s.bars, beatsPerBar: bpb, energy: s.energy, kind: s.kind, rng: rrng, melodyStyle: s.name.toLowerCase() === 'solo' ? 'lead' : undefined });
         } else {
           const chorusLike = s.kind === 'main';

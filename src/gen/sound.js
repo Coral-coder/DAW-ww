@@ -6,7 +6,7 @@ import { drumInstrumentForGenre } from '../audio/library/drum-machines.js';
 import { getGenre } from './genres.js';
 import { realInstrument } from './production.js';
 import { GENRE_FAUST, faustFor } from './plugins.js';
-import { toStrudel } from './strudel-sounds.js';
+import { toStrudel, genreStrudel, hookSafe } from './strudel-sounds.js';
 
 export { toStrudel, strudelPatchFor, PRESET_STRUDEL, GM_STRUDEL } from './strudel-sounds.js';
 
@@ -83,8 +83,10 @@ export function instrumentForRole(role, genreId, opts = {}) {
   // instrument becomes the closest Strudel patch, the preset its fallback (src/gen/strudel-sounds.js).
   // opts.strudel === false (or soundfonts: false = nothing downloaded) keeps the built-in / plugin instruments.
   if (opts.strudel !== false && opts.soundfonts !== false) {
+    const own = genreStrudel(role, g); // genre-idiomatic hooks / stabs first
+    if (own) return own;
     const gm = GENRE_SOUNDFONTS[g.id]?.[role];
-    const sd = toStrudel(gm ? { type: 'soundfont', preset: null, params: { instrument: gm }, fallbackPreset: preset } : { type: PRESETS[preset]?.instrument.type || 'synth', preset, params: {} });
+    const sd = hookSafe(toStrudel(gm ? { type: 'soundfont', preset: null, params: { instrument: gm }, fallbackPreset: preset } : { type: PRESETS[preset]?.instrument.type || 'synth', preset, params: {} }), role, g);
     if (sd?.type === 'strudel') return sd;
   }
   // Faust plugin where it beats the preset (supersaw trance leads, analog pads, KS plucks, bells, organs) — the

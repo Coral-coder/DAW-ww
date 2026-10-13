@@ -479,3 +479,242 @@ export function writeMelody(opts = {}) {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Idiomatic leads (house / deep / tech / trance / pop / dnb / r&b): the genre's own rhythm vocabulary
+// ---------------------------------------------------------------------------
+// How these genres write a lead / hook (producer practice): a short rhythmic cell on the 16th / 8th grid — house
+// stab-hooks use 3+3+2 ("tresillo") groupings and syncopations that dodge the four-on-the-floor kick, trance gates 16ths,
+// pop phrases are syllabic 8ths with a long note and a breath, liquid dnb is a half-time lyrical line, r&b lays back
+// off the downbeat. The cell is a 2-bar call -> response (or a 1-bar riff for trance / tech), repeated across a 4-bar
+// phrase with the pitches re-fitted to each chord (same rhythm, new notes), varied on the second pass of an 8-bar
+// period, and every phrase ends on a chord tone (the period's last bar on the tonic). Strong positions (beats and long
+// notes) are chord tones; a pitch never repeats more than twice in a row; notes are short where the idiom is stabby.
+const cellOf = (...xs) => xs.map(([s, l]) => ({ t: s / 4, d: l / 4 }));
+
+export const LEAD_IDIOMS = {
+  // 2-bar call & response, short syncopated stabs (gate), one longer note at the end of the response
+  house: {
+    cellBars: 2, gate: 0.75, range: [65, 86], center: 74,
+    call: [cellOf([0, 2], [3, 2], [6, 2], [10, 2], [12, 3]), cellOf([2, 1], [3, 2], [6, 2], [8, 1], [11, 2], [14, 2]),
+      cellOf([0, 1], [3, 2], [6, 1], [8, 2], [11, 3]), cellOf([0, 2], [3, 3], [7, 1], [10, 2], [14, 2])],
+    resp: [cellOf([0, 2], [3, 2], [6, 6]), cellOf([2, 2], [6, 2], [8, 6]), cellOf([0, 1], [3, 2], [6, 2], [10, 5])],
+  },
+  // deep house: fewer, rounder notes (Rhodes / vibes phrasing), lots of space
+  deep: {
+    cellBars: 2, gate: 0.9, range: [62, 84], center: 72,
+    call: [cellOf([0, 3], [6, 2], [10, 4]), cellOf([3, 3], [8, 2], [11, 4]), cellOf([2, 2], [6, 3], [10, 2], [12, 3])],
+    resp: [cellOf([0, 6], [10, 4]), cellOf([2, 4], [8, 6]), cellOf([0, 2], [3, 7])],
+  },
+  // tech house: a 1-bar 16th riff (acid / stab line) repeated with pitch movement, answered in the 4th bar
+  tech: {
+    cellBars: 1, gate: 0.6, range: [62, 84], center: 70,
+    call: [cellOf([0, 1], [2, 1], [3, 1], [6, 1], [8, 1], [10, 1], [11, 1], [14, 1]), cellOf([0, 1], [3, 1], [4, 1], [6, 1], [9, 1], [11, 1], [12, 1], [14, 1]),
+      cellOf([0, 2], [3, 1], [6, 2], [8, 1], [10, 1], [11, 2], [14, 1])],
+    resp: [cellOf([0, 1], [3, 1], [6, 1], [8, 4]), cellOf([0, 2], [3, 2], [6, 2], [10, 4])],
+  },
+  // trance: gated 16th / 8th hook over one bar, the 4th bar answers with a held note
+  trance: {
+    cellBars: 1, gate: 0.7, range: [67, 91], center: 77,
+    call: [cellOf([0, 2], [2, 1], [3, 2], [6, 2], [8, 2], [10, 1], [11, 2], [14, 2]), cellOf([0, 1], [2, 1], [4, 2], [6, 1], [8, 1], [10, 2], [12, 1], [14, 2]),
+      cellOf([0, 3], [3, 3], [6, 2], [8, 2], [10, 2], [12, 2], [14, 2])],
+    resp: [cellOf([0, 2], [2, 2], [4, 2], [6, 2], [8, 7]), cellOf([0, 3], [3, 3], [6, 9])],
+  },
+  // pop: a sung phrase — syllabic 8ths / 16ths off the downbeat, then a long note and a breath
+  pop: {
+    cellBars: 2, gate: 0.92, range: [62, 84], center: 72,
+    call: [cellOf([2, 2], [4, 2], [6, 2], [8, 3], [12, 2], [14, 2]), cellOf([0, 2], [2, 2], [4, 1], [6, 3], [10, 2], [12, 2]),
+      cellOf([1, 1], [2, 2], [4, 2], [7, 3], [12, 3])],
+    resp: [cellOf([0, 4], [6, 2], [8, 6]), cellOf([0, 2], [2, 6], [10, 4]), cellOf([0, 6], [8, 6])],
+  },
+  // liquid dnb: half-time lyrical line over the 174 BPM breaks — long notes with an 8th-note push
+  dnb: {
+    cellBars: 2, gate: 0.92, range: [64, 86], center: 74,
+    call: [cellOf([0, 3], [3, 3], [6, 4], [12, 2], [14, 2]), cellOf([0, 2], [3, 3], [8, 3], [11, 5])],
+    resp: [cellOf([0, 6], [8, 2], [10, 6]), cellOf([0, 8], [10, 4])],
+  },
+  // r&b / hip-hop: laid back, entering after the downbeat, 16th syncopations, breath at the end of the response
+  rnb: {
+    cellBars: 2, gate: 0.88, range: [62, 82], center: 71,
+    call: [cellOf([1, 1], [2, 2], [5, 1], [6, 2], [10, 2], [12, 3]), cellOf([2, 1], [3, 2], [6, 3], [11, 1], [12, 2])],
+    resp: [cellOf([0, 2], [3, 5], [10, 4]), cellOf([1, 3], [6, 6])],
+  },
+};
+
+const IDIOM_OF = {
+  house: 'house', 'uk-garage': 'house', 'deep-house': 'deep', 'tech-house': 'tech', trance: 'trance', 'progressive-house': 'trance',
+  pop: 'pop', kpop: 'pop', 'drum-and-bass': 'dnb', 'liquid-dnb': 'dnb', rnb: 'rnb', 'neo-soul': 'rnb', 'two-step': 'rnb',
+  'boom-bap': 'rnb', 'lofi-hip-hop': 'rnb', trap: 'rnb',
+};
+/** The lead idiom of a genre id (null: the generic motif writer). */
+export const leadIdiom = (genreId) => IDIOM_OF[genreId] || null;
+
+/** Scale-step contour of a cell: steps and 3rd / 4th leaps (recovered by step), an arch, at most one repeat in a row. */
+function idiomContour(n, rng, answer = false) {
+  const steps = [0];
+  let dir = answer ? -1 : rng.chance(0.6) ? 1 : -1;
+  let repeats = 0;
+  for (let i = 1; i < n; i++) {
+    const prevStep = steps[i - 1] - (steps[i - 2] ?? steps[i - 1]);
+    let s;
+    if (Math.abs(prevStep) >= 3) s = -Math.sign(prevStep); // gap fill
+    else if (repeats < 1 && rng.chance(0.2)) s = 0; // a repeated note is part of a hook — twice, not three times
+    else if (rng.chance(0.25)) s = dir * rng.int(2, 3);
+    else s = dir;
+    if (i === Math.ceil(n / 2) && rng.chance(0.65)) dir = -dir; // arch
+    repeats = s === 0 ? repeats + 1 : 0;
+    steps.push(steps[i - 1] + s);
+  }
+  return steps;
+}
+
+/**
+ * makeLeadIdea({idiom, rng, hook=true}) -> {idiom, cellBars, call:{rhythm, steps}, resp:{rhythm, steps}, hook}
+ * hook=false (verse / bridge): the same vocabulary thinned to its 8th-grid notes.
+ */
+export function makeLeadIdea({ idiom = 'house', rng = createRng(1), hook = true } = {}) {
+  const I = LEAD_IDIOMS[idiom] || LEAD_IDIOMS.house;
+  const pick = (arr) => arr[rng.int(0, arr.length - 1)].map((h) => ({ ...h }));
+  let call = pick(I.call);
+  let resp = pick(I.resp);
+  if (!hook) {
+    const thin = (r) => { const k = r.filter((h, i) => i === 0 || Math.abs(h.t * 2 - Math.round(h.t * 2)) < 1e-6); return k.length >= 2 ? k : r; };
+    call = thin(call);
+    resp = thin(resp);
+  }
+  return { idiom, cellBars: I.cellBars, call: { rhythm: call, steps: idiomContour(call.length, rng) }, resp: { rhythm: resp, steps: idiomContour(resp.length, rng, true) }, hook };
+}
+
+/**
+ * writeLead({progression, key, scale, idea (makeLeadIdea), mode ('hook'|'verse'|'break'|'build'), bpb, length, rng,
+ *   range, center}) -> Note[]
+ * 4-bar phrases of the idea's cells (2-bar: call, response, call (higher), response-cadence; 1-bar: call, call', call,
+ * response-cadence), an 8-bar period whose second half varies; 'break' plays the hook on its 8th-grid notes legato,
+ * 'build' repeats the first half of the call (fragmentation).
+ */
+export function writeLead(opts = {}) {
+  const rng = opts.rng || createRng(1);
+  const { root, scale } = resolveKey(opts);
+  const bpb = opts.bpb || opts.beatsPerBar || 4;
+  const progression = opts.progression || [];
+  const progLen = progression.reduce((m, c) => Math.max(m, c.startBeat + c.durBeats), 0);
+  const length = opts.length ?? (progLen || 8 * bpb);
+  const idea = opts.idea || makeLeadIdea({ idiom: opts.idiom, rng });
+  const I = LEAD_IDIOMS[idea.idiom] || LEAD_IDIOMS.house;
+  const [lo, hi] = opts.range || I.range;
+  const center = opts.center ?? I.center;
+  const mode = opts.mode || 'hook';
+  const pool = scaleNotesInRange(root, scale, lo, hi);
+  if (!pool.length || !progression.length) return [];
+  const chordAt = (t) => {
+    const tt = progLen ? ((t % progLen) + progLen) % progLen : t;
+    return progression.find((c) => tt >= c.startBeat - 1e-6 && tt < c.startBeat + c.durBeats - 1e-6) || progression[progression.length - 1];
+  };
+  const tonesAt = (t) => {
+    const c = chordAt(t);
+    const pcs = chordPitchClasses(c.chord.root, c.chord.type);
+    const out = [];
+    for (let m = lo; m <= hi; m++) if (pcs.includes(mod12(m))) out.push(m);
+    return out.length ? out : pool;
+  };
+  const idxOf = (p) => { let b = 0; for (let i = 0; i < pool.length; i++) if (Math.abs(pool[i] - p) < Math.abs(pool[b] - p)) b = i; return b; };
+  const tonic = mod12(root);
+  const bars = Math.ceil(length / bpb - 1e-6);
+  const varKind = rng.pick(['tail', 'lift', 'tail', 'turn']);
+  const out = [];
+  let prevAnchor = null;
+  const hist = []; // pitches written so far (no pitch three times in a row, across bar lines too)
+  for (let bar = 0; bar < bars; bar++) {
+    const base = bar * bpb;
+    const pos = bar % 4;
+    const second = Math.floor(bar / 4) % 2 === 1;
+    const periodEnd = bar % 8 === 7 || bar === bars - 1;
+    const isCall = idea.cellBars === 2 ? pos % 2 === 0 : pos !== 3;
+    const cell = isCall ? idea.call : idea.resp;
+    let rhythm = cell.rhythm.filter((h) => h.t < bpb - 1e-6);
+    let steps = cell.steps.slice(0, rhythm.length);
+    let cadence = pos === 3 || bar === bars - 1 ? (periodEnd ? 'A' : 'Q') : null;
+    if (mode === 'build') {
+      // fragmentation: the call's first half, twice per bar, stepping up through the build
+      const half = idea.call.rhythm.filter((h) => h.t < bpb / 2 - 1e-6);
+      const hs = idea.call.steps.slice(0, half.length);
+      rhythm = [...half, ...half.map((h) => ({ t: h.t + bpb / 2, d: h.d }))];
+      steps = [...hs, ...hs.map((x) => x + 1)];
+      cadence = null;
+    } else if (mode === 'break') {
+      // the hook exposed: its 8th-grid notes only, sustained to the next one
+      const keep = rhythm.map((h, i) => [h, steps[i]]).filter(([h], i) => i === 0 || Math.abs(h.t * 2 - Math.round(h.t * 2)) < 1e-6);
+      rhythm = keep.map(([h], i) => ({ t: h.t, d: Math.max(h.d, ((keep[i + 1]?.[0].t ?? Math.min(bpb, h.t + 2)) - h.t) * 0.9) }));
+      steps = keep.map((x) => x[1]);
+    }
+    if (!rhythm.length) continue;
+    // variation: the 1-bar riff's second statement and the second pass of the period get a new tail / a lift
+    if (isCall && mode !== 'build' && steps.length > 2 && ((idea.cellBars === 1 && pos === 1) || (second && varKind !== 'lift'))) {
+      steps = steps.slice();
+      const k = steps.length - 1;
+      if (varKind === 'turn' && k >= 2) { steps[k - 1] = steps[k - 2] + (steps[k - 1] > steps[k - 2] ? -1 : 1); steps[k] = steps[k - 1] + (rng.chance(0.5) ? 2 : -2); }
+      else steps[k] = steps[k - 1] - (steps[k] - steps[k - 1] || 1);
+    }
+    // anchor: a chord tone near the register centre — the same shape re-fitted to each chord (sequence); the repeated
+    // call of a 2-bar idea and the lifted second pass sit higher (the question rises)
+    const lift = (idea.cellBars === 2 && pos === 2 ? 3 : 0) + (second && varKind === 'lift' && isCall ? 3 : 0);
+    const target = (prevAnchor == null ? center : Math.round(prevAnchor * 0.4 + center * 0.6)) + lift;
+    const anchor = nearest(tonesAt(base + rhythm[0].t + 0.01), target);
+    prevAnchor = anchor;
+    const a0 = idxOf(anchor);
+    const ps = [];
+    const recent = (k) => (k <= ps.length ? ps[ps.length - k] : hist[hist.length - (k - ps.length)]);
+    rhythm.forEach((h, i) => {
+      const raw = pool[clamp(a0 + (steps[i] ?? 0) - (steps[0] ?? 0), 0, pool.length - 1)];
+      let p = raw;
+      const t = base + h.t;
+      const tones = tonesAt(t + 0.01);
+      const strong = Math.abs(h.t - Math.round(h.t)) < 1e-6 || h.d >= 0.45;
+      if (strong && !tones.includes(p)) {
+        // snap to a chord tone, keeping the contour: a tone that differs from the previous note when the motif moves
+        const moving = i > 0 && steps[i] !== steps[i - 1];
+        const cands = moving ? tones.filter((x) => x !== recent(1) && Math.abs(x - raw) <= 4) : [];
+        p = nearest(cands.length ? cands : tones, raw);
+      }
+      if (recent(1) === p && recent(2) === p) {
+        const alt = tones.filter((x) => x !== p);
+        p = alt.length ? nearest(alt, p) : pool[clamp(idxOf(p) + 1, 0, pool.length - 1)];
+      }
+      ps.push(p);
+    });
+    if (cadence) {
+      // phrase end: a question (3rd / 5th — open) or the answer (tonic when it is in the chord)
+      const k = ps.length - 1;
+      const lt = base + rhythm[k].t + 0.01;
+      const ts = tonesAt(lt);
+      let cands = ts;
+      if (cadence === 'A') { const tn = ts.filter((p) => mod12(p) === tonic); if (tn.length) cands = tn; }
+      else { const open = ts.filter((p) => mod12(p) !== tonic && mod12(p) !== mod12(chordAt(lt).chord.root)); if (open.length) cands = open; }
+      let p = nearest(cands, ps[k - 1] ?? ps[k]);
+      const prev1 = k >= 1 ? ps[k - 1] : hist[hist.length - 1];
+      const prev2 = k >= 2 ? ps[k - 2] : hist[hist.length - 2 + k];
+      if (prev1 === p && prev2 === p) { const other = cands.filter((x) => x !== p); p = nearest(other.length ? other : ts.filter((x) => x !== p).length ? ts.filter((x) => x !== p) : ts, p); }
+      ps[k] = p;
+    }
+    hist.push(...ps);
+    rhythm.forEach((h, i) => {
+      const t = base + h.t;
+      if (t >= length - 1e-6) return;
+      const next = rhythm[i + 1] ? base + rhythm[i + 1].t : Infinity;
+      let d = h.d < 0.5 ? h.d * I.gate : h.d * Math.max(I.gate, 0.9);
+      d = Math.min(d, next - t - 0.02, length - t);
+      const onBeat = Math.abs(h.t - Math.round(h.t)) < 1e-6;
+      const on8 = Math.abs(h.t * 2 - Math.round(h.t * 2)) < 1e-6;
+      const vel = (h.t === 0 ? 0.88 : onBeat ? 0.8 : on8 ? 0.82 : 0.7) * (0.94 + rng() * 0.06);
+      const n = makeNote(ps[i], t, Math.max(0.08, d), vel, length);
+      if (n) out.push(n);
+    });
+  }
+  fitNotesToHarmony(out, progression, { key: { root, scale }, range: [lo, hi] });
+  out.sort((a, b) => a.start - b.start);
+  for (let i = 0; i + 1 < out.length; i++) {
+    const maxD = out[i + 1].start - out[i].start - 0.02;
+    if (out[i].dur > maxD) out[i].dur = Math.max(0.05, Math.round(maxD * 10000) / 10000);
+  }
+  return out;
+}

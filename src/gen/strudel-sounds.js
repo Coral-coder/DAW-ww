@@ -19,7 +19,7 @@ export const PRESET_STRUDEL = {
   pluck: 'sd-tri-pluck', 'arp-pluck': 'sd-tri-pluck', 'arp-saw': 'sd-saw-arp',
   'supersaw-pad': 'sd-supersaw-pad', 'warm-pad': 'sd-warm-pad', 'synthwave-pad': 'sd-warm-pad', 'detuned-pad': 'sd-warm-pad', 'dark-pad': 'sd-dark-pad',
   'glass-pad': 'sd-glass-pad', 'ambient-pad': 'sd-ambient-pad', 'juno-strings': 'sd-juno-strings', strings: 'sd-strings', 'string-pad': 'sd-synth-strings',
-  'choir-pad': 'sd-choir', 'noise-sweep': 'sd-noise-sweep', riser: 'sd-riser', laser: 'sd-laser',
+  'choir-pad': 'sd-choir', 'whistle-lead': 'sd-soft-lead', 'noise-sweep': 'sd-noise-sweep', riser: 'sd-riser', laser: 'sd-laser',
 };
 /** GM instrument (soundfont / multisample defs) -> Strudel patch. Unlisted GM instruments keep their samples. */
 export const GM_STRUDEL = {
@@ -29,6 +29,38 @@ export const GM_STRUDEL = {
   synth_strings_1: 'sd-synth-strings', choir_aahs: 'sd-choir', voice_oohs: 'sd-choir', flute: 'sd-flute', clavinet: 'sd-clav', steel_drums: 'sd-steel-drum',
   drawbar_organ: 'sd-organ', rock_organ: 'sd-rock-organ', pizzicato_strings: 'sd-pizzicato',
 };
+/**
+ * Genre-idiomatic patches per role, ahead of the generic preset mapping: house hooks are M1-style piano / organ
+ * stabs, plucks and vowel "vocal chop" synths — never a soft e-piano as the lead; deep house keeps the Rhodes for
+ * chords with a filtered pluck hook; tech house short percussive stabs; trance the supersaw (generic mapping).
+ */
+export const GENRE_STRUDEL = {
+  house: { lead: 'sd-house-piano' },
+  'deep-house': { lead: 'sd-pluck-hook' },
+  'tech-house': { lead: 'sd-tech-stab', chords: 'sd-tech-stab' },
+  'progressive-house': { chords: 'sd-pluck-hook' },
+  'uk-garage': { lead: 'sd-vowel-lead', chords: 'sd-house-organ' },
+  'two-step': { lead: 'sd-vowel-lead' },
+  'nu-disco': { lead: 'sd-pluck-hook' },
+  rnb: { lead: 'sd-soft-lead' },
+  amapiano: { lead: 'sd-house-piano' },
+  breakbeat: { lead: 'sd-vowel-lead' },
+};
+/** Roles that carry the hook: a soft e-piano never plays them in dance music. */
+const SOFT_KEYS = new Set(['sd-rhodes', 'sd-fm-epiano', 'sd-lofi-keys']);
+const DANCE_FAMILIES = new Set(['house', 'techno', 'trance', 'garage', 'breaks', 'bass', 'dnb', 'hard']);
+
+/** Genre-specific Strudel def for a role (null: use the generic mapping). */
+export function genreStrudel(role, genre) {
+  const id = GENRE_STRUDEL[genre?.id]?.[role] || null;
+  return id ? { type: 'strudel', preset: id, params: {}, fallbackPreset: PRESETS[id].fallbackPreset } : null;
+}
+/** Guard: a dance-music lead / counter-melody mapped to a soft e-piano becomes a plucky hook synth. */
+export function hookSafe(def, role, genre) {
+  if (def?.type !== 'strudel' || !['lead', 'counter'].includes(role) || !SOFT_KEYS.has(def.preset) || !DANCE_FAMILIES.has(genre?.family)) return def;
+  return { type: 'strudel', preset: 'sd-pluck-hook', params: {}, fallbackPreset: PRESETS['sd-pluck-hook'].fallbackPreset };
+}
+
 /** Stylised presets whose patch beats the plain GM instrument the genre names (lofi keys = a filtered, wobbly EP). */
 const STYLE_FIRST = new Set(['lofi-keys']);
 

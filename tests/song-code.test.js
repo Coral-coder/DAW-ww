@@ -152,7 +152,7 @@ test('apply-back: unchanged code changes nothing; edits write notes, gain, mutes
   // remove bass (-> muted), mute lead with "_", change chords gain, add a new drum + melodic block
   const bassLabel = labelFor('Bass');
   let e2 = code.replace(new RegExp(`\\n${bassLabel}: [\\s\\S]*?\\n(?=\\n)`), '\n').replace('\nlead:', '\n_lead:')
-    .replace(/(\nchords: [\s\S]*?\.s\("[^"]+"\)(?:\.(?!gain\()\w+\([^()]*\))*\s*)\.gain\([\d.]+\)/, '$1.gain(0.5)'); // (after a Strudel patch's controls)
+    .replace(/(\nchords: [\s\S]*?\.s\("[^"]+"\)(?:\s*\.(?!gain\()\w+\([^()]*\))*\s*)\.gain\([\d.]+\)/, '$1.gain(0.5)'); // (after a Strudel patch's controls)
   e2 += '\nperc: s("[~ cp]*4").bank("808")\nhook: note("c4 e4 g4 c5").s("square")\n';
   q = clone(p);
   r = applySongCode(q, e2);

@@ -99,7 +99,11 @@ export function colorChord(chord, flavor, rng = createRng(1), opts = {}) {
   if (flavor === 'power') type = '5';
   else if (!explicit && (rich || seventhish)) {
     if (type === 'maj') {
-      if (isDom) {
+      // house / future: only the real dominant (V) is a 7th chord — bVII7 / IV7 in a minor key read as blues / funk;
+      // there the major chords take an add9 (Larry Heard / deep-house colour) when the 9th is in the key
+      if (isDom && seventhish && mod12(r - (opts.key?.root ?? r)) !== 7 && chord.function !== 'dominant') {
+        type = inKey(2) ? 'add9' : 'maj';
+      } else if (isDom) {
         const nine = rich && inKey(2) && (!keyPcs || !inKey(1));
         type = nine ? (inKey(9) && rng.chance(0.5) ? '13' : '9') : '7';
       } else if (inKey(11)) type = rich && inKey(2) && rng.chance(0.6) ? 'maj9' : 'maj7';

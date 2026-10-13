@@ -170,7 +170,12 @@ function resolvePlan(romans, root, scale, sevenths) {
   const out = romans.map((r) => {
     const base = r === 'T' ? T : r;
     if (!sevenths || /\d|sus|maj|°|ø|\+/.test(base)) return base;
-    for (const ext of ['7', 'maj7']) {
+    // a major chord only becomes a dominant 7th on the dominant (V7); IV7 / bVII7 / bVI7 are blues / funk vocabulary,
+    // not minor house / pop: those take maj7 when it is in the key, else stay triads (colorChord adds a 9th)
+    const tri = romanToChord(base, root, scale);
+    const dominant = tri && tri.type === 'maj' && (tri.root - root + 12) % 12 === 7;
+    const exts = tri && tri.type === 'maj' ? (dominant ? ['7'] : ['maj7']) : ['7', 'maj7'];
+    for (const ext of exts) {
       const c = romanToChord(base + ext, root, scale);
       if (c && chordPitchClasses(c.root, c.type).every((pc) => set.has(pc))) return base + ext;
     }
@@ -186,14 +191,15 @@ function borrowedCount(romans, root, scale) {
 }
 
 /** Pick one of the candidate plans that fits the scale best (ties broken by rng). */
-function pickPlan(cands, { root, scale, rng, sevenths = false, avoid = [] }) {
+function pickPlan(cands, { root, scale, rng, sevenths = false, avoid = [], strict = false }) {
   const resolved = cands.map((c) => resolvePlan(c, root, scale, sevenths)).filter(Boolean)
     .filter((r) => !avoid.some((a) => a && a.join() === r.join()));
   if (!resolved.length) return null;
   const scored = resolved.map((r) => ({ r, s: borrowedCount(r, root, scale) }));
   const best = Math.min(...scored.map((x) => x.s));
   // allow one more borrowed chord than the best fit (the bII / bVII colours are the idiom), never more than two
-  const pool = scored.filter((x) => x.s <= Math.min(best + 1, Math.max(best, 2)));
+  // (strict — club genres: only the best-fitting plans; a borrowed major IV / V in minor house reads as funk / pop)
+  const pool = scored.filter((x) => x.s <= (strict ? best : Math.min(best + 1, Math.max(best, 2))));
   return rng.pick(pool).r;
 }
 
@@ -251,7 +257,8 @@ export function planSectionHarmony({ genre, root, scale, rng = createRng(1), mai
     if (fam.chorus && plan.chorus !== main) plan.main = plan.chorus;
   } else if (songForm && mainRomans && new Set(mainRomans).size <= 2 && (!plan.verse || same(plan.verse, main))) {
     // a two-chord vamp: the verse grooves on it, the chorus lifts somewhere new, the bridge somewhere else again
-    const lift = pickPlan(LIFTS.filter((l) => l.some((r) => !mainRomans.includes(r))), { root, scale, rng, sevenths, avoid: [mainRomans] });
+    const strict = ['house', 'techno', 'trance'].includes(genre.family);
+    const lift = pickPlan(LIFTS.filter((l) => l.some((r) => !mainRomans.includes(r))), { root, scale, rng, sevenths, avoid: [mainRomans], strict });
     if (lift && planRoots([lift], root, scale).size >= 2) {
       plan.verse = main;
       plan.intro = main;
