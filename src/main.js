@@ -1,5 +1,6 @@
 // daW³ bootstrap.
 import { createApp } from './ui/app.js';
+import { installPWA } from './pwa.js';
 
 // Carry UI settings saved under the app's earlier name over to the current "daw3-" keys.
 const SETTING_KEYS = ['ui', 'arrange', 'rack', 'piano', 'mixer', 'user-presets', 'countin', 'code-viz-window', 'code-viz-h',
@@ -15,6 +16,8 @@ try {
 
 window.addEventListener('error', (e) => console.error('[daw3]', e.error || e.message));
 window.addEventListener('unhandledrejection', (e) => console.error('[daw3] unhandled', e.reason));
+
+installPWA();
 
 createApp(document.getElementById('app')).catch((e) => {
   console.error(e);

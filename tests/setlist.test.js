@@ -377,3 +377,114 @@ test('runner: swaps land at the phrase boundary with the level change, drift lan
   assert.equal(arp.sound.cur.preset, 'arp-saw');
   assert.equal(store.canUndo(), true); // only the user's own edits are undo steps
 });
+
+// ------------------------------------------------------------------ audio-loop layers (addSampleLayer)
+import { loopSegments, loopBarsFor, loopLevel, addLoopLayer } from '../src/live/setlist-engine.js';
+
+test('loop math: bars inferred and rounded to 1/2/4/8, segments restart on the loop, level matching', () => {
+  assert.equal(loopBarsFor(2, 120), 1); // 4 beats
+  assert.equal(loopBarsFor(7.9, 120), 4); // ~3.95 bars
+  assert.equal(loopBarsFor(14, 125), 8);
+  assert.equal(loopBarsFor(5.5, 120), 2);
+  assert.deepEqual(loopSegments(0, 8, 32).map((g) => g.start), [0, 8, 16, 24]);
+  assert.ok(loopSegments(0, 8, 32).every((g) => g.length === 8 && g.offset === 0));
+  // a 2-phrase loop: the second phrase continues 16 beats into the sample
+  assert.deepEqual(loopSegments(16, 32, 16), [{ start: 0, length: 16, offset: 16 }]);
+  assert.deepEqual(loopSegments(4, 8, 16), [{ start: 0, length: 4, offset: 4 }, { start: 4, length: 8, offset: 0 }, { start: 12, length: 4, offset: 0 }]);
+  assert.ok(loopLevel(0.5) < loopLevel(0.1));
+  assert.equal(loopLevel(null), 0.7);
+});
+
+test('loop layers follow the energy arc like percussion / texture and survive key moves', () => {
+  const { state } = createSetlist({ genre: 'tech-house', key: { root: 0, scale: 'minor' }, seed: 3, phraseBars: 4 });
+  addLoopLayer(state, { id: 'L1', name: 'Loop', sampleId: 's1', beats: 8 });
+  addLoopLayer(state, { id: 'L2', name: 'Shift', sampleId: 's2', beats: 4, keyShift: true });
+  const L = state.layers.find((l) => l.id === 'L1');
+  assert.equal(L.category, 'loop');
+  const ls = [{ id: 'a', category: 'loop', mode: 'auto' }];
+  assert.ok(activeLayers(ls, 'drop', 0.8).has('a'));
+  assert.ok(activeLayers(ls, 'groove', 0.7).has('a'));
+  assert.ok(!activeLayers(ls, 'groove', 0.3).has('a'), 'low energy thins it like perc');
+  assert.ok(!activeLayers([{ id: 'a', category: 'loop', mode: 'off' }], 'drop', 1).has('a'));
+  let plan = planPhrase(state, {});
+  assert.deepEqual(plan.layers.L1.segments.map((g) => g.start), [0, 8]);
+  assert.equal(plan.layers.L1.shift, 0);
+  assert.equal(plan.layers.L2.notes.length, 4);
+  assert.ok(plan.layers.L2.notes.every((n) => n.pitch === 60));
+  assert.equal(plan.pivot, null);
+  queueKeyMove(state, 'dominant'); // up a fifth: root shift −5
+  plan = planPhrase(state, { current: {} });
+  assert.ok(plan.keyChanged);
+  assert.equal(plan.layers.L1.shift, 0, 'audio loop keeps its pitch');
+  assert.ok(plan.layers.L1.notes.length === 0 && plan.layers.L1.segments.length === 2);
+  assert.equal(plan.layers.L2.shift, -5);
+  assert.ok(plan.layers.L2.notes.every((n) => n.pitch === 55));
+  assert.ok(!plan.pivot?.L1 && !plan.pivot?.L2, 'no pivot for loops');
+});
+
+test('runner.addSampleLayer: loop joins at a phrase boundary as audio clips, is captured, can be removed', async () => {
+  const store = new Store();
+  let pos = 0, playing = false;
+  const engine = { get isPlaying() { return playing; }, getPosition: () => pos, setPosition: (b) => { pos = b; }, play: async () => { playing = true; }, pause: () => { playing = false; }, stop: () => { playing = false; } };
+  const app = { store, engine, actions: { ensureAudio: async () => {} }, toast: () => {} };
+  const r = new SetlistRunner(app);
+  await assert.rejects(() => r.addSampleLayer({ sampleId: 'x', beats: 4 }));
+  await r.start({ genre: 'tech-house', key: { root: 0, scale: 'minor' }, bpm: 125, phraseBars: 4, energy: 0.9 });
+  r._stopTimer();
+  store.transact('smp', (p) => { p.samples.smp1 = { id: 'smp1', name: 'Break loop.wav', mime: 'audio/wav', data: '', duration: 3.84 }; }, { undo: false });
+  // the decks call shape
+  const l = await r.addSampleLayer({ sampleId: 'smp1', name: 'Break loop', beats: 8, bpm: 125, key: { tonic: 9, mode: 'minor' } });
+  assert.equal(l.role, 'loop');
+  const tr = store.get().tracks.find((t) => t.id === l.id);
+  assert.ok(tr && tr.type === 'audio' && tr.role === 'loop' && tr.volume > 0);
+  r.setLayer(l.id, { mode: 'on' });
+  for (pos = 0; pos < 16 * 4; pos += 0.25) r.tick();
+  const p = store.get();
+  const clips = p.clips.filter((c) => c.trackId === l.id);
+  assert.ok(clips.length >= 4, 'loop placed');
+  assert.ok(clips.every((c) => c.type === 'audio' && c.sampleId === 'smp1' && c.length === 8 && c.offset === 0));
+  // every clip starts on the loop grid, and the first one exactly on a phrase boundary
+  assert.ok(clips.every((c) => c.start % 8 === 0));
+  const firstPh = r.phrases.find((ph) => ph.active.has(l.id));
+  assert.equal(Math.min(...clips.map((c) => c.start)), firstPh.start);
+  // a key-shift loop rides a sampler with a semitone shift after a key move
+  const k = await r.addSampleLayer({ sampleId: 'smp1', name: 'Pitched', beats: 4, bpm: 125, keyShift: true, mode: 'on' });
+  assert.equal(store.get().tracks.find((t) => t.id === k.id).instrument.type, 'sampler');
+  r.keyMove('lift2');
+  const n0 = r.phrases.length;
+  while (r.phrases.length < n0 + 2) { pos += 0.25; r.tick(); }
+  const kph = r.phrases[r.phrases.length - 1];
+  const kpat = store.get().patterns[kph.patterns[k.id]];
+  assert.ok(kpat.notes.every((n) => n.pitch === 62), 'sampler shifted +2 st');
+  // removal: gone from the next phrases, played clips kept
+  const removedAt = pos;
+  r.removeLayer(k.id);
+  assert.ok(!r.layer(k.id));
+  const cut = r.phraseAt(removedAt).start + r.phraseAt(removedAt).length;
+  assert.ok(!store.get().clips.some((c) => c.trackId === k.id && c.start >= cut));
+  for (let i = 0; i < 16; i++) { pos += 0.25; r.tick(); }
+  assert.ok(!r.lastPhrase.active.has(k.id));
+  // capture keeps the loop as audio clips
+  const res = r.capture();
+  assert.ok(res);
+  const q = store.get();
+  const cap = q.clips.filter((c) => c.trackId === l.id);
+  assert.ok(cap.length >= 4 && cap.every((c) => c.type === 'audio' && c.sampleId === 'smp1'));
+  assert.ok(q.tracks.some((t) => t.id === l.id));
+});
+
+test('removing a loop that never played removes its track', async () => {
+  const store = new Store();
+  let pos = 0, playing = false;
+  const engine = { get isPlaying() { return playing; }, getPosition: () => pos, setPosition: (b) => { pos = b; }, play: async () => { playing = true; }, pause: () => { playing = false; }, stop: () => { playing = false; } };
+  const r = new SetlistRunner({ store, engine, actions: { ensureAudio: async () => {} }, toast: () => {} });
+  await r.start({ genre: 'tech-house', key: { root: 0, scale: 'minor' }, bpm: 125, phraseBars: 4 });
+  r._stopTimer();
+  store.transact('smp', (p) => { p.samples.s = { id: 's', name: 'x.wav', data: '', duration: 1.92 }; }, { undo: false });
+  const l = await r.addSampleLayer({ sampleId: 's' }); // beats inferred: 1.92 s @125 = 1 bar
+  assert.equal(l.sample.beats, 4);
+  assert.equal(l.name, 'x');
+  r.removeLayer(l.id);
+  assert.ok(!store.get().tracks.some((t) => t.id === l.id));
+  assert.ok(!r.state.layers.some((x) => x.id === l.id));
+});

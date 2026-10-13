@@ -197,6 +197,7 @@ export function rhythmSimilarity(a, b, { drums = false } = {}) {
 export function layerCategory(track) {
   const r = track.role || '';
   if (r === 'drums') return 'drums';
+  if (r === 'loop') return 'loop';
   if (r === 'perc' || r === 'top') return 'perc';
   if (r === 'impact') return 'impact';
   if (r === 'bass' || r === 'sub') return 'bass';
@@ -243,6 +244,8 @@ export function activeLayers(layers, section, energy = 0.7, { firstOfSection = t
   if (energy < 0.25) { cats.delete('chords'); if (section !== 'breakdown' && section !== 'intro') cats.delete('pad'); }
   if (energy < 0.1) cats.delete('bass');
   if (!firstOfSection) cats.delete('impact');
+  // audio loops (sample layers) ride with the percussion / texture layers
+  if (cats.has('perc') || cats.has('pad')) cats.add('loop');
   // within a category, low energy keeps only the first layer (e.g. bass without the sub)
   const seen = {};
   const out = new Set();
@@ -559,6 +562,7 @@ export function planPhrase(state, ctx = {}) {
   const out = {};
   const pivot = keyChanged && index > 0 ? {} : null;
   for (const l of state.layers) {
+    if (l.sample) { out[l.id] = { active: active.has(l.id), ...planSampleLayer(l, { P, key }) }; l.lastSection = section; continue; }
     const cur = current[l.id] || null;
     const lrng = createRng(hashSeed(state.seed, index, l.id));
     let base, baseKey;
@@ -604,6 +608,64 @@ export function planPhrase(state, ctx = {}) {
   state.history.push({ index, section, key: { ...key }, start: index * P });
   if (state.history.length > 512) state.history.shift();
   return plan;
+}
+
+// ------------------------------------------------------------------------------------------------ audio-loop layers
+
+/** Bars of a loop of `seconds` at `bpm`, rounded to 1 / 2 / 4 / 8 bars. */
+export function loopBarsFor(seconds, bpm, bpb = 4) {
+  const bars = (seconds * bpm) / 60 / bpb;
+  if (!(bars > 0)) return 1;
+  return [1, 2, 4, 8].reduce((best, b) => (Math.abs(Math.log2(bars / b)) < Math.abs(Math.log2(bars / best)) ? b : best), 1);
+}
+
+/** Track volume that level-matches a loop of RMS `rms` (linear, 0..1) to the generated layers (~-18 dBFS at 0.7). */
+export function loopLevel(rms, { target = 0.125, base = 0.7 } = {}) {
+  if (!(rms > 1e-5)) return base;
+  return Math.round(clamp(base * (target / rms), 0.05, 1.2) * 1000) / 1000;
+}
+
+/**
+ * Where a loop of `beats` sounds inside a phrase of P beats when the phrase starts `phase` beats into the loop:
+ * [{start, length, offset}] (beats; offset = beats into the sample). Every loop restart is its own segment.
+ */
+export function loopSegments(phase, beats, P) {
+  const out = [];
+  if (!(beats > 0)) return out;
+  let t = 0, off = ((phase % beats) + beats) % beats;
+  while (t < P - EPS) {
+    const len = Math.min(beats - off, P - t);
+    out.push({ start: +t.toFixed(5), length: +len.toFixed(5), offset: +off.toFixed(5) });
+    t += len; off = 0;
+  }
+  return out;
+}
+
+/**
+ * Add an audio-loop layer to a running set: a project sample (already warped to the set tempo) that loops on the
+ * phrase grid. opts: {id, name, sampleId, beats, bpm, key, keyShift (re-pitch with key moves, sampler track),
+ * mode:'auto'|'on'|'off'}. The layer joins at the next planned phrase.
+ */
+export function addLoopLayer(state, { id, name = 'Loop', sampleId, beats, bpm = state.bpm, key = null, keyShift = false, mode = 'auto' }) {
+  const l = {
+    id, name, role: 'loop', category: 'loop', drums: false, material: {}, mode, lock: false, mutate: 0, density: 1,
+    regen: false, fresh: null, lastSection: null, lastNotes: null, lastKey: null, layerOf: null, sound: null,
+    sample: { sampleId, beats: Math.max(0.25, Math.round(beats * 1000) / 1000), bpm, key, keyShift: !!keyShift, baseKey: { ...state.key }, phase: 0, shift: 0 },
+  };
+  state.layers.push(l);
+  return l;
+}
+
+/** The plan of one phrase for a loop layer: audio segments + (sampler mode) one note per loop restart. */
+function planSampleLayer(l, { P, key }) {
+  const s = l.sample;
+  if (!l.lock) s.shift = s.keyShift ? rootShift(s.baseKey, key) : 0;
+  // a sampler can't start mid-sample per note: a loop longer than the phrase restarts with it
+  const segments = loopSegments(s.keyShift ? 0 : s.phase, s.beats, P);
+  s.phase = (s.phase + P) % s.beats;
+  const notes = s.keyShift ? segments.filter((g) => g.offset < EPS).map((g) => ({ pitch: 60 + s.shift, start: g.start, dur: Math.max(0.02, g.length - 0.01), vel: 1 })) : [];
+  l.lastKey = { ...key };
+  return { segments, notes, shift: s.shift };
 }
 
 /** Filter-sweep automation points for a build phrase [a, b) on a low-pass whose resting cutoff is `rest`. */

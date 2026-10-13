@@ -120,6 +120,12 @@ export class DrumSamplerInstrument extends DrumInstrument {
       f.type = 'lowpass'; f.frequency.value = clamp(lpHz, 60, nyq); f.Q.value = 0.5;
       node.connect(f); node = f;
     }
+    if (tone < -0.01) {
+      // darker also means less bite: a gentle dip where snares / hats sting (2.5–6 kHz)
+      const f = v.node(ctx.createBiquadFilter());
+      f.type = 'peaking'; f.frequency.value = 4200; f.Q.value = 0.9; f.gain.value = tone * 8;
+      node.connect(f); node = f;
+    }
     if (tone > 0.01) {
       const f = v.node(ctx.createBiquadFilter());
       f.type = 'highshelf'; f.frequency.value = 3500; f.gain.value = tone * 9;
