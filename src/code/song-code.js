@@ -28,10 +28,13 @@ const DRUM_ORDER = new Map(DRUM_PADS.map((p, i) => [p.pitch, i]));
 const FLAT_KEYS = new Set([5, 10, 3, 8, 1, 6]);
 const RES = [1, 2, 4, 3, 8, 6, 12, 16, 24];
 /**
- * Onset quantisation used by the code view: the nearest 16th when within 0.05 beat (humanised or
- * strummed notes), otherwise the nearest 1/24 beat (holds 32nds, 8th and 16th triplets).
+ * Onset quantisation used by the code view: onsets on the 1/24-beat grid (16ths, 32nds, 8th and
+ * 16th triplets) stay; others snap to the nearest 16th when within 0.05 beat (humanised or strummed
+ * notes), else to the nearest 1/24 beat.
  */
 export function snapBeat(b) {
+  const s24 = Math.round(b * 24) / 24;
+  if (Math.abs(b - s24) < 0.002) return s24; // already on the fine grid (32nds, triplets, fast arps)
   const s16 = Math.round(b * 4) / 4;
   if (Math.abs(b - s16) <= 0.05 + 1e-9) return s16;
   return Math.round(b * 24) / 24;

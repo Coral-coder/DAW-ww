@@ -7,6 +7,7 @@ import { CodeCache, collectEvents, defaultEndBeat, isTrackAudible } from './sche
 import { hasAutomation, hasControlAutomation } from '../core/automation.js';
 import { keySourcesFor } from '../core/patch.js';
 import { awaitPluginsReady, flushPlugins } from './plugin-instrument.js';
+import { prepareCodeSamples } from './code-instrument.js';
 
 function fallbackBase64ToArrayBuffer(b64) {
   const bin = atob(b64);
@@ -133,6 +134,8 @@ async function renderOnce(project, cfg) {
   graph.sync(project);
   // plugin instruments / effects (soundfont, faust, wam) load asynchronously: wait before scheduling
   await awaitPluginsReady(graph, project, onError);
+  // code tracks playing library samples (Strudel drum machines, Dirt-Samples…): fetch + decode first
+  await prepareCodeSamples(ctx, project, codeCache, startBeat, endBeat, onError);
   graph.syncLfos(0);
 
   const schedule = (b0, b1, jump) => {
