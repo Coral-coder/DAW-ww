@@ -31,6 +31,8 @@ export function pluginEffectBuilder(type) {
         impl?.setParams(params);
       },
       get ready() { return loaded.then((i) => (i ? i.ready : false)); },
+      /** Take the plugin out of the signal path for good (its `fallback` effect takes over). */
+      detach() { try { sh.fxIn.disconnect(inNode); } catch { /* */ } try { outNode.disconnect(); } catch { /* */ } },
       get error() { return loadError || impl?.error || null; },
       get plugin() { return impl; },
       dispose() {

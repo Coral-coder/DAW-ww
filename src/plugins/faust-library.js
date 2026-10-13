@@ -233,11 +233,12 @@ fb = hslider("[2]Feedback[style:knob]", 0.45, 0, 1.05, 0.01);
 tone = hslider("[3]Tone[style:knob][unit:Hz][scale:log]", 3500, 500, 12000, 1);
 wow = hslider("[4]Wow & flutter[style:knob]", 0.3, 0, 1, 0.01);
 wet = hslider("[5]Mix[style:knob]", 0.35, 0, 1, 0.01);
+dry = hslider("[6]Dry[style:knob]", 1, 0, 1, 0.01);
 mod = wow * (0.0018 * os.osc(0.6) + 0.0004 * os.osc(7.3));
 dly = de.fdelay(ma.SR * 2, ma.SR * (time * 0.001 + mod + 0.003));
 loop = (+ : dly) ~ (*(fb) : fi.lowpass(2, tone) : fi.highpass(1, 80) : ma.tanh);
 echo = loop;
-process = _, _ <: (*(1 - wet * 0.5), *(1 - wet * 0.5)), (echo, echo : *(wet), *(wet)) :> _, _;
+process = _, _ <: (*(dry * (1 - wet * 0.5)), *(dry * (1 - wet * 0.5))), (echo, echo : *(wet), *(wet)) :> _, _;
 `,
   },
 };

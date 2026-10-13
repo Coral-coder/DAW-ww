@@ -138,8 +138,11 @@ async function resolveCode(params) {
 function applyValues(node, factory, values, time) {
   if (!node || !values) return;
   const known = new Set(factory.params.map((p) => p.address));
-  for (const [addr, v] of Object.entries(values)) {
-    if (!known.has(addr) || !Number.isFinite(Number(v))) continue;
+  // values may be keyed by full address ('/Zita_Reverb/Mix') or by control label ('Mix', as generated songs do)
+  const byLabel = new Map(factory.params.map((p) => [p.label, p.address]));
+  for (const [key, v] of Object.entries(values)) {
+    const addr = known.has(key) ? key : byLabel.get(key);
+    if (!addr || !Number.isFinite(Number(v))) continue;
     try { node.setParamValue(addr, Number(v), time); } catch { try { node.setParamValue(addr, Number(v)); } catch { /* */ } }
   }
 }

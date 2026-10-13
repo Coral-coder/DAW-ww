@@ -24,6 +24,7 @@ import { writeMelody, makeMotif, varyMotif } from './melody.js';
 import { DRUM_STYLES, resolveDrumStyle } from './drums.js';
 import { createEffect } from '../core/model.js';
 import { addRides } from './rides.js';
+import { buildGenMeta } from './livemeta.js';
 
 const ROLE_INFO = {
   drums: { name: 'Drums', color: TRACK_COLORS[0], volume: 0.85, pan: 0 },
@@ -490,6 +491,8 @@ export function generateSong(opts = {}) {
       name: s.label, kind: s.kind, type: s.type, start: s.start, bars: s.bars, energy: s.energy, roles: [...s.roles], progression: [...new Set(progs[i].map((c) => c.roman))],
       ...(s.enter?.length ? { enter: [...s.enter] } : {}), ...(s.modulation ? { modulation: s.modulation } : {}),
     })),
+    // compact intent (form, layers, chord symbols) for the live-coder song code (src/code/livecoder.js)
+    genMeta: buildGenMeta({ sections, progs, bpb, key }),
     ...(opts.withHarmony ? {
       harmony: mainLoop.map((c) => ({ startBeat: c.startBeat, durBeats: c.durBeats, roman: c.roman, root: c.chord.root, type: c.chord.type, bass: c.chord.bass ?? null, name: c.chord.name })),
       harmonyLength: loopBeats,

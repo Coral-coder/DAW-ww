@@ -20,7 +20,8 @@ const SUB_BASSES = new Set(['808-bass', 'sub-bass', 'reese-bass', 'wobble-bass',
  * chords / pads / lead / arp phrases). Keys: 'role|preset', 'role|sf:<gm name>', 'machine:<drum machine>'. 'sf:' keys
  * are measured on the source generated songs actually stream (multisample set via realInstrument, else MusyngKite).
  * Acoustic kits (VCSL, SR-16) carry +7 / +4 dB on top of the probe: their in-song ride / brush / ghost patterns and
- * velocity layers read lower than the probe groove. Re-measure when presets change (presets are re-balanced separately).
+ * velocity layers read lower than the probe groove. Distorted rhythm guitars carry -3 dB: in-song power-chord 8ths are
+ * denser than the probe phrase and buried the lead. Re-measure when presets change (presets are re-balanced separately).
  */
 export const LEVEL_FIX = {
   "arp|arp-pluck": 6.5, "arp|arp-saw": 5, "arp|harp": 3, "arp|sf:orchestral_harp": 0.2, "bass|808-bass": -3.9,
@@ -33,9 +34,9 @@ export const LEVEL_FIX = {
   "chords|guitar-clean": 3, "chords|guitar-dist": 2.8, "chords|house-stab": 5, "chords|lofi-keys": 0.6,
   "chords|organ-drawbar": -0.6, "chords|organ-rock": -2.1, "chords|pluck": 6.9, "chords|power-chord": 3,
   "chords|sf:acoustic_grand_piano": 0.6, "chords|sf:acoustic_guitar_nylon": 4.3,
-  "chords|sf:acoustic_guitar_steel": 4.3, "chords|sf:clavinet": 0.5, "chords|sf:distortion_guitar": -5.1,
+  "chords|sf:acoustic_guitar_steel": 4.3, "chords|sf:clavinet": 0.5, "chords|sf:distortion_guitar": -8,
   "chords|sf:electric_guitar_clean": 8, "chords|sf:electric_guitar_muted": 4.8, "chords|sf:electric_piano_1": -7.3,
-  "chords|sf:overdriven_guitar": -3, "chords|sf:steel_drums": -0.9, "chords|sf:string_ensemble_1": -1.4,
+  "chords|sf:overdriven_guitar": -6, "chords|sf:steel_drums": -0.9, "chords|sf:string_ensemble_1": -1.4,
   "chords|steel-drum": 4.9, "chords|strings": 1.1, "chords|supersaw-pad": 2.8, "chords|synthwave-pad": 2.5,
   "lead|acid-lead": 1.2, "lead|bell": 4.6, "lead|brass-lead": 1.7, "lead|brass-section": 4.8, "lead|chip-lead": 6.1,
   "lead|electric-piano": 7.3, "lead|flute": 2.1, "lead|fm-bell-lead": 8, "lead|fm-epiano": 7.4,
@@ -133,7 +134,7 @@ export function mixTrack(track, ctx) {
   const sidechain = SIDECHAIN_FAMILIES.has(g.family) || SIDECHAIN_GENRES.has(g.id);
   const trim = (ROLE_TRIM_DB[role] ?? -6) + levelFix(role, ctx.instrument) + (role === 'bass' && SUB_BASSES.has(ctx.instrument?.preset) ? -3 : 0)
     + (role === 'bass' && sidechain ? 3 : 0) // the ducker takes ~3 dB out on average
-    + (role === 'bass' && sf ? -5.5 : 0) // sampled basses sustain (walking / finger lines) and read hot in the mix
+    + (role === 'bass' && sf ? (/acoustic_bass|contrabass/.test(ctx.instrument.params?.instrument) ? -5.5 : -3) : 0) // sampled basses sustain (walking / finger lines) and read hot in the mix
     + (role === 'drums' && ['cinematic', 'ambient'].includes(g.family) ? -4 : 0); // orchestral percussion supports, it doesn't lead
   track.volume = Math.round(clamp(0.8 * dbToGain(trim + (HEADROOM_BY_FAMILY[g.family] ?? MIX_HEADROOM_DB)), 0.02, 1.5) * 1000) / 1000;
   const fx = [];

@@ -1148,6 +1148,8 @@ export function createEffect(ctx, effectDef, opts = {}) {
   let bypassed = null;
   let lastJson = null;
   let disposed = false;
+  let fallbackFx = null;
+  let fallbackReady = null;
 
   const fx = {
     type,
@@ -1175,25 +1177,49 @@ export function createEffect(ctx, effectDef, opts = {}) {
       setP(sh.fxOut.gain, b ? 0 : 1, ctx, immediate);
     },
     get bypassed() { return bypassed; },
-    setTempo(bpm) { try { impl.setTempo?.(bpm); } catch (e) { console.warn('[fx] setTempo', e); } },
-    sync(time) { try { impl.sync?.(time); } catch (e) { console.warn('[fx] sync', e); } },
+    setTempo(bpm) { try { impl.setTempo?.(bpm); fallbackFx?.setTempo(bpm); } catch (e) { console.warn('[fx] setTempo', e); } },
+    sync(time) { try { impl.sync?.(time); fallbackFx?.sync(time); } catch (e) { console.warn('[fx] sync', e); } },
     getReduction: impl.getReduction ? () => impl.getReduction() : undefined,
     /** Sidechain key input (ducker only): connect the key signal here. */
     keyInput: impl.keyInput || null,
     /** Plugin effects (faust/wam): load promise (true/false), error message and live plugin. */
-    get ready() { return impl.ready ?? null; },
-    get error() { return impl.error ?? null; },
+    get ready() { return fallbackReady || (impl.ready ?? null); },
+    get error() { return fallbackFx ? null : (impl.error ?? null); },
+    /** The built-in effect that replaced a plugin which failed to load (params.fallback), else null. */
+    get fallback() { return fallbackFx; },
     get plugin() { return impl.plugin ?? null; },
     dispose() {
       if (disposed) return;
       disposed = true;
       try { impl.dispose?.(); } catch { /* */ }
+      try { fallbackFx?.dispose(); } catch { /* */ }
       for (const n of Object.values(sh)) { try { n.disconnect(); } catch { /* */ } }
     },
   };
   if (!fx.getReduction) delete fx.getReduction;
   fx.update(effectDef, true);
   fx.sync();
+  // Plugin effects with params.fallback = {type, params} (generated songs): if the plugin can't load (no network,
+  // no AudioWorklet, compile error) the built-in effect takes its place instead of a plain pass-through — a reverb
+  // bus keeps its reverb, a tape-echo bus its echo. Until then the plugin's own pass-through is muted (a send bus
+  // must never return the dry signal).
+  const fb = PLUGIN_EFFECT_TYPES.includes(type) ? effectDef?.params?.fallback : null;
+  if (fb && BUILDERS[fb.type]) {
+    setP(sh.wet.gain, 0, ctx, true);
+    const first = Promise.resolve(impl.ready);
+    fallbackReady = first.then((ok) => {
+      if (disposed) return ok;
+      if (ok) { if (!fallbackFx) setP(sh.wet.gain, resolveEffectParams({ type, params: effectDef.params }).mix, ctx, true); return true; }
+      impl.detach?.();
+      fallbackFx = createEffect(ctx, { type: fb.type, params: { ...(fb.params || {}) }, enabled: true }, opts);
+      sh.fxIn.connect(fallbackFx.input);
+      fallbackFx.output.connect(sh.wet);
+      setP(sh.wet.gain, 1, ctx, true);
+      setP(sh.dry.gain, 0, ctx, true);
+      try { fallbackFx.setTempo(env.getBpm()); } catch { /* */ }
+      return true;
+    }, () => false);
+  }
   return fx;
 }
 
