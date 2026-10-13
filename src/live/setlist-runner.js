@@ -7,7 +7,9 @@ import { Emitter, uid, deepClone } from '../core/util.js';
 import { createProject, createPattern, createClip } from '../core/model.js';
 import {
   createSetlist, planPhrase, prepareBeat, queueKeyMove, freshIdea, setPhraseBars, buildSweepPoints, keyName, SECTIONS,
+  soundKey, adoptSound, queueNextSound,
 } from './setlist-engine.js';
+import { valueAt } from '../core/automation.js';
 
 const MAX_PHRASES = 256; // older phrases are pruned (clips + patterns) to bound memory
 const sig = (notes) => (notes || []).map((n) => `${n.pitch}@${(+n.start).toFixed(3)}:${(+n.dur).toFixed(3)}`).join(',');
@@ -24,6 +26,8 @@ export class SetlistRunner extends Emitter {
     this.sigs = new Map(); // patId -> signature of the notes we wrote (detects the user's edits)
     this.timer = null;
     this.lastError = null;
+    this.pendingSwaps = []; // [{beat, id, def, levelDb}] sound swaps applied when the playhead reaches the boundary
+    this.instKeys = new Map(); // layerId -> sound we put on the track (detects the user's own preset picks)
   }
 
   get active() { return !!this.state; }
@@ -40,6 +44,8 @@ export class SetlistRunner extends Emitter {
     this.phrases = [];
     this.sigs.clear();
     this.pendingBars = null;
+    this.pendingSwaps = [];
+    this.instKeys = new Map(song.tracks.map((t) => [t.id, soundKey(t.instrument)]));
     const base = createProject();
     const project = { ...base, ...song, samples: {}, name: `Setlist – ${genre} ${keyName(state.key)}`, mode: 'song', buses: song.buses || base.buses, master: song.master || base.master, clips: [], patterns: {}, markers: [], scenes: [] };
     for (const k of ['sections', 'harmony', 'harmonyLength', 'patternHarmony', 'progression']) delete project[k];
@@ -102,6 +108,7 @@ export class SetlistRunner extends Emitter {
     const p = this.app.store.get();
     if (!this.state.layers.some((l) => p.tracks.some((t) => t.id === l.id))) { this.stop(); this.state = null; this.emit('change', { kind: 'lost' }); return; }
     const pos = engine.getPosition();
+    this._applySwaps(pos);
     const last = this.lastPhrase;
     if (!last) { this._placeNext(); return; }
     if (pos > last.start + last.length) {
@@ -134,7 +141,7 @@ export class SetlistRunner extends Emitter {
       const { current, edited } = this._currentNotes(last);
       if (this.pendingBars && this.pendingBars !== st.phraseBars) setPhraseBars(st, this.song, this.pendingBars);
       this.pendingBars = null;
-      const plan = planPhrase(st, { current, edited });
+      const plan = planPhrase(st, { current, edited, overridden: this._userSoundEdits() });
       const start = forceStart ?? (last ? last.start + last.length : 0);
       this._apply(plan, start, last);
       this.lastError = null;
@@ -144,6 +151,41 @@ export class SetlistRunner extends Emitter {
       this.app.toast?.('Setlist generation error: ' + e.message, { level: 'error' });
       this.running = false;
     }
+  }
+
+  /** The user's own sound edits: a preset picked by hand (adopted, rotation stops) and drift lanes overridden by hand. */
+  _userSoundEdits() {
+    const p = this.app.store.get();
+    const overridden = {};
+    for (const l of this.state.layers) {
+      const t = p.tracks.find((x) => x.id === l.id);
+      if (!t) continue;
+      const k = soundKey(t.instrument);
+      if (this.instKeys.has(l.id) && k !== this.instKeys.get(l.id) && !this.pendingSwaps.some((s) => s.id === l.id)) {
+        adoptSound(this.state, l.id, t.instrument);
+        this.instKeys.set(l.id, k);
+      }
+      const keys = (t.automation || []).filter((a) => a.overridden && a.target.startsWith('inst:')).map((a) => a.target.slice(5));
+      if (keys.length) overridden[l.id] = keys;
+    }
+    return overridden;
+  }
+
+  /** Swaps whose boundary the playhead reached (a 1/4-beat early so the downbeat already plays the new sound). */
+  _applySwaps(pos, all = false) {
+    const due = this.pendingSwaps.filter((s) => all || pos >= s.beat - 0.25);
+    if (!due.length) return;
+    this.pendingSwaps = this.pendingSwaps.filter((s) => !due.includes(s));
+    this.app.store.transact('Setlist sound', (p) => {
+      for (const s of due) {
+        const t = p.tracks.find((x) => x.id === s.id);
+        if (!t) continue;
+        t.instrument = deepClone(s.def);
+        t.volume = Math.round(Math.min(1.5, Math.max(0.02, t.volume * 10 ** (s.levelDb / 20))) * 1000) / 1000;
+        this.instKeys.set(s.id, soundKey(s.def));
+      }
+    }, { undo: false });
+    this.emit('change', { kind: 'sound' });
   }
 
   _apply(plan, start, prev) {
@@ -203,6 +245,25 @@ export class SetlistRunner extends Emitter {
           lane.points = lane.points.filter((q) => q.beat < start - 0.02).concat(buildSweepPoints(start, start + P, rest)).sort((a, b) => a.beat - b.beat);
         }
       }
+      // settings drift: one ramp per phrase on `inst:<key>` lanes (a knob moved by hand overrides its lane)
+      for (const [lid, snd] of Object.entries(plan.sounds || {})) {
+        const t = tracks.get(lid);
+        if (!t) continue;
+        for (const [key, d] of Object.entries(snd.drift || {})) {
+          const target = `inst:${key}`;
+          let lane = t.automation.find((a) => a.target === target);
+          if (lane?.overridden) continue;
+          if (!lane) { lane = { id: uid('lane'), target, points: [{ beat: 0, value: d.from }], enabled: true, setlist: true }; t.automation.push(lane); }
+          const held = lane.points.length ? valueAt(lane.points, start) : d.from;
+          lane.points = lane.points.filter((q) => q.beat < start - 0.02);
+          if (Math.abs(held - d.from) > 1e-9) lane.points.push({ beat: start - 0.01, value: held });
+          lane.points.push({ beat: start, value: d.from }, { beat: start + P, value: d.to });
+        }
+        if (snd.swap) {
+          this.pendingSwaps = this.pendingSwaps.filter((s) => s.id !== lid);
+          this.pendingSwaps.push({ beat: start, id: lid, def: snd.swap.def, levelDb: snd.swap.levelDb, name: snd.swap.name });
+        }
+      }
       p.loop.end = start + P;
       this._prune(p);
     }, { undo: false });
@@ -220,6 +281,11 @@ export class SetlistRunner extends Emitter {
     const used = new Set(p.clips.map((c) => c.patternId));
     for (const t of p.tracks) used.add(t.activePatternId);
     for (const id of Object.keys(p.patterns)) if (!used.has(id)) { delete p.patterns[id]; this.sigs.delete(id); }
+    for (const t of p.tracks) for (const a of t.automation || []) {
+      if (!a.setlist || a.points.length < 3) continue;
+      const i = a.points.findIndex((q) => q.beat >= cutoff);
+      if (i > 1) a.points = a.points.slice(i - 1);
+    }
   }
 
   // ---------------------------------------------------------------- controls
@@ -239,6 +305,12 @@ export class SetlistRunner extends Emitter {
   keyMove(moveId) { if (!this.state) return null; const k = queueKeyMove(this.state, moveId); this.emit('change', { kind: 'key' }); return k; }
   setKey(key) { if (this.state) { this.state.pendingKey = { ...key }; this.emit('change', { kind: 'key' }); } }
   cancelKeyMove() { if (this.state) { this.state.pendingKey = null; this.emit('change', { kind: 'key' }); } }
+  /** Per-layer sound settings: {rotate, drift}. */
+  setSound(id, patch) { const l = this.layer(id); if (!l?.sound) return; if ('rotate' in patch) l.sound.rotate = !!patch.rotate; if ('drift' in patch) l.sound.drift = Math.max(0, Math.min(1, +patch.drift || 0)); this.emit('change', { kind: 'layer', id }); }
+  /** Swap this layer's sound at the next phrase boundary. */
+  nextSoundNow(id) { if (!this.state) return; queueNextSound(this.state, id); this.emit('change', { kind: 'layer', id }); }
+  /** Global freshness 0..1: scales rotation frequency + drift amount (0 = static sounds). */
+  setFreshness(v) { if (this.state) { this.state.freshness = Math.max(0, Math.min(1, +v || 0)); this.emit('change', { kind: 'fresh' }); } }
   setAutoDrift(on, every) { if (!this.state) return; this.state.autoDrift = !!on; if (every) this.state.driftEvery = every; this.emit('change', { kind: 'drift' }); }
 
   /** Write the played set into the arrangement as a finished song: markers per section, future phrases trimmed. */
@@ -249,6 +321,8 @@ export class SetlistRunner extends Emitter {
     const cur = this.phraseAt(pos);
     const end = cur ? cur.start + cur.length : this.lastPhrase.start + this.lastPhrase.length;
     this.stop();
+    this._applySwaps(pos);
+    this.pendingSwaps = [];
     const runs = [];
     for (const ph of this.phrases) {
       if (ph.start >= end - 1e-6) break;

@@ -14,6 +14,12 @@ import { createRng, clamp } from '../core/util.js';
 import { SCALES, pitchClassName, keyPrefersFlats, resolveScaleId } from '../theory/index.js';
 import { generateSong } from '../gen/song.js';
 import { sectionKind } from '../gen/arrange.js';
+import { initSound, planSounds } from './setlist-sounds.js';
+
+export {
+  soundPool, soundKey, soundName, soundInfo, nextSound, adoptSound, queueNextSound, mixLevel, mixRoleOf, driftTargets, driftValue,
+  DRIFT_SPECS, SOUND_RATE, MAX_SWAPS,
+} from './setlist-sounds.js';
 
 const mod12 = (x) => ((x % 12) + 12) % 12;
 const EPS = 1e-6;
@@ -469,11 +475,12 @@ export function createSetlist({ genre = 'tech-house', key = { root: 0, scale: 'm
   const layers = song.tracks.map((t) => ({
     id: t.id, name: t.name, role: t.role, category: layerCategory(t), drums: isDrumTrack(t),
     material: material[t.id] || {}, mode: 'auto', lock: false, mutate: 0.35, density: 1, regen: false, fresh: null,
-    lastSection: null, lastNotes: null, lastKey: null,
+    lastSection: null, lastNotes: null, lastKey: null, layerOf: t.layerOf || null,
   }));
+  for (const l of layers) l.sound = initSound(l, song.tracks.find((t) => t.id === l.id), genre);
   const state = {
     genre, bpm: song.bpm, bpb, phraseBars, songKey: { ...song.key }, key: { ...song.key }, pendingKey: null,
-    section: null, arcIndex: 0, queued: null, hold: false, energy, autoDrift: false, driftEvery: 4,
+    section: null, arcIndex: 0, queued: null, hold: false, energy, autoDrift: false, driftEvery: 4, freshness: 0.5,
     index: -1, sectionPhrase: 0, seed, layers, history: [],
   };
   return { song, state };
@@ -518,7 +525,8 @@ export function freshIdea(state, layerId, seed) {
 
 /**
  * Plan the next phrase. ctx.current: {layerId: notes|null} (what each layer plays NOW, incl. the user's edits),
- * ctx.edited: {layerId: true} (the user changed it — keep following it).
+ * ctx.edited: {layerId: true} (the user changed it — keep following it), ctx.overridden: {layerId: [param keys]} (the user
+ * moved those knobs by hand: no more drift on them).
  * Returns {index, section, key, prevKey, keyChanged, layers: {id: {active, notes}}, pivot: {id: notes} (rewritten
  * current phrase, last bar on the new key's V7) | null, fill}.
  */
@@ -584,13 +592,15 @@ export function planPhrase(state, ctx = {}) {
     l.regen = false; l.fresh = null;
     l.lastSection = section; l.lastNotes = notes; l.lastKey = { ...key };
   }
+  // sounds: rotation (swaps at this boundary) + settings drift (per-phrase param ramps)
+  const sounds = planSounds(state, { index, section, firstOfSection, keyChanged, active, overridden: ctx.overridden, rng: (id, tag) => createRng(hashSeed(state.seed, index, id, tag)) });
   state.index = index;
   state.sectionPhrase = firstOfSection ? 0 : state.sectionPhrase + 1;
   state.section = section;
   state.arcIndex = arcIndex;
   state.queued = null;
   state.key = { ...key };
-  const plan = { index, section, key: { ...key }, prevKey, keyChanged, layers: out, pivot, start: index * P, length: P, firstOfSection };
+  const plan = { index, section, key: { ...key }, prevKey, keyChanged, layers: out, pivot, start: index * P, length: P, firstOfSection, sounds, swaps: Object.keys(sounds).filter((id) => sounds[id].swap && !sounds[id].swap.follow) };
   state.history.push({ index, section, key: { ...key }, start: index * P });
   if (state.history.length > 512) state.history.shift();
   return plan;

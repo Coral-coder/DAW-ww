@@ -229,3 +229,151 @@ test('runner places phrases at boundaries on the timeline and captures the set',
   assert.ok(q.clips.every((c) => q.patterns[c.patternId]));
   assert.equal(store.canUndo(), true);
 });
+
+// ------------------------------------------------------------------ sound rotation + settings drift
+import { soundKey, mixLevel, driftTargets, DRIFT_SPECS, queueNextSound } from '../src/live/setlist-engine.js';
+import { INSTRUMENT_DEFS } from '../src/audio/defs.js';
+
+const MAIN_ROLES = new Set(['drums', 'bass', 'chords', 'pad', 'lead', 'arp', 'fx']);
+const dB = (r) => 20 * Math.log10(r);
+function runSet(genre, n, { seed = 7, phraseBars = 8, before } = {}) {
+  const { song, state } = createSetlist({ genre, key: { root: 0, scale: 'minor' }, seed, phraseBars });
+  const vol = Object.fromEntries(song.tracks.map((t) => [t.id, t.volume]));
+  const used = Object.fromEntries(state.layers.map((l) => [l.id, new Set([soundKey(l.sound.cur)])]));
+  const plans = [];
+  let cur = {};
+  for (let i = 0; i < n; i++) {
+    const ctx = { current: cur };
+    before?.(i, state, ctx);
+    const plan = planPhrase(state, ctx);
+    plans.push(plan);
+    cur = {};
+    for (const [id, r] of Object.entries(plan.layers)) cur[id] = r.active ? r.notes : null;
+    for (const [id, s] of Object.entries(plan.sounds)) if (s.swap) { used[id].add(soundKey(s.swap.def)); vol[id] *= 10 ** (s.swap.levelDb / 20); }
+  }
+  return { song, state, plans, used, vol };
+}
+
+test('sound rotation: every rotating melodic layer plays ≥3 sounds over 40 phrases, ≤2 swaps per boundary, levels on target', () => {
+  for (const genre of ['tech-house', 'trance', 'lofi-hip-hop']) {
+    const { song, state, plans, used, vol } = runSet(genre, 40);
+    let rotating = 0;
+    for (const l of state.layers) {
+      if (l.drums || !l.sound.rotate || l.lock) continue;
+      rotating++;
+      assert.ok(used[l.id].size >= 3, `${genre} ${l.name}: ${used[l.id].size} sounds`);
+    }
+    assert.ok(rotating >= 5, `${genre}: ${rotating} rotating layers`);
+    for (const p of plans) assert.ok(p.swaps.length <= 2, `${genre} phrase ${p.index}: ${p.swaps.length} swaps`);
+    // a new sound carries its fallback preset (like generated songs) and lands at the mix.js level of its role
+    for (const p of plans) for (const id of p.swaps) { const d = p.sounds[id].swap.def; if (d.type === 'strudel') assert.ok(d.fallbackPreset, d.preset); }
+    let checked = 0;
+    for (const l of state.layers) {
+      if (!l.sound.swaps) continue;
+      const t0 = song.tracks.find((t) => t.id === l.id);
+      const start = dB(t0.volume / mixLevel(genre, l.role, t0.instrument));
+      const end = dB(vol[l.id] / mixLevel(genre, l.role, l.sound.cur));
+      // every swap keeps the track's offset from its mix.js role target (doublings sit a fixed amount under it)…
+      assert.ok(Math.abs(end - start) < 0.1, `${genre} ${l.name}: ${start.toFixed(2)} -> ${end.toFixed(2)} dB`);
+      // …so the main role tracks stay within ±2 dB of the role target
+      if (MAIN_ROLES.has(l.role) && !l.layerOf) { checked++; assert.ok(Math.abs(end) <= 2, `${genre} ${l.name}: ${end.toFixed(2)} dB off`); }
+    }
+    assert.ok(checked >= 4);
+    // doublings follow their source layer's sound
+    for (const l of state.layers) if (l.layerOf) assert.equal(soundKey(l.sound.cur), soundKey(state.layers.find((x) => x.id === l.layerOf).sound.cur), l.name);
+  }
+});
+
+test('Keep / lock prevent swaps; "next sound now" swaps at the next boundary', () => {
+  let keep, locked;
+  const { plans, state } = runSet('tech-house', 30, {
+    before: (i, st) => {
+      if (i === 0) {
+        keep = st.layers.find((l) => l.role === 'lead'); keep.sound.rotate = false;
+        locked = st.layers.find((l) => l.role === 'chords'); locked.lock = true;
+      }
+    },
+  });
+  for (const p of plans) { assert.ok(!p.sounds[keep.id].swap, 'keep'); assert.ok(!p.sounds[locked.id].swap, 'lock'); }
+  queueNextSound(state, keep.id);
+  const p = planPhrase(state, {});
+  assert.ok(p.sounds[keep.id].swap, 'next sound now');
+  assert.equal(state.layers.find((l) => l.id === keep.id).sound.now, false);
+});
+
+test('settings drift: params move within safe ranges, differ across phrases, bigger at section changes; hand-moved params stay put', () => {
+  let lead;
+  const { plans, state } = runSet('tech-house', 24, {
+    before: (i, st, ctx) => {
+      lead = st.layers.find((l) => l.role === 'lead');
+      if (i >= 6) ctx.overridden = { [lead.id]: ['lpf', 'room'] };
+    },
+  });
+  const seen = {};
+  for (const p of plans) for (const [id, s] of Object.entries(p.sounds)) for (const [k, d] of Object.entries(s.drift)) {
+    const l = state.layers.find((x) => x.id === id);
+    if (d.reset) continue;
+    const spec = DRIFT_SPECS.strudel[k] || DRIFT_SPECS.synth[k];
+    assert.ok(spec, k);
+    for (const v of [d.from, d.to]) {
+      assert.ok(Number.isFinite(v), `${l.name} ${k}`);
+      assert.ok(v >= spec.lo - 1e-9 && v <= spec.hi + 1e-9, `${l.name} ${k}=${v} outside [${spec.lo}, ${spec.hi}]`);
+    }
+    ((seen[id] ||= {})[k] ||= new Set()).add(d.to);
+    if (id === lead.id && p.index >= 6) assert.ok(k !== 'lpf' && k !== 'room', `${k} drifted after the user moved it`);
+  }
+  // held sounds evolve: several distinct cutoff values on the pad over the set
+  const pad = state.layers.find((l) => l.role === 'pad');
+  assert.ok(Object.keys(driftTargets(pad.sound.cur)).length > 0);
+  const padVals = Object.values(seen[pad.id] || {});
+  assert.ok(padVals.some((s) => s.size >= 4), 'pad params drift across phrases');
+  assert.ok(state.layers.find((l) => l.id === lead.id).sound.touched.includes('lpf'));
+  // def bounds are respected too
+  const defs = Object.fromEntries(INSTRUMENT_DEFS.strudel.params.map((p) => [p.key, p]));
+  for (const [, ks] of Object.entries(seen)) for (const [k, vals] of Object.entries(ks)) if (defs[k]) for (const v of vals) assert.ok(v >= defs[k].min && v <= defs[k].max);
+  // breakdown starts darker than the drop before it (section bias on the walk)
+  const brk = plans.find((p) => p.section === 'breakdown' && p.firstOfSection && p.sounds[pad.id].drift.lpf && !p.sounds[pad.id].swap);
+  if (brk) assert.ok(brk.sounds[pad.id].drift.lpf.to <= brk.sounds[pad.id].drift.lpf.from * 1.15, 'breakdown darker');
+  // freshness 0: static
+  const st2 = createSetlist({ genre: 'tech-house', key: { root: 0, scale: 'minor' }, seed: 7, phraseBars: 8 }).state;
+  st2.freshness = 0;
+  for (let i = 0; i < 20; i++) { const p = planPhrase(st2, {}); assert.equal(p.swaps.length, 0); for (const s of Object.values(p.sounds)) for (const d of Object.values(s.drift)) assert.equal(d.from, d.to); }
+});
+
+test('runner: swaps land at the phrase boundary with the level change, drift lanes on inst params, hand edits win', async () => {
+  const store = new Store();
+  let pos = 0, playing = false;
+  const engine = { get isPlaying() { return playing; }, getPosition: () => pos, setPosition: (b) => { pos = b; }, play: async () => { playing = true; }, pause: () => { playing = false; }, stop: () => { playing = false; } };
+  const r = new SetlistRunner({ store, engine, actions: { ensureAudio: async () => {} }, toast: () => {} });
+  await r.start({ genre: 'tech-house', key: { root: 0, scale: 'minor' }, bpm: 125, phraseBars: 4, energy: 0.8, seed: 7 });
+  r._stopTimer();
+  r.setFreshness(1);
+  const lead = r.state.layers.find((l) => l.role === 'lead');
+  let swapSeen = null;
+  for (pos = 0; pos < 16 * 14; pos += 0.25) {
+    const before = store.get().tracks.find((t) => t.id === lead.id).instrument.preset;
+    const pend = r.pendingSwaps.find((s) => s.id === lead.id);
+    r.tick();
+    const after = store.get().tracks.find((t) => t.id === lead.id).instrument.preset;
+    if (after !== before && !swapSeen) { swapSeen = { pos, pend }; }
+    if (pos === 16 * 6) {
+      // the user grabs the lead's cutoff knob (automation-recorder marks the lane overridden) and picks a preset for the arp
+      store.transact('x', (p) => { const t = p.tracks.find((x) => x.id === lead.id); const lane = t.automation.find((a) => a.target === 'inst:lpf'); if (lane) lane.overridden = true; });
+    }
+  }
+  assert.ok(swapSeen, 'lead swapped');
+  assert.ok(Math.abs(swapSeen.pos - (swapSeen.pend.beat - 0.25)) < 1e-9 && swapSeen.pend.beat % 16 === 0, `swap at ${swapSeen.pos}`);
+  const t = store.get().tracks.find((x) => x.id === lead.id);
+  const lpf = t.automation.find((a) => a.target === 'inst:lpf');
+  assert.ok(lpf && lpf.points.length > 4, 'lpf drift lane');
+  assert.ok(lpf.overridden && lpf.points.every((q) => q.beat <= 16 * 8 + 1e-6), 'no drift written after the user took the knob');
+  assert.ok(r.state.layers.find((l) => l.id === lead.id).sound.touched.includes('lpf'));
+  // a preset picked by hand is adopted: rotation stops for that layer
+  const arp = r.state.layers.find((l) => l.role === 'arp');
+  r._applySwaps(0, true);
+  store.transact('Preset', (p) => { p.tracks.find((x) => x.id === arp.id).instrument = { type: 'synth', preset: 'arp-saw', params: {} }; });
+  r._placeNext();
+  assert.equal(arp.sound.rotate, false);
+  assert.equal(arp.sound.cur.preset, 'arp-saw');
+  assert.equal(store.canUndo(), true); // only the user's own edits are undo steps
+});
