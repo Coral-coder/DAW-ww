@@ -1,12 +1,23 @@
-// Plays Strudel-style events (from src/code queryEvents) on synthesized voices:
-// drum names -> drum-kit pads, waveforms -> light synth voices, preset ids / GM-ish names ->
-// full preset instruments, project sample names -> sample playback. Per-event FX chain:
-// hpf -> lpf -> bpf -> vowel -> shape -> crush -> amp(ADSR) -> pan.
+// Plays Strudel-style events (from src/code queryEvents):
+//   waveforms (sine, sawtooth, supersaw, …) -> light synth voices (always synthesized)
+//   project samples by name                  -> sample playback
+//   sample names Strudel knows               -> the REAL samples Strudel uses (src/audio/library):
+//     s("bd sd hh").bank("RolandTR909"), s("RolandTR909_bd"), bd:3 / n, Dirt-Samples names (casio, jazz,
+//     metal, east, crow, insect, wind, jvbass…), VCSL (marimba, kalimba…), piano (Salamander)
+//   anything not (yet) loaded / offline      -> synthesized fallback: drum names -> drum-kit pads,
+//     preset ids / GM-ish names -> full preset instruments.
+// Per-event FX chain: hpf -> lpf -> bpf -> vowel -> shape -> crush -> amp(ADSR) -> pan.
+// Samples are decoded once per sample rate and shared (library cache); offline renders call
+// prepareCodeSamples() first, realtime playback prefetches via prefetchCodeSamples().
 import { clamp, midiToFreq, freqToMidi } from '../core/util.js';
 import { DRUM_KITS } from './kits.js';
 import { PRESETS } from './presets.js';
 import { createInstrument } from './instruments.js';
 import { playDrumVoice } from './drums.js';
+import * as strudel from '../code/strudel.js';
+import { beatsPerBar } from '../core/model.js';
+import { library } from './library/sample-library.js';
+import { resolveSample, urlsForValues, valueMidi } from './library/strudel-sounds.js';
 import {
   Voice, envNote, getCrushCurve, getDriveCurve, getNoiseBuffer, getPulseWave, getReversedBuffer, fadeOut, isOffline, num,
 } from './synth.js';
@@ -106,6 +117,21 @@ export class CodeInstrument {
     this.presetInsts = new Map();
     this.maxVoices = 96;
     this.defaultKit = opts.defaultKit || '808';
+    this.useLibrary = opts.samples !== false && typeof fetch === 'function';
+    this.defaultBank = opts.defaultBank || 'RolandTR909';
+    this._rr = 0;
+  }
+
+  /** Library sample for an event, if loaded (starts loading it otherwise). -> {buffer, ref} | null */
+  _librarySample(name, index, v) {
+    if (!this.useLibrary) return null;
+    let ref;
+    try { ref = resolveSample(v, { name, index, rr: this._rr++, defaultBank: this.defaultBank }); } catch { return null; }
+    if (!ref || ref.pending || !ref.url) return null;
+    const buffer = library.get(this.ctx, ref.url);
+    if (buffer) return { buffer, ref };
+    if (!library.hasFailed(ref.url)) library.load(this.ctx, ref.url).catch(() => {});
+    return null;
   }
 
   _register(v) {
@@ -202,6 +228,14 @@ export class CodeInstrument {
     if (sName == null) sName = midi != null ? 'triangle' : 'bd';
     let [name, idx] = String(sName).split(':');
     if (idx == null && v.n != null && midi == null) idx = v.n;
+    if (!WAVES.has(String(name).toLowerCase())) {
+      // user samples (by name) first, then the Strudel sample library; synthesized voices are the fallback
+      const own = this.opts.getSampleByName?.(name);
+      if (own) return this._sample(t, own, v, level, midi, dur);
+      const sIdx = idx != null && idx !== '' ? Number(idx) : v.n != null && valueMidi(v) == null ? Number(v.n) : 0;
+      const lib = this._librarySample(name, Number.isFinite(sIdx) ? sIdx : 0, v);
+      if (lib) return this._sample(t, lib.buffer, v, level * 0.8, midi, dur, lib.ref);
+    }
     const info = classifySound(name, this.opts);
     if (info.kind === 'unknown') {
       if (midi == null) return null;
@@ -249,10 +283,18 @@ export class CodeInstrument {
     return this._register(dv);
   }
 
-  _sample(t, buffer, v, level, midi, dur) {
-    const ch = this._chain(t, v);
+  _sample(t, buffer, v, level, midi, dur, ref = null) {
     let speed = num(v.speed, 1, -16, 16);
-    if (v.note != null && midi != null) speed *= Math.pow(2, (midi - 36) / 12);
+    if (speed === 0) return null;
+    // cut groups (Strudel: the previous sound of the group fades out over 10 ms)
+    if (v.cut != null) for (const o of this.voices) if (o.group === `cut${v.cut}` && o.start < t + 1e-4) this._kill(o, t, 0.01);
+    const ch = this._chain(t, v);
+    if (ref) speed *= Math.pow(2, (num(ref.transpose, 0) + num(ref.tune, 0)) / 12);
+    else if (v.note != null && midi != null) speed *= Math.pow(2, (midi - 36) / 12);
+    if (v.unit === 'c') { // loopAt / fit: speed is in cycles
+      const cps = num(this.opts.getCps?.(), num(this.opts.getBpm?.(), 120) / 240, 0.01, 100);
+      speed *= buffer.duration * cps;
+    }
     const begin = num(v.begin, 0, 0, 1), end = num(v.end, 1, 0, 1);
     const ctx = this.ctx;
     const vo = new Voice(ctx);
@@ -265,9 +307,11 @@ export class CodeInstrument {
     const segLen = Math.max(0.001, (b1 - b0) * buffer.duration);
     let outLen = segLen / src.playbackRate.value;
     if (v.clip != null || v.legato != null) outLen = Math.min(outLen, dur * num(v.clip ?? v.legato, 1, 0, 16));
-    if (v.loop) { src.loop = true; src.loopStart = offset; src.loopEnd = offset + segLen; outLen = dur; }
-    src.connect(ch.input);
     const a = num(v.attack, 0.001, 0.001, 10), r = num(v.release, 0.01, 0.005, 10);
+    if (v.release != null && v.clip == null) outLen = Math.min(outLen, dur + r); // Strudel: release set -> hold for the event
+    if (v.loop) { src.loop = true; src.loopStart = offset; src.loopEnd = offset + segLen; outLen = dur + (v.release != null ? r : 0); }
+    if (ref && ref.decay < 0.999) outLen = Math.min(outLen, segLen / src.playbackRate.value * ref.decay);
+    src.connect(ch.input);
     const g = ch.amp.gain;
     g.setValueAtTime(0, t);
     g.linearRampToValueAtTime(level, t + a);
@@ -276,6 +320,7 @@ export class CodeInstrument {
     g.linearRampToValueAtTime(0, t + outLen);
     vo.nodes.push(...ch.nodes);
     vo.amp = ch.amp;
+    if (v.cut != null) vo.group = `cut${v.cut}`;
     src.onended = () => vo.cleanup();
     src.start(t, offset);
     vo.stopAt(t + outLen + 0.01);
@@ -387,4 +432,58 @@ export class CodeInstrument {
     const bus = this.bus;
     if (!isOffline(this.ctx)) setTimeout(() => { try { bus.disconnect(); } catch { /* */ } }, 120);
   }
+}
+
+// ------------------------------------------------------------------------- sample preloading
+
+const isWave = (name) => WAVES.has(String(name || '').toLowerCase());
+function splitForLibrary(v) {
+  const s = v?.s ?? v?.sound;
+  if (s == null) return [null, 0];
+  const [name, i] = String(s).split(':');
+  if (isWave(name)) return [null, 0];
+  const idx = i != null && i !== '' ? Number(i) : v.n != null && valueMidi(v) == null ? Number(v.n) : 0;
+  return [name, Number.isFinite(idx) ? idx : 0];
+}
+function valuesOf(evaluated, c0, c1) {
+  try {
+    return (strudel.queryEvents(evaluated, c0, c1) || []).map((e) => e.value).filter((v) => v && typeof v === 'object');
+  } catch { return []; }
+}
+
+/**
+ * Realtime: start loading the library samples the first `cycles` cycles of an evaluated code
+ * track use. With a ctx they are decoded too; without one only the bytes are fetched (cached).
+ */
+export async function prefetchCodeSamples(ctx, evaluated, { cycles = 8 } = {}) {
+  if (!evaluated || typeof fetch !== 'function') return { loaded: 0, failed: 0, total: 0 };
+  const urls = await urlsForValues(valuesOf(evaluated, 0, cycles), { splitName: splitForLibrary });
+  if (ctx) return library.preload(ctx, urls);
+  await Promise.all(urls.map((u) => library.fetchBytes(u).catch(() => null)));
+  return { loaded: urls.length, failed: 0, total: urls.length };
+}
+
+/**
+ * Offline render: load + decode (for ctx's sample rate) every library sample the code tracks play in
+ * [startBeat, endBeat). Samples that can't load play their synthesized fallback; reported via onError.
+ */
+export async function prepareCodeSamples(ctx, project, codeCache, startBeat, endBeat, onError = () => {}) {
+  if (typeof fetch !== 'function' || !codeCache) return;
+  const bpb = beatsPerBar(project);
+  const c0 = startBeat / bpb;
+  const c1 = Math.min(endBeat / bpb, c0 + 256);
+  const values = [];
+  for (const track of project.tracks || []) {
+    if (track.type !== 'code' || track.mute) continue;
+    let entry = null;
+    try { entry = codeCache.get(track); } catch { /* reported by the scheduler */ }
+    if (entry?.evaluated) values.push(...valuesOf(entry.evaluated, c0, c1));
+  }
+  if (!values.length) return;
+  try {
+    const urls = await urlsForValues(values, { splitName: splitForLibrary });
+    if (!urls.length) return;
+    const r = await library.preload(ctx, urls, { timeoutMs: 60000 });
+    if (r.failed) onError(new Error(`${r.failed} of ${r.total} code-track samples could not be loaded — synthesized sounds were used instead.`));
+  } catch (e) { onError(e); }
 }

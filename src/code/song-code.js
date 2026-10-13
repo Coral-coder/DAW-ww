@@ -24,11 +24,20 @@ const SHARP = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b'];
 const FLAT = ['c', 'db', 'd', 'eb', 'e', 'f', 'gb', 'g', 'ab', 'a', 'bb', 'b'];
 const PITCH_TO_SHORT = Object.fromEntries(DRUM_PADS.map((p) => [p.pitch, p.short]));
 const DRUM_ORDER = new Map(DRUM_PADS.map((p, i) => [p.pitch, i]));
-// GM drum pitches outside the pad set -> nearest pad voice
-const GM_FALLBACK = { 35: 'bd', 40: 'sd', 44: 'hh', 41: 'lt', 43: 'lt', 48: 'mt', 52: 'cr', 55: 'cr', 57: 'cr', 53: 'rd', 59: 'rd', 60: 'perc', 61: 'perc', 62: 'perc', 64: 'perc', 65: 'perc', 66: 'perc', 67: 'perc', 68: 'perc', 69: 'sh', 76: 'cl', 77: 'cl', 81: 'tb' };
 // keys whose signature uses flats (major-relative pitch class of the key)
 const FLAT_KEYS = new Set([5, 10, 3, 8, 1, 6]);
 const RES = [1, 2, 4, 3, 8, 6, 12, 16, 24];
+/**
+ * Onset quantisation used by the code view: the nearest 16th when within 0.05 beat (humanised or
+ * strummed notes), otherwise the nearest 1/24 beat (holds 32nds, 8th and 16th triplets).
+ */
+export function snapBeat(b) {
+  const s16 = Math.round(b * 4) / 4;
+  if (Math.abs(b - s16) <= 0.05 + 1e-9) return s16;
+  return Math.round(b * 24) / 24;
+}
+/** Velocity quantisation used by the code view (0.05 steps — inaudible, far more readable). */
+export const qVel = (v) => Math.round(clamp(v, 0, 1) * 20) / 20;
 const DEFAULT_VEL = 0.8;
 const DEFAULT_VOL = 0.8;
 const RESERVED = new Set(['break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default', 'delete', 'do', 'else',
@@ -81,7 +90,7 @@ export function labelFor(name, used = new Set()) {
 const onGrid = (times, r) => times.every((t) => Math.abs(t * r - Math.round(t * r)) < 1e-3 * r + 1e-6);
 function chooseRes(times) {
   for (const r of RES) if (onGrid(times, r)) return r;
-  return 12; // quantize to 1/48 notes (covers 16ths and 16th triplets)
+  return 24; // starts are pre-snapped to 1/24 beat
 }
 
 const wrap = (x) => (/\s/.test(x) ? `[${x}]` : x);
@@ -195,9 +204,12 @@ function barGroups(notes, bars, barLen) {
 export function notesToVoices(notes, lengthBeats, { kind = 'melodic', beatsPerBar: bpb = 4, spell } = {}) {
   spell = spell || noteSpeller(null);
   const L = Math.max(EPS, lengthBeats || bpb);
+  // humanised / strummed timing snaps to 16ths, else to a 1/24-beat grid (32nds, triplets); velocities to 0.05
+  const snap = snapBeat;
   const clean = (notes || [])
+    .map((n) => ({ pitch: n.pitch, start: snap(n.start), dur: n.dur > 0 ? n.dur : 0.25, vel: qVel(n.vel ?? DEFAULT_VEL) }))
     .filter((n) => n.start >= -EPS && n.start < L - EPS)
-    .map((n) => ({ pitch: n.pitch, start: Math.max(0, n.start), dur: Math.max(0.001, Math.min(n.dur > 0 ? n.dur : 0.25, L - n.start)), vel: n.vel ?? DEFAULT_VEL }));
+    .map((n) => ({ ...n, start: Math.max(0, n.start), dur: Math.max(1 / 24, Math.min(Math.round(n.dur * 24) / 24 || 1 / 24, L - n.start)) }));
   const whole = Math.abs(L / bpb - Math.round(L / bpb)) < EPS && Number.isInteger(bpb);
   const bars = whole ? Math.round(L / bpb) : 1;
   const barLen = whole ? bpb : L;
@@ -210,7 +222,8 @@ export function notesToVoices(notes, lengthBeats, { kind = 'melodic', beatsPerBa
   if (kind === 'drums') {
     const byVoice = new Map();
     for (const n of clean) {
-      const name = PITCH_TO_SHORT[n.pitch] || GM_FALLBACK[n.pitch] || 'perc';
+      // drum pitches without a pad of their own keep their pitch as the sample number: "perc:60"
+      const name = PITCH_TO_SHORT[n.pitch] || `perc:${n.pitch}`;
       if (!byVoice.has(name)) byVoice.set(name, { name, order: DRUM_ORDER.get(n.pitch) ?? 99, notes: [] });
       byVoice.get(name).notes.push(n);
     }
@@ -232,7 +245,7 @@ export function notesToVoices(notes, lengthBeats, { kind = 'melodic', beatsPerBa
         segs.push({ text: compactSteps(cells), w: g[1] - g[0] });
         vsegs.push({ text: compactSteps(vcells), w: g[1] - g[0] });
       }
-      return { mini: alternation(segs), velMini: alternation(vsegs), vels: v.notes.map((n) => round(n.vel, 2)), sound: v.name };
+      return { mini: alternation(segs), velMini: alternation(vsegs), vels: v.notes.map((n) => n.vel), sound: v.name };
     });
     return { voices: finishVel(voices), slow };
   }
@@ -241,7 +254,10 @@ export function notesToVoices(notes, lengthBeats, { kind = 'melodic', beatsPerBa
   const layersPerGroup = groups.map((g) => {
     const span = (g[1] - g[0]) * barLen;
     const ns = clean.filter((n) => inGroup(n, g)).map((n) => ({ ...n, t: n.start - g[0] * barLen }));
-    const r = chooseRes(ns.flatMap((n) => [n.t, Math.min(span, n.t + n.dur)]));
+    // grid from the onsets; note ends snap to it, at least to 16ths (gates round to the grid, min one step)
+    const rOn = chooseRes(ns.map((n) => n.t));
+    const re = Math.max(rOn, 4);
+    const r = chooseRes(ns.flatMap((n) => [n.t, Math.round(Math.min(span, n.t + n.dur) * re) / re]));
     const S = Math.max(1, Math.round(span * r));
     const evMap = new Map();
     for (const n of ns) {
@@ -277,9 +293,9 @@ export function notesToVoices(notes, lengthBeats, { kind = 'melodic', beatsPerBa
         if (e.s0 > pos) { items.push({ tok: '~', w: e.s0 - pos }); vitems.push({ tok: '~', w: e.s0 - pos }); }
         const ps = [...e.pitches].sort((a, b) => a - b);
         items.push({ tok: ps.length === 1 ? spell(ps[0]) : `[${ps.map(spell).join(',')}]`, w: e.d });
-        const v = e.vels.reduce((a, b) => a + b, 0) / e.vels.length;
+        const v = qVel(e.vels.reduce((a, b) => a + b, 0) / e.vels.length);
         vitems.push({ tok: velStr(v), w: e.d });
-        for (const x of e.vels) vels.push(round(x, 2));
+        for (const x of e.vels) vels.push(x);
         pos = e.s0 + e.d;
       }
       if (pos < g.S) { items.push({ tok: '~', w: g.S - pos }); vitems.push({ tok: '~', w: g.S - pos }); }
@@ -654,6 +670,8 @@ function eventsToNotes(pattern, { cycles, bpb, kind }) {
     const isMel = typeof v.note === 'number' || typeof v.freq === 'number';
     if (kind === 'drums' || (!isMel && drumPitch(sname) !== null)) {
       pitch = drumPitch(sname);
+      // "perc:60" -> pitch 60 (drum sounds without a pad name of their own)
+      if (pitch !== null && typeof v.n === 'number' && v.n >= 24 && v.n < 128) pitch = Math.round(v.n);
       if (pitch === null && isMel) pitch = Math.round(v.note ?? 69 + 12 * Math.log2(v.freq / 440));
       if (pitch !== null) drumCount++;
     } else {

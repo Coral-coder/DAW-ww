@@ -3,6 +3,7 @@
 //            options?:[{value,label}], section, advanced? }
 import { DRUM_KITS } from './kits.js';
 import { GM_INSTRUMENTS, gmLabel, SOUNDFONT_LIBRARIES } from '../plugins/gm.js';
+import { DRUMS_MACHINE_PARAM, SAMPLED_DRUM_EXTRA_PARAMS, PAD_VARIANT_PARAM, drumSamplerParams } from './library/drum-machines.js';
 
 const LFO_DIVS = ['4/1', '2/1', '1/1', '1/2', '1/2d', '1/4', '1/4d', '1/4t', '1/8', '1/8d', '1/8t', '1/16', '1/16t', '1/32'];
 const opt = (list) => list.map((x) => (typeof x === 'object' ? x : { value: x, label: String(x) }));
@@ -201,6 +202,8 @@ const DRUM_PARAMS = [
     numP('pitch', 'Pitch', -24, 24, 0, { step: 0.1, unit: 'st' }),
     numP('decay', 'Decay', 0.1, 4, 1, { step: 0.01, unit: '×', curve: 'exp' }),
     numP('tone', 'Tone', -1, 1, 0, { step: 0.01 }),
+    DRUMS_MACHINE_PARAM, // real drum-machine samples (src/audio/library); '' = synthesized kit
+    ...SAMPLED_DRUM_EXTRA_PARAMS,
   ]),
   ...outputSection(0.8),
 ];
@@ -213,7 +216,12 @@ export const DRUM_PAD_PARAM_DEFS = section('Pad', [
   numP('pan', 'Pan', -1, 1, 0, { step: 0.01 }),
   boolP('mute', 'Mute', false),
   { key: 'sampleId', label: 'Sample', type: 'sample', default: null, section: 'Pad', advanced: true },
+  PAD_VARIANT_PARAM, // sampled machines: which of the machine's sounds for this pad
 ]);
+const DRUMSAMPLER_PARAMS = [
+  ...drumSamplerParams(Object.entries(DRUM_KITS).map(([value, k]) => ({ value, label: k.name }))),
+  ...outputSection(0.8),
+];
 
 const SAMPLER_PARAMS = [
   ...section('Sample', [
@@ -282,6 +290,7 @@ export const INSTRUMENT_DEFS = {
   fm: { name: 'FM Synth', params: FM_PARAMS },
   organ: { name: 'Drawbar Organ', params: ORGAN_PARAMS },
   drums: { name: 'Drum Machine', params: DRUM_PARAMS, padParams: DRUM_PAD_PARAM_DEFS },
+  drumsampler: { name: 'Sampled Drum Machine', params: DRUMSAMPLER_PARAMS, padParams: DRUM_PAD_PARAM_DEFS },
   sampler: { name: 'Sampler', params: SAMPLER_PARAMS },
   soundfont: { name: 'SoundFont Instrument', params: SOUNDFONT_PARAMS, plugin: true },
   faust: { name: 'Faust Instrument', params: FAUST_PARAMS, plugin: true },
@@ -293,7 +302,7 @@ export function getParamDefaults(type) {
   const def = INSTRUMENT_DEFS[type] || INSTRUMENT_DEFS.synth;
   const out = {};
   for (const p of def.params) out[p.key] = p.default;
-  if (type === 'drums') out.pads = {};
+  if (type === 'drums' || type === 'drumsampler') out.pads = {};
   return out;
 }
 
@@ -316,7 +325,7 @@ export function sanitizeParams(type, params) {
       out[p.key] = v || null;
     }
   }
-  if (type === 'drums') {
+  if (type === 'drums' || type === 'drumsampler') {
     const pads = {};
     for (const [k, pv] of Object.entries(out.pads || {})) {
       if (!pv || typeof pv !== 'object') continue;

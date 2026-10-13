@@ -246,7 +246,7 @@ export function resolvePadSamples(machineId) {
           if (r) { source = 'companion'; from = c; }
         }
       };
-      if (!r) tryCompanions('primary');
+      if (!r) tryCompanions('strong');
       if (!r) { r = tdmVariants(id, pad, 'weak'); if (r) { source = 'machine'; from = id; } }
       if (!r) tryCompanions('all');
       if (r) out[pad] = { source, machine: from, key: r.key, variants: r.variants };
@@ -346,7 +346,7 @@ export const SAMPLED_DRUM_EXTRA_PARAMS = [
 export const PAD_VARIANT_PARAM = numP('variant', 'Variation', 0, 24, 0, { step: 1, section: 'Pad', adv: true });
 
 /**
- * Params of the 'drumsampler' instrument type. `kitOptions` = [{value,label}] of synthesized kits
+ * Kit params of the 'drumsampler' instrument type. `kitOptions` = [{value,label}] of synthesized kits
  * (fallback when samples can't load) — passed in by defs.js to avoid an import cycle.
  */
 export function drumSamplerParams(kitOptions = [{ value: '909', label: '909' }]) {
@@ -357,9 +357,7 @@ export function drumSamplerParams(kitOptions = [{ value: '909', label: '909' }])
     numP('tone', 'Tone', -1, 1, 0),
     ...SAMPLED_DRUM_EXTRA_PARAMS,
     { key: 'kit', label: 'Fallback kit', type: 'enum', options: kitOptions, default: kitOptions.some((o) => o.value === '909') ? '909' : kitOptions[0].value, section: 'Kit', advanced: true },
-    numP('drive', 'Drive', 0, 1, 0, { section: 'Output' }),
-    numP('gain', 'Volume', 0, 2, 0.8, { section: 'Output' }),
-  ];
+  ]; // defs.js appends the shared Output section (drive / tone / volume)
 }
 
 // ---------------------------------------------------------------------------- preview grooves
