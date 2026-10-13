@@ -223,3 +223,18 @@ test('apply-back: random / signal blocks are offered as code tracks; tempo + son
   assert.equal(r.warnings.length, 1);
   assert.deepEqual(q.clips, ps.clips);
 });
+
+test('samples() calls the injectable sample-pack loader once per pack; URL args stay strings', async () => {
+  const { setSampleLoader } = await import('../src/code/strudel.js');
+  const calls = [];
+  setSampleLoader((map, base) => { calls.push([map, base]); return Promise.resolve(true); });
+  try {
+    const code = 'samples("github:someone/my-pack-test")\nsamples({ bass: ["b.wav"] }, "https://example.com/x/")\n$: s("bd")';
+    assert.equal(evaluate(code).error, null);
+    assert.equal(evaluate(code).error, null);
+    await new Promise((r) => setTimeout(r, 5));
+    assert.deepEqual(calls, [['github:someone/my-pack-test', undefined], [{ bass: ['b.wav'] }, 'https://example.com/x/']]);
+  } finally {
+    setSampleLoader(null);
+  }
+});

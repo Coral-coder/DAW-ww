@@ -334,7 +334,8 @@ export class Scheduler {
       }
     }
     if (this.o.onTick) { try { this.o.onTick(project, now); } catch (e) { this.o.onError?.(e); } }
-    // prune anchors that are fully in the past (keep the latest one <= now)
-    while (this.anchors.length > 2 && this.anchors[1].time <= now) this.anchors.shift();
+    // prune anchors that are fully in the past (keep the latest one <= now - 0.5 s, so latency-compensated
+    // lookups like beatAt(now - outputLatency) — used by the code view's live highlighting — stay exact)
+    while (this.anchors.length > 2 && this.anchors[1].time <= now - 0.5) this.anchors.shift();
   }
 }
