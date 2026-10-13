@@ -56,6 +56,12 @@ export function parseProjectFile(input) {
 
 /** Generic browser download helper. No-op (returns false) outside the browser. */
 export function downloadBlob(blob, filename) {
+  // Mac app: native Save dialog via the preload bridge (window.daw3Native).
+  const nat = typeof window !== 'undefined' ? window.daw3Native : null;
+  if (nat?.saveFile && blob?.arrayBuffer) {
+    blob.arrayBuffer().then((buf) => nat.saveFile({ name: filename, data: new Uint8Array(buf) })).catch((e) => console.error('[save]', e));
+    return true;
+  }
   if (typeof document === 'undefined' || typeof URL === 'undefined' || !URL.createObjectURL) return false;
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

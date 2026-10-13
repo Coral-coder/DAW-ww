@@ -79,6 +79,7 @@ export function createXView(app) { return { el, show?(), hide?() } }
 | Device panel (bottom) | `src/ui/panels/device.js` (`createDevicePanel`) | `styles/device.css` |
 | Plugboard (patch bay + project routing) | `src/ui/views/patch.js` (`createPatchView`) | `styles/patch.css` |
 | Setlist (endless DJ set, view 8) | `src/ui/views/setlist.js` (`createSetlistView`; logic `src/live/setlist-engine.js` pure + `src/live/setlist-runner.js`, `app.setlist`) | `styles/setlist.css` |
+| Decks / music library (view 9) | `src/ui/views/decks.js` (`createDecksView`; analysis `src/audio/analysis/` pure, `src/audio/remix.js`, `src/audio/decks.js`, `src/io/track-library.js`, `app.library`, `app.decks`) | `styles/decks.css` |
 
 `index.html` links every CSS file above. Run the app with `npm start` (http://localhost:5173, add `?nowelcome`
 to skip the welcome dialog). Chromium for automated checks: Playwright is pre-configured

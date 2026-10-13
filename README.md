@@ -162,6 +162,22 @@ npm test       # asks the machine whether it still believes in itself
 
 *On the glyphs:* they speak the true tongue of [Strudel](https://strudel.cc), borrowed with gratitude from its makers, and so the whole relic is bound by the [AGPL-3.0](LICENSE). *What you hear may always be read.*
 
+
+*On the ninth room:* `9` opens the **Decks**. Feed it recordings (mp3, wav, flac, m4a, ogg, aiff — drop whole folders) and it hears their pulse, their key and its Camelot number, their loudness and where their phrases turn. Two decks, a crossfader, loops of 1–16 bars, hot cues; tracks that mix harmonically with the one playing glow. Loop a few bars and cut them — onto drum pads, a chromatic sampler, the timeline, or the Setlist — stretched to your tempo and, if you ask, bent toward your key.
+
+*To carry it onto a Mac* (branch `mac-app`, an Electron shell around the very same files):
+
+| | |
+|:--|:--|
+| run it | `npm install` then `npm run mac:dev` |
+| build it | `npm run mac:build` → `dist/daW3-<version>-arm64.dmg` / `-x64.dmg` (+ `.zip`) |
+| or fetch it | GitHub → Actions → *Mac app* → latest run → artifact **daW3-mac** |
+| first launch | the build is ad-hoc signed, not notarized: right-click → *Open*, or `xattr -dr com.apple.quarantine /Applications/daW3.app` |
+| to sign it properly | set `CSC_LINK` / `CSC_KEY_PASSWORD` (Developer ID cert) and `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`, change `build.mac.identity` from `"-"` to your identity, add `"hardenedRuntime": true` and `"notarize": true` |
+| the icon | `npm run mac:icon` regenerates `build/icon.png` |
+
+*The browser needs none of this:* `npm start` still works, and `npm test` never touches Electron.
+
 </details>
 
 ---

@@ -1,0 +1,29 @@
+name: Mac app
+on:
+  push:
+    branches: [mac-app]
+  workflow_dispatch:
+jobs:
+  dmg:
+    # Same rule as ci.yml: "WIP: …" checkpoints are not built.
+    if: ${{ github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'WIP') }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm test
+      - run: npm install --no-audit --no-fund
+      - name: Build .dmg + .zip (arm64 and x64, ad-hoc signed, not notarized)
+        run: npx electron-builder --mac --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: daW3-mac
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
+          retention-days: 30

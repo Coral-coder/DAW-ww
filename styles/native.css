@@ -1,0 +1,3 @@
+/* Mac app (Electron, hiddenInset title bar): room for the traffic lights + draggable header. Inert in the browser. */
+html[data-native="darwin"] .app-header { padding-left: 84px; -webkit-app-region: drag; }
+html[data-native="darwin"] .app-header :is(button, select, input, a, label, .hgroup, .hfield, [role="button"], [contenteditable]) { -webkit-app-region: no-drag; }
