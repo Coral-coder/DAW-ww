@@ -128,7 +128,7 @@ export function bigButton(label, onClick, { ic = null, cls = '', title = '' } = 
 
 /** Segmented chips: [{value,label}] -> el with .setValue(v). */
 export function chips(options, value, onChange, { cls = '' } = {}) {
-  const el = h(`div.pk-chips${cls ? '.' + cls : ''}`);
+  const el = h(`div.pk-chips${cls ? '.' + cls.split(' ').join('.') : ''}`, cls.includes('scroll') ? { 'data-noswipe': '' } : {});
   const render = () => {
     el.replaceChildren(...options.map((o) => {
       const b = h(`button.pk-chip${o.value === value ? '.on' : ''}`, { type: 'button', title: o.title || '' }, o.label);

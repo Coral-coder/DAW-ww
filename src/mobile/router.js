@@ -45,7 +45,7 @@ export function swipeDecision({ dx = 0, dy = 0, dt = 1, width = 375 } = {}) {
 /** Should a pointer gesture starting at this target be left to the control (not a page swipe)? */
 export function isSwipeBlocked(el) {
   for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
-    if (n.dataset?.noswipe !== undefined || n.classList?.contains('mp-noswipe')) return true;
+    if (n.dataset?.noswipe !== undefined || n.classList?.contains('pk-noswipe')) return true;
     const tag = n.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'CANVAS') return true;
   }

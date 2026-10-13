@@ -79,6 +79,7 @@ export async function createPocketApp(rootEl) {
     ]);
   }
   app.openHum = openHum;
+  app.recordAudio = recordAudio;
   async function openHum(opts = {}) {
     const m = await import('./hum.js');
     m.openHumSheet(app, opts);
@@ -164,7 +165,8 @@ export async function createPocketApp(rootEl) {
     const ni = PAGES.findIndex((p) => p.id === tabOf(r.page));
     const dir = SUBPAGES[r.page] ? 1 : SUBPAGES[cur?.page] && tabOf(cur.page) === r.page ? -1 : Math.sign(ni - ci);
     const hash = routeHash(r);
-    if (location.hash !== hash) history[replace ? 'replaceState' : 'pushState'](null, '', hash);
+    // absolute URL: a relative '#/…' would resolve against <base> (published builds live in v/<sha>/)
+    if (location.hash !== hash) history[replace ? 'replaceState' : 'pushState'](null, '', location.pathname + location.search + hash);
     show(r, dir);
   }
   window.addEventListener('popstate', () => { closeTopSheet(); show(parseRoute(location.hash), -1); });

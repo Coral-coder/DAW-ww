@@ -57,6 +57,8 @@ export function createHomePage(app, nav) {
     } finally { genBtn.disabled = false; }
   }, { ic: 'wand', cls: 'primary huge' });
   const setBtn = bigButton('Start a setlist', async () => {
+    const p = get();
+    if (p.tracks.length && !app.setlist?.active && !(await confirmSheet('Start a setlist?', 'The set replaces the current song (it stays in Recent below).', 'Start'))) return;
     const m = await import('./setlist.js');
     nav.go({ page: 'setlist' });
     m.startSet(app, { genre: opts.genre, key: { root: opts.root ?? Math.floor(Math.random() * 12), scale: opts.scale } });

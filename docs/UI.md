@@ -84,3 +84,20 @@ export function createXView(app) { return { el, show?(), hide?() } }
 to skip the welcome dialog). Chromium for automated checks: Playwright is pre-configured
 (`PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`); install `playwright-core` in a scratch dir under /tmp/claude-0/,
 never in the repo. `window.daw3` exposes the app object for automation.
+
+## daW³ Pocket (phone layout, `src/mobile/`)
+
+Phones / small touch screens (width ≤ 820, or a coarse pointer with width ≤ 1024) start the Pocket shell instead of
+the desktop layout; `?mobile=1` / `?mobile=0` force it, Menu ▸ "Pocket layout" / Pocket menu ▸ "Desktop layout"
+switch and remember the choice (`localStorage['daw3-layout']`). Both layouts share `createCore()` (store, engine,
+actions, generators) — projects are the same `.daW3` files.
+
+| Area | JS |
+|------|----|
+| Shell: transport, swipeable pages + tab bar, hash routes (`#/notes`, `#/track/<id>`) | `src/mobile/shell.js`, pure logic `router.js`, `mode.js` |
+| Touch kit: bottom sheets (pull down to close), action sheets, long-press, hold-repeat, haptics | `src/mobile/touch.js` |
+| Control popup (big slider with vertical-distance fine mode, − / + with hold-repeat, presets, reset, typed entry, automate / lock), drag tiles, vertical faders | `src/mobile/controls.js`, pure logic `param-logic.js` |
+| Pages: Create, Tracks, Track, Notes (touch piano roll + drum step grid), Play (keys / chords / piano / pads), Mix, Setlist | `src/mobile/pages/*.js`, roll geometry `roll-core.js` |
+| Hum / whistle to notes: mic capture (AudioWorklet, ScriptProcessor fallback), live pitch, review, "Use" | `src/mobile/hum.js`, `capture-worklet.js`, pure DSP `pitch.js` (YIN, segmentation, quantize, scale snap) |
+
+Styles: `styles/mobile.css` (loaded by the shell only; classes prefixed `pk-`). Tests: `tests/mobile-*.test.js`.

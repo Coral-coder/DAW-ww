@@ -112,3 +112,38 @@ test('pocket: shell files exist, mobile CSS, desktop menu offers the Pocket layo
   const actions = readFileSync(new URL('../src/ui/actions.js', import.meta.url), 'utf8');
   assert.match(actions, /Pocket layout/);
 });
+
+import { hitNote, stepPitch, nearestInScale, pinchView, clampView, snapFloor, snapRound, beatToX, xToBeat, pitchToY, yToPitch } from '../src/mobile/roll-core.js';
+
+test('touch roll: hit-testing, snapping, scale-locked moves, pinch zoom', () => {
+  const notes = [{ id: 'a', pitch: 60, start: 0, dur: 1 }, { id: 'b', pitch: 64, start: 1, dur: 0.25 }];
+  assert.equal(hitNote(notes, 0.3, 60).zone, 'body');
+  assert.equal(hitNote(notes, 0.9, 60).zone, 'end');
+  assert.equal(hitNote(notes, 1.1, 64).note.id, 'b');
+  assert.equal(hitNote(notes, 1.5, 64), null);
+  assert.equal(hitNote(notes, 0.5, 61), null);
+  assert.equal(snapFloor(0.99, 0.25), 0.75);
+  assert.equal(snapRound(0.99, 0.25), 1);
+  assert.equal(snapFloor(0.37, 0), 0.37);
+  const cMaj = [0, 2, 4, 5, 7, 9, 11];
+  assert.equal(stepPitch(60, 1, cMaj), 62);
+  assert.equal(stepPitch(64, 1, cMaj), 65);
+  assert.equal(stepPitch(60, -2, cMaj), 57);
+  assert.equal(stepPitch(60, 3), 63);
+  assert.equal(nearestInScale(61, cMaj), 60);
+  const v = { ppb: 80, rowH: 20, x0: 0, top: 72 };
+  assert.equal(xToBeat(v, beatToX(v, 2.5)), 2.5);
+  assert.equal(yToPitch(v, pitchToY(v, 65) + 5), 65);
+  // spread fingers horizontally ×2: time zoom doubles, pitch zoom unchanged, centre content stays put
+  const z = pinchView(v, { x0: 100, y0: 200, x1: 200, y1: 210 }, { x0: 50, y0: 200, x1: 250, y1: 210 });
+  assert.equal(z.ppb, 160);
+  assert.equal(z.rowH, 20);
+  assert.ok(Math.abs(xToBeat(z, 150) - xToBeat(v, 150)) < 1e-9);
+  const zy = pinchView(v, { x0: 100, y0: 100, x1: 105, y1: 200 }, { x0: 100, y0: 50, x1: 105, y1: 250 });
+  assert.equal(zy.rowH, 40);
+  assert.equal(zy.ppb, 80);
+  assert.ok(pinchView(v, { x0: 0, y0: 0, x1: 100, y1: 0 }, { x0: 0, y0: 0, x1: 10000, y1: 0 }).ppb <= 640);
+  const c = clampView({ ppb: 100, rowH: 20, x0: 50, top: 200 }, { length: 8, width: 400, height: 400 });
+  assert.equal(c.x0, 4.5);
+  assert.equal(c.top, 127.5);
+});
