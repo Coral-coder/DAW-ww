@@ -235,12 +235,15 @@ function checkSong(s, label) {
   for (const t of s.tracks) {
     assert.ok(t.role, `${label}: role`);
     assert.ok(t.instrument, `${label}: instrument`);
-    if (t.role === 'drums') {
+    if (t.role === 'drums' || (t.instrument.type === 'drums' && ['perc', 'top', 'impact'].includes(t.role))) {
       assert.equal(t.instrument.type, 'drums');
       assert.ok(G.DRUM_KIT_IDS.includes(t.instrument.preset) && t.instrument.params.kit === t.instrument.preset, `${label}: synth kit fallback`);
     } else if (t.instrument.type === 'soundfont') {
       // GM SoundFont with the closest synth preset as fallback
       assert.ok(t.instrument.params.instrument && G.ALL_PRESET_IDS.includes(t.instrument.fallbackPreset), `${label}: soundfont fallback`);
+    } else if (t.instrument.type === 'faust') {
+      // Faust plugin (catalog code inline) with the closest built-in preset as fallback
+      assert.ok(t.instrument.params.code && G.ALL_PRESET_IDS.includes(t.instrument.fallbackPreset), `${label}: faust fallback`);
     } else assert.ok(G.ALL_PRESET_IDS.includes(t.instrument.preset), `${label}: ${t.instrument.preset}`);
     assert.ok(t.activePatternId && s.patterns[t.activePatternId], `${label}: active pattern`);
     // the generated mix sends only to the song's own buses

@@ -590,7 +590,10 @@ export function createActions(app) {
   }
 
   function exportCode(trackIds) {
-    const code = patternsToCode(get(), trackIds ? { trackIds } : {});
+    // the Code view's "Code style" (localStorage 'daw3-code-style'): live-coder sketch (default) or exact
+    let style = 'live';
+    try { style = JSON.parse(localStorage.getItem('daw3-code-style') || '"live"') === 'exact' ? 'exact' : 'live'; } catch { /* default */ }
+    const code = patternsToCode(get(), { ...(trackIds ? { trackIds } : {}), style });
     const ta = h('textarea.prompt-input', { rows: 18, readOnly: true, style: { width: '100%', fontSize: '12px' } });
     ta.value = code;
     modal({

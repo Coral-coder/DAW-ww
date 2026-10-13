@@ -9,7 +9,9 @@
 //        setBlockBars([{line0, line1, color, alpha}]),   gutter colour bars per labelled block (0-based lines)
 //        setWidgets([{from, to, value, min, max, step, onInput(v), onChange(v)}]),  slider() widgets: a range
 //          input at the end of the slider's line (Strudel REPL style); from/to = the value literal's range
-//        lineOfOffset(offset), visibleLines() -> [first, last] }
+//        lineOfOffset(offset), visibleLines() -> [first, last],
+//        replaceRange(start, end, text, selStart?, selEnd?) (one native undo step), coordsAt(offset) -> viewport caret box,
+//        offsetAt(clientX, clientY) -> text offset, lineRect(line), setSelection(a, b) }
 // The root element has class `code-editor` (keyboard.js ignores global shortcuts inside it).
 import { h } from './dom.js';
 
@@ -485,9 +487,39 @@ export function createCodeEditor(opts = {}) {
   if (document.fonts?.ready) document.fonts.ready.then(() => { metrics = null; syncScroll(); });
   new ResizeObserver(() => { if (!metrics) return; const m = measure(); if (m) metrics = m; }).observe(stage);
 
+  /** Viewport rect of the caret at offset: {left, top, bottom, lineHeight}. */
+  function coordsAt(offset) {
+    computeLines();
+    if (!metrics) metrics = measure();
+    const m = metrics || { cw: 7.8, padL: 14, padT: PAD_T };
+    const r = ta.getBoundingClientRect();
+    const l = lineOfOffset(Math.max(0, Math.min(offset, ta.value.length)));
+    const c = colOf(l, Math.min(offset, ta.value.length));
+    const left = r.left + m.padL + c * m.cw - ta.scrollLeft;
+    const top = r.top + m.padT + l * LINE_H - ta.scrollTop;
+    return { left, top, bottom: top + LINE_H, lineHeight: LINE_H, line: l };
+  }
+  /** Text offset under a viewport point (clamped to the line's length). */
+  function offsetAt(clientX, clientY) {
+    computeLines();
+    if (!metrics) metrics = measure();
+    const m = metrics || { cw: 7.8, padL: 14, padT: PAD_T };
+    const r = ta.getBoundingClientRect();
+    const l = Math.max(0, Math.min(lineStarts.length - 1, Math.floor((clientY - r.top + ta.scrollTop - m.padT) / LINE_H)));
+    const st = lineStarts[l];
+    const en = l + 1 < lineStarts.length ? lineStarts[l + 1] - 1 : ta.value.length;
+    const col = Math.max(0, Math.round((clientX - r.left + ta.scrollLeft - m.padL) / m.cw));
+    return Math.min(st + col, en);
+  }
+
   return {
     el,
     textarea: ta,
+    replaceRange,
+    coordsAt,
+    offsetAt,
+    lineRect(line) { const r = ta.getBoundingClientRect(); const m = metrics || measure() || { padT: PAD_T }; return { left: r.left, right: r.right, top: r.top + m.padT + line * LINE_H - ta.scrollTop, height: LINE_H }; },
+    setSelection: (a, b) => { ta.focus(); ta.setSelectionRange(a, b ?? a); },
     getValue: () => ta.value,
     setValue,
     focus: () => ta.focus(),

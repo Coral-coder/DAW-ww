@@ -12,7 +12,6 @@ const r3 = (x) => Math.round(x * 1000) / 1000;
 
 /** Section-level level offsets (dB) by role and section kind. */
 const RIDE_DB = {
-  drums: { intro: -1.5, verse: -1.5, build: -0.5, main: 0.5, break: -1, outro: -1.5 },
   bass: { intro: -1, verse: -1, build: -0.5, main: 0.5, break: 0, outro: -1 },
   lead: { intro: -1.5, verse: -1, build: 0, main: 1.2, break: 0.5, outro: -2 },
   pad: { intro: -1, verse: -2, build: 0.5, main: 0.5, break: 1.5, outro: -1 },

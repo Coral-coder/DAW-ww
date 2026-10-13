@@ -101,7 +101,8 @@ export class DrumSamplerInstrument extends DrumInstrument {
     // velocity: layered kits already sound softer at low velocity, so use a gentler curve there
     // kicks anchor the groove: keep their level and tone steady (accents/ghosts change them only slightly)
     const steady = padKey === 'kick';
-    const velGain = steady ? 0.8 + 0.2 * vel : multiLayer ? 0.35 + 0.65 * vel : 0.08 + 0.92 * Math.pow(vel, 1.35);
+    const backbeat = padKey === 'snare' || padKey === 'clap';
+    const velGain = steady ? 0.8 + 0.2 * vel : backbeat ? 0.3 + 0.7 * vel : multiLayer ? 0.35 + 0.65 * vel : 0.08 + 0.92 * Math.pow(vel, 1.35);
     const level = num(pad.gain, 1, 0, 2) * velGain * (1 + hum * 0.06 * jitter(2));
 
     const v = new Voice(ctx);

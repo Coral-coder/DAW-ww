@@ -78,7 +78,7 @@ export const GENRE_FAUST = {
 /** Instruments of the extra orchestration roles that are Faust plugins (src/gen/orchestra.js asks here first). */
 export const EXTRA_FAUST = {
   counter: {
-    cinematic: F('flute', FLUTE.values, 'flute'), 'bossa-nova': F('flute', FLUTE.values, 'flute'), folk: F('flute', FLUTE.values, 'flute'),
+    cinematic: F('flute', FLUTE.values, 'flute'), 'bossa-nova': F('flute', FLUTE.values, 'flute'),
     jazz: F('clarinet', CLARINET.values, 'flute'), 'neo-soul': F('clarinet', CLARINET.values, 'flute'),
     trap: F('modal-bell', { Decay: 2.2, Hardness: 0.55, Inharmonicity: 1 }, 'bell'), drill: F('modal-bell', { Decay: 2.2, Hardness: 0.55, Inharmonicity: 1 }, 'bell'),
     synthwave: F('va-poly', { Detune: 0.12, Sub: 0, Cutoff: 2600, Resonance: 0.3, 'Filter env': 0.4, Attack: 0.01, Decay: 0.5, Sustain: 0.6, Release: 0.4 }, 'square-lead'),
@@ -99,7 +99,7 @@ export const EXTRA_FAUST = {
 /** The Faust def for a role in a genre (or null): base roles use GENRE_FAUST, extra roles EXTRA_FAUST. */
 export function faustFor(role, genreId, fallbackPreset) {
   const e = GENRE_FAUST[genreId]?.[role] || EXTRA_FAUST[role]?.[genreId] || EXTRA_FAUST[role]?.['*'];
-  if (!e) return null;
+  if (!e || !(e.fallback || fallbackPreset)) return null;
   return faustInstrument(e.id, { values: e.values, fallbackPreset: e.fallback || fallbackPreset });
 }
 

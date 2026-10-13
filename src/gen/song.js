@@ -24,6 +24,8 @@ import { writeMelody, makeMotif, varyMotif } from './melody.js';
 import { DRUM_STYLES, resolveDrumStyle } from './drums.js';
 import { createEffect } from '../core/model.js';
 import { addRides } from './rides.js';
+import { planExtras, addOrchestra, addTurnarounds, mixInstrument } from './orchestra.js';
+import { applyPluginEffects } from './plugins.js';
 import { buildGenMeta } from './livemeta.js';
 
 const ROLE_INFO = {
@@ -311,19 +313,21 @@ export function generateSong(opts = {}) {
     return progCache.get(ck);
   });
   const pcsOfKey = keyPitchClasses(root, scale);
+  // section-end turnarounds: secondary dominants / borrowed iv / bVII pulling into the next section (src/gen/orchestra.js)
+  if (opts.orchestra !== false) addTurnarounds(progs, sections, { g, root, scale, seed, bpb });
 
   // ---- tracks: genre sounds + mix
   const [reverbBus, delayBus] = createSongBuses(g.id);
   const tracks = roles.map((role) => {
     const info = ROLE_INFO[role];
-    const instrument = instrumentForRole(role, g.id, { soundfonts: opts.soundfonts, sampledDrums: opts.sampledDrums });
+    const instrument = instrumentForRole(role, g.id, { soundfonts: opts.soundfonts, sampledDrums: opts.sampledDrums, plugins: opts.plugins });
     return createTrack({ name: info.name, color: info.color, volume: info.volume, pan: info.pan, role, instrument, sends: {} });
   });
   const trackOf = (role) => tracks[roles.indexOf(role)];
   const drumTrack = trackOf('drums');
   const side = rng.chance(0.5) ? 1 : -1; // keys / guitars on one side, the arp answers on the other
   for (const t of tracks) {
-    mixTrack(t, { genre: g.id, role: t.role, instrument: t.instrument, drumTrackId: drumTrack?.id, buses: [reverbBus, delayBus], side: t.role === 'chords' ? side : -side });
+    mixTrack(t, { genre: g.id, role: t.role, instrument: mixInstrument(t.instrument), drumTrackId: drumTrack?.id, buses: [reverbBus, delayBus], side: t.role === 'chords' ? side : -side });
   }
   const groove = grooveFor(g.id);
   const tripletDrums = (DRUM_STYLES[resolveDrumStyle(g.drumStyle)]?.grid || 16) === 12;
@@ -455,6 +459,14 @@ export function generateSong(opts = {}) {
     if (s.energy > best.energy) best = { energy: s.energy, start: s.start };
   });
 
+  // extra orchestration: percussion / top loop / sub / counter-melody / strings / brass / guitar / colour / texture / vox /
+  // bells / organ / impacts, per genre and section, under the density rule (src/gen/orchestra.js)
+  const extras = opts.orchestra === false ? [] : planExtras(g, sections);
+  addOrchestra({
+    g, sections, progs, extras, tracks, patterns, clips, sectionSlots, sectionNotes, patternHarmony, auto, buses: [reverbBus, delayBus],
+    drumTrackId: drumTrack?.id, seed, bpb, bpm, root, scale, groove, opts,
+  });
+
   // outro fade on loop-based genres; bands ring out on the last chord
   const songEnd = sections.reduce((m, s) => Math.max(m, s.start + s.bars * bpb), 0);
   const master = createSongMaster(g.id);
@@ -490,6 +502,7 @@ export function generateSong(opts = {}) {
     sections: sections.map((s, i) => ({
       name: s.label, kind: s.kind, type: s.type, start: s.start, bars: s.bars, energy: s.energy, roles: [...s.roles], progression: [...new Set(progs[i].map((c) => c.roman))],
       ...(s.enter?.length ? { enter: [...s.enter] } : {}), ...(s.modulation ? { modulation: s.modulation } : {}),
+      ...(s.extra?.length ? { extra: [...s.extra] } : {}),
     })),
     // compact intent (form, layers, chord symbols) for the live-coder song code (src/code/livecoder.js)
     genMeta: buildGenMeta({ sections, progs, bpb, key }),
@@ -501,6 +514,9 @@ export function generateSong(opts = {}) {
   };
   // performance expression, sampled ranges, preset FX, layers, reverb space, mastering (src/gen/production.js)
   if (opts.production !== false) finishSong(song, { genre: g.id, seed });
+  // plugin effects (Zita / Freeverb reverb bus, tape-echo delay bus, Moog ladder, phaser, parallel Faust compression),
+  // each with a built-in fallback (src/gen/plugins.js)
+  if (opts.production !== false && opts.plugins !== false && opts.soundfonts !== false) applyPluginEffects(song, { genre: g.id, bpm });
   return song;
 }
 

@@ -5,17 +5,20 @@
 import { h, icon, fitCanvas, cssVar, startDrag } from '../dom.js';
 import { iconButton, button, contextMenu, toggle, select, toast, promptText, modal } from '../components.js';
 import { createCodeEditor, splitBlocks } from '../code-editor.js';
+import { attachCodeTools } from '../code-palette.js';
 import { beatsPerBar, createProject, createTrack } from '../../core/model.js';
 import { deepClone } from '../../core/util.js';
 import { isTyping } from '../keyboard.js';
 import * as strudel from '../../code/strudel.js';
 import { songToCode, applySongCode } from '../../code/song-code.js';
+import { songToLiveCode, applyLiveCode } from '../../code/livecoder.js';
 import { PRESETS, DRUM_KITS } from '../../audio/index.js';
 
 const LS_AUTO = 'daw3-code-autoapply';
 const LS_VIZ_H = 'daw3-code-viz-h';
 const LS_REF = 'daw3-code-ref-open';
 const LS_WIN = 'daw3-code-viz-window';
+const LS_STYLE = 'daw3-code-style'; // 'live' (live-coder sketch, default) | 'exact' (note-exact transcription)
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } };
 
@@ -114,6 +117,8 @@ export function createCodeView(app) {
   let songErr = null; // {error, line}
   let songTimer = null;
   let songMeta = null; // derived: { res, labelBlock: [], bars: [] }
+  let songBase = null; // the song code an edit started from (live-coder apply diffs against it)
+  let codeStyle = lsGet(LS_STYLE, 'live') === 'exact' ? 'exact' : 'live';
 
   // ------------------------------------------------------------ evaluation helpers
   function evaluate(code) {
@@ -160,7 +165,7 @@ export function createCodeView(app) {
     clearTimeout(songTimer);
     songTimer = null;
     let next;
-    try { next = songToCode(store.get()); } catch (e) { console.error('[song code]', e); return; }
+    try { next = codeStyle === 'live' ? songToLiveCode(store.get()) : songToCode(store.get()); } catch (e) { console.error('[song code]', e); return; }
     const changed = !song || next.code !== song.code;
     song = next;
     if (!changed) return;
@@ -191,7 +196,9 @@ export function createCodeView(app) {
       start: b.start, end: b.end,
     }));
     const labelBar = (res.labels || []).map((l) => bars.findIndex((b) => l.start >= b.start && l.start < b.end));
-    songMeta = { code: song.code, res, bars, labelBar };
+    // live-coder code: one arrange() plays every part — an event belongs to the const its tokens come from
+    const locBar = (ev) => { for (const l of ev.locations || []) { const i = bars.findIndex((b) => l.start >= b.start && l.start < b.end); if (i >= 0) return i; } return -1; };
+    songMeta = { code: song.code, res, bars, labelBar, locBar, live: song.mode === 'live' };
     return songMeta;
   }
 
@@ -219,11 +226,25 @@ export function createCodeView(app) {
     title: 'Sound engine of this code track — Strudel: exactly as on strudel.cc (superdough: its synths, samples, soundfonts, effects); daW³ instruments: this DAW’s synths, drum kits and presets. Either way the sound runs through the track’s mixer channel, inserts and sends.',
     onChange: (v) => { const t = currentTrack(); if (t) actions.updateTrack(t.id, (tt) => { tt.codeSound = v; }, 'Code sound engine'); },
   });
+  const styleSel = select({
+    options: [{ value: 'live', label: 'Code style: Live-coder' }, { value: 'exact', label: 'Code style: Exact' }],
+    value: codeStyle, cls: 'code-style',
+    title: 'Live-coder: the song as a short sketch — one idea per part, one arrange() (applying an edit re-renders the parts you changed). Exact: every note transcribed.',
+    onChange: (v) => {
+      codeStyle = v === 'exact' ? 'exact' : 'live';
+      lsSet(LS_STYLE, codeStyle);
+      songDraft = null; songStale = false; songErr = null; song = null; songMeta = null; songBase = null;
+      regenSong();
+      if (isSong() && song) editor.setValue(song.code);
+      lastQueryKey = ''; vizDirty = true; lastHlKey = '';
+      renderStatus(); renderList(codeTracks());
+    },
+  });
   const tempoBtn = button('', () => adoptTempo(), { icon: 'metronome', title: 'This code sets its own tempo with setcps/setcpm — click to set the project BPM to match (1 cycle = 1 bar)', cls: 'code-tempo hidden' });
   const toolbar = h('div.view-toolbar.code-toolbar',
     playBtn, stopBtn, h('div.sep'), applyBtn, revertBtn, autoToggle, dirtyEl, h('div.sep'),
     examplesBtn, refBtn, h('div.sep'), importBtn, exportBtn, h('div.sep'),
-    renderWrap, soundSel, tempoBtn);
+    renderWrap, soundSel, styleSel, tempoBtn);
 
   // ------------------------------------------------------------ DOM: track list
   const songItem = h('div.code-item.code-song', { tabIndex: 0, title: 'The whole project as Strudel code — always in sync. Edit it and press Ctrl+Enter to apply your edits to the project.' });
@@ -279,6 +300,7 @@ export function createCodeView(app) {
   const dropOverlay = h('div.code-drop.hidden', h('div', icon('upload', 28), h('b', 'Drop a .strudel / .js / .txt file'), h('span', 'It opens as a new code track')));
   const body = h('div.code-body', listEl, mainEl, refEl);
   const el = h('div.code-view', toolbar, body, dropOverlay);
+  attachCodeTools(app, editor, { body, after: refBtn }); // autocomplete + drag-and-drop building blocks
 
   // ------------------------------------------------------------ entry selection
   function selectEntry(id) {
@@ -336,6 +358,7 @@ export function createCodeView(app) {
     for (const b of [renderBtn, autoToggle, cyclesSel]) b.disabled = !t;
     renderWrap.classList.toggle('hidden', isSong());
     soundSel.classList.toggle('hidden', isSong() || !t);
+    styleSel.classList.toggle('hidden', !isSong());
     if (t) soundSel.value = t.codeSound === 'daw3' ? 'daw3' : 'strudel';
     autoToggle.classList.toggle('hidden', isSong());
     hintBlock.classList.toggle('hidden', isSong());
@@ -614,8 +637,11 @@ export function createCodeView(app) {
     // Pasted a different song (none of this project's blocks are left)? Replace the project with it.
     if (isForeignSong(text)) { replaceProjectWithCode(text); return; }
     const opts = { presets: PRESETS, kits: DRUM_KITS };
+    const live = song.mode === 'live';
+    const original = live && songBase?.mode === 'live' ? songBase : song;
+    const applyFn = live ? (p, t, o) => applyLiveCode(p, t, { ...o, original }) : applySongCode;
     let dry;
-    try { dry = applySongCode(deepClone(store.get()), text, opts); } catch (e) { console.error(e); dry = { error: String(e?.message || e) }; }
+    try { dry = applyFn(deepClone(store.get()), text, opts); } catch (e) { console.error(e); dry = { error: String(e?.message || e) }; }
     if (dry.error) {
       songErr = { error: dry.error, line: errorLineOf(dry.error, text) ?? locateErrorBlock(text) };
       renderStatus();
@@ -632,7 +658,7 @@ export function createCodeView(app) {
     }
     let rep = dry;
     if (dry.changed || (keep && dry.complex.length)) {
-      store.transact('Apply song code', (p) => { rep = applySongCode(p, text, { ...opts, keepComplexAsCode: keep }); });
+      store.transact('Apply song code', (p) => { rep = applyFn(p, text, { ...opts, keepComplexAsCode: keep }); });
     }
     songDraft = null;
     songStale = false;
@@ -670,6 +696,7 @@ export function createCodeView(app) {
     editor.setHighlights([]);
     if (isSong()) {
       const was = songDraft !== null;
+      if (songDraft === null) songBase = song;
       songDraft = song && text === song.code ? null : text;
       if (songDraft === null) { songStale = false; songErr = null; }
       if (was !== (songDraft !== null)) renderSongItem();
@@ -809,8 +836,8 @@ export function createCodeView(app) {
       if (m.res.error) return null;
       return {
         res: m.res, bars: m.bars,
-        barOf: (ev) => (ev.block !== undefined ? m.labelBar[ev.block] ?? -1 : -1),
-        colorOf: (ev) => { const i = ev.block !== undefined ? m.labelBar[ev.block] : -1; return i >= 0 ? m.bars[i].color : '#ffd43b'; },
+        barOf: (ev) => (m.live ? m.locBar(ev) : ev.block !== undefined ? m.labelBar[ev.block] ?? -1 : -1),
+        colorOf: (ev) => { const i = m.live ? m.locBar(ev) : ev.block !== undefined ? m.labelBar[ev.block] : -1; return i >= 0 ? m.bars[i].color : '#ffd43b'; },
       };
     }
     const t = currentTrack();

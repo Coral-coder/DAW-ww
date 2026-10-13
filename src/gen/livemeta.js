@@ -41,15 +41,24 @@ export function barChordTokens(prog, bars, bpb, flats = true, shift = 0) {
   return out;
 }
 
-/** The shortest repeating cycle of a token list. */
+/**
+ * The shortest repeating cycle of a token list. A long list that repeats a short loop except for its last
+ * token (a turnaround into the next section) counts as that loop.
+ */
 export function cycleOf(tokens) {
   const n = tokens.length;
-  for (let p = 1; p < n; p++) {
-    let ok = true;
-    for (let i = p; i < n && ok; i++) ok = tokens[i] === tokens[i % p];
-    if (ok) return tokens.slice(0, p);
-  }
-  return tokens.slice();
+  const loop = (skipLast) => {
+    for (let p = 1; p < n; p++) {
+      let ok = true;
+      for (let i = p; i < n - (skipLast ? 1 : 0) && ok; i++) ok = tokens[i] === tokens[i % p];
+      if (ok) return tokens.slice(0, p);
+    }
+    return null;
+  };
+  const exact = loop(false);
+  if (exact && exact.length <= 8) return exact;
+  const near = n > 8 ? loop(true) : null;
+  return near && near.length <= 8 ? near : exact || tokens.slice();
 }
 
 /** genMeta for generateSong: sections (from planSections) + per-section progressions. */

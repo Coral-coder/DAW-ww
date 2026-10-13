@@ -111,8 +111,8 @@ export const DRUM_STYLES = {
     hihat: 'x.x.x.x.x.x.x.x.', 'ride:0.75': '..x...x...x...x.', 'openhat:0.6': '..............o.',
   }, { fill: 'snare-roll' }),
   liquid: D('Liquid DnB', {
-    kick: 'X.........X.....X.........X..x..', snare: '....X.......X...', 'snare:0.5': '.......g.g.....g',
-    hihat: 'xgogxgogxgogxgog', ride: '..o...o...o...o.', shaker: 'gogogogogogogogo',
+    kick: 'X.........X.....X.........X.....', snare: '....X.......X...', 'snare:0.6': '.........g......',
+    hihat: 'x.o.x.o.x.o.x.oo', 'ride:0.8': '..o...o...o...o.', 'shaker:0.7': 'g.g.g.g.g.g.g.g.',
   }, { fill: 'snare-roll' }),
   jungle: D('Jungle (Amen)', {
     kick: 'X.X.......XX....', snare: '....X..X.X..X..X', hihat: 'x.x.x.x.x.x.x.x.', 'ride:0.6': 'x.x.x.x.x.x.x.x.',

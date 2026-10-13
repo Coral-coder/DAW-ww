@@ -5,6 +5,7 @@ import { PRESETS } from '../audio/presets.js';
 import { drumInstrumentForGenre } from '../audio/library/drum-machines.js';
 import { getGenre } from './genres.js';
 import { realInstrument } from './production.js';
+import { GENRE_FAUST, faustFor } from './plugins.js';
 
 export const SOUNDFONT_LIBRARY = 'FluidR3_GM';
 
@@ -75,6 +76,9 @@ export function instrumentForRole(role, genreId, opts = {}) {
     return { ...def, params: { ...def.params, humanize: 0, roundRobin: true } };
   }
   const preset = g.presets?.[role] || null;
+  // Faust plugin where it beats the preset (supersaw trance leads, analog pads, KS plucks, bells, organs) — the
+  // preset is its fallback. opts.plugins === false (or soundfonts: false = nothing downloaded) keeps built-ins.
+  if (opts.plugins !== false && opts.soundfonts !== false && GENRE_FAUST[g.id]?.[role] && preset) return faustFor(role, g.id, preset);
   const sf = opts.soundfonts === false ? null : GENRE_SOUNDFONTS[g.id]?.[role];
   const def = sf
     ? { type: 'soundfont', preset: null, params: { library: SOUNDFONT_LIBRARY, instrument: sf, ...(SF_PARAMS[sf] || {}) }, fallbackPreset: preset }

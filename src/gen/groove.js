@@ -41,7 +41,7 @@ export const GROOVES = {
   shuffle: T({ swing8: 0.66, drums: { snare: { late: 8, jit: 5 }, hihat: { late: 2, jit: 5 } }, bassLate: 5, chordLate: 6, leadLate: 8, jitter: 5, velJit: 0.07 }),
   latin: T({ drums: { conga: { late: 3, jit: 5 }, clave: { late: 0, jit: 2 }, cowbell: { late: 0, jit: 2 }, rim: { late: 3, jit: 4 } }, bassLate: 2, chordLate: 4, leadLate: 6, jitter: 4 }),
   garage: T({ drums: { snare: { late: 4, jit: 3 }, clap: { late: 5, jit: 3 }, hihat: { late: 2, jit: 4 }, rim: { late: 5, jit: 4 } }, hatAccents: [1, 0.6, 0.9, 0.66], bassLate: 3, chordLate: 4, leadLate: 4, jitter: 3 }),
-  dnb: T({ drums: { snare: { late: 3, jit: 2 }, hihat: { late: 1, jit: 3 }, ride: { late: 1, jit: 3 } }, ghosts: 0.15, bassLate: 1, chordLate: 4, leadLate: 4, jitter: 2 }),
+  dnb: T({ drums: { snare: { late: 3, jit: 2 }, hihat: { late: 1, jit: 3 }, ride: { late: 1, jit: 3 } }, ghosts: 0.04, bassLate: 1, chordLate: 4, leadLate: 4, jitter: 2 }),
   float: T({ drums: { hihat: { late: 3, jit: 8 }, rim: { late: 4, jit: 8 }, shaker: { late: 3, jit: 9 } }, bassLate: 4, chordLate: 10, leadLate: 10, jitter: 7, velJit: 0.06 }),
 };
 

@@ -175,8 +175,10 @@ export function addLayers(song, { genre } = {}) {
     layer(pad, { name: 'Strings Layer', instrument: realInstrumentDef('string_ensemble_1', { role: 'pad', fallbackPreset: 'strings', params: { attack: 0.15, release: 0.8 } }), gainDb: -8 });
   }
   const lead = song.tracks.find((t) => t.role === 'lead' && !t.layerOf);
-  if (lead && LAYER_GENRES.lead.has(g.id) && lead.instrument?.type === 'synth') {
-    layer(lead, { name: 'Lead Octave', instrument: { type: 'synth', preset: lead.instrument.preset === 'square-lead' ? 'saw-lead' : 'square-lead', params: {} }, transpose: 12, gainDb: -11 });
+  // (a Faust supersaw lead is doubled the same way — its fallback preset names the synth it stands for)
+  if (lead && LAYER_GENRES.lead.has(g.id) && (lead.instrument?.type === 'synth' || lead.instrument?.type === 'faust')) {
+    const lp = lead.instrument.preset || lead.instrument.fallbackPreset;
+    layer(lead, { name: 'Lead Octave', instrument: { type: 'synth', preset: lp === 'square-lead' ? 'saw-lead' : 'square-lead', params: {} }, transpose: 12, gainDb: -11 });
   }
   return added;
 }

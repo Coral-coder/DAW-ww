@@ -6,6 +6,7 @@ import { DRUM_PADS, beatsPerBar, patternsForTrack } from '../core/model.js';
 import { evaluate, queryEvents } from './strudel.js';
 import { midiToNoteName } from './theory.js';
 import { songToCode, hasArrangement } from './song-code.js';
+import { songToLiveCode } from './livecoder.js';
 import { EPS } from './pattern.js';
 
 const DRUM_SHORT_PITCH = Object.fromEntries(DRUM_PADS.map((p) => [p.short, p.pitch]));
@@ -225,8 +226,11 @@ const fmt = (x) => String(round(x, 3));
  * Exports the project as Strudel code for strudel.cc. With an arrangement (clips) the WHOLE song is written —
  * per-section patterns in idiomatic Strudel (scale degrees, motifs, struct, euclid, <> variations) played by
  * one arrange([bars, pattern], …) per track (see song-code.js / idioms.js); without clips, the (active) loop.
+ * opts.style 'live': the live-coder sketch instead (one idea per part, one arrange() — see livecoder.js).
  */
-export function patternsToCode(project, { trackIds = null } = {}) {
+export function patternsToCode(project, { trackIds = null, style = 'exact' } = {}) {
+  // style 'live': the live-coder sketch (livecoder.js) — what the Code view shows by default
+  if (style === 'live') return songToLiveCode(project, { export: true, trackIds }).code;
   if (hasArrangement(project)) return songToCode(project, { export: true, trackIds }).code;
   const bpb = beatsPerBar(project);
   const lines = [
