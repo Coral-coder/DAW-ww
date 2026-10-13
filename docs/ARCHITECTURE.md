@@ -40,7 +40,10 @@ Project {
 }
 Track { id, name, type:'instrument'|'audio'|'code', color, volume, pan, mute, solo, arm,
         fx: Effect[], sends:{busId: 0..1}, instrument: Instrument|null, code?: string,
-        activePatternId, role?, automation: AutomationLane[] }
+        activePatternId, role?, automation: AutomationLane[], patch?: Patch }
+Patch   { enabled, nodes: PatchNode[], cables: Cable[] }            (plugboard — see below)
+PatchNode { id, kind:'fx', fxId, x, y } | { id, kind:'split'|'mix', x, y }
+Cable   { id, from:{node:'in'|nodeId, port:0}, to:{node:'out'|nodeId, port:0|1}, gain: 0..2 }
 AutomationLane { id, target, points:[{beat, value}] (sorted by beat), enabled }
 Instrument { type: 'synth'|'fm'|'organ'|'drums'|'sampler', preset: string|null, params:{} }
 Pattern { id, trackId, name, length(beats), notes: Note[], color }
@@ -60,6 +63,46 @@ Sample  { id, name, mime, data: base64 (original file bytes), duration }
   `clip.length`, starting `clip.offset` beats into it. Audio clips play `sampleId` from `offset`.
 * **Code tracks** play whenever not muted, in both modes; their code is evaluated by `src/code`.
 * Missing instrument/effect params always fall back to the defs' defaults.
+
+## Plugboard (`src/core/patch.js` — pure helpers, `src/ui/views/patch.js` — view 7)
+
+* `track.patch` is optional. When it is absent or `patch.enabled` is false the track's insert
+  section is the serial chain in `track.fx` order (unchanged behaviour, bit-identical renders).
+* When enabled, the insert section is the patch graph: `'in'` = the track's own signal
+  (instrument / clips / code), `'out'` = the channel strip after the patch (pan → volume → mute →
+  master + post-fader sends, exactly as before). `fx` nodes reference `track.fx` entries by id, so
+  effect params, the device panel and automation (`fx:<fxId>:<key>`) work unchanged. Several
+  cables into one input sum; one output feeding several cables splits; `split`/`mix` nodes are
+  unity-gain junctions. Each cable is a GainNode (`gain` 0..2). Effects not on the board and
+  devices whose input or output isn't patched are silent. Port 1 of a `ducker` node is its key input.
+* Cycles are illegal (Web Audio forbids delay-free loops): `validateCable` rejects loop-closing,
+  duplicate, self and wrong-port cables; `sanitizePatch` (used by the engine) drops anything invalid
+  that slipped into a saved file, in order. `topoOrder` / `patchFxOrder` give signal-flow order
+  (used by the device panel and mixer to list the fx of a patched channel).
+* `serialToPatch(track)` builds in → fx1 → … → out; `patchToSerial(track)` gives a best-effort serial
+  order; `setPatchEnabled(track, on)` switches (re-uses a stored patch when it still matches the fx
+  list). `reconcilePatch(track)` keeps an enabled patch consistent with `track.fx` (the app shell runs
+  it after every change: effects added elsewhere are inserted before OUT, removed ones are bridged).
+  `applyTemplate(track, id, makeFx, {drumTrackId})` inserts the `PATCH_TEMPLATES` routings at the end
+  of the chain; `autoLayout(patch)` lays devices out left-to-right by signal depth.
+* Engine (`ChannelStrip.setFx(list, patch)`): rebuilds the wiring only when the structure key changes
+  (fx ids/types + node ids/kinds/fxIds + cable ids/endpoints + enabled); effect params still go through
+  `effect.update`, cable gains are ramped in place. Offline render builds the same graph via MixGraph.
+
+## Sidechain (ducker effect)
+
+* `ducker` (Dynamics): params `sourceTrackId` (ParamDef type `'track'`, `''` = none — rendered as a
+  track picker), `amount` 0..1, `threshold` dB, `attack`, `release` s. Implementation (native nodes):
+  key → mono → |x| (WaveShaper) → low-pass detector → threshold curve (6 dB knee) → fast (attack) and
+  slow (release) low-passes → max(fast, slow) = (f+s+|f−s|)/2 → clamp 0..1 → × −amount → added to a
+  VCA GainNode (gain = 1 − amount·env). `fx.keyInput` is the key input.
+* Key tap: every track strip has a `post` node (after the inserts / patch, before pan / fader / mute).
+  `MixGraph._syncKeys` connects the source track's `post` to the ducker's `keyInput` — the key is
+  post-effects, **pre-fader** (turning the kick's fader down doesn't change the ducking; a muted track
+  plays no events, so it doesn't duck anything). Duckers on buses / master can be keyed too.
+* `resolveKeyLinks(project)` drops self-keying, missing source tracks (deleted → no ducking, no error)
+  and any track↔track key loop. Stems (`renderOffline({stems:true})`) keep the key sources of each stem
+  playing silently (fader 0, no sends) so a stem keeps its ducking (`keySourcesFor`).
 
 ## Automation (`src/core/automation.js` — pure helpers)
 
@@ -104,10 +147,12 @@ UI-only state (selection, zoom, current view) lives in `src/ui/state.js`, never 
 Both instrument and effect modules export definitions so UI never hard-codes params:
 
 ```
-ParamDef { key, label, type:'number'|'enum'|'bool', min, max, step, default, unit?,
+ParamDef { key, label, type:'number'|'enum'|'bool'|'track', min, max, step, default, unit?,
            curve?: 'lin'|'log'|'exp', options?: [{value,label}] (enum), section: string,
            advanced?: boolean  // hidden behind "Advanced" disclosure in the UI }
 ```
+`'track'` params hold a track id (`''` = none); `paramPanel` renders them with `trackSelect`
+(options from `setTrackOptionsProvider`, installed by the app shell). Only `'number'` params are automatable.
 
 ## Theory (`src/theory/index.js`) — pure
 

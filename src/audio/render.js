@@ -6,6 +6,7 @@ import { MixGraph } from './mixer.js';
 import { CodeCache, collectEvents, defaultEndBeat, isTrackAudible } from './scheduler.js';
 import { hasAutomation, hasControlAutomation } from '../core/automation.js';
 import { keySourcesFor } from '../core/patch.js';
+import { awaitPluginsReady } from './plugin-instrument.js';
 
 function fallbackBase64ToArrayBuffer(b64) {
   const bin = atob(b64);
@@ -130,6 +131,8 @@ async function renderOnce(project, cfg) {
     meters: false,
   });
   graph.sync(project);
+  // plugin instruments / effects (soundfont, faust, wam) load asynchronously: wait before scheduling
+  await awaitPluginsReady(graph, project, onError);
   graph.syncLfos(0);
 
   const schedule = (b0, b1, jump) => {

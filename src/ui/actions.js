@@ -67,6 +67,9 @@ export function createActions(app) {
     } else if (kind === 'drums' || DRUM_KITS[kind]) {
       const kit = DRUM_KITS[kind] ? kind : (opts.kit || (p.genre && GENRES[p.genre]?.drumKit) || '808');
       track = createTrack({ name: opts.name || `${DRUM_KITS[kit]?.name || 'Drums'}`, color: ROLE_COLORS.drums, role: 'drums', instrument: { type: 'drums', preset: kit, params: {} } });
+    } else if (kind === 'plugin' && opts.instrument) {
+      // plugin instruments (soundfont / faust / wam) — see src/ui/plugins-dialog.js
+      track = createTrack({ name: opts.name || 'Plugin', color, role: opts.role || null, instrument: deepClone(opts.instrument) });
     } else if (PRESETS[kind]) {
       const pr = PRESETS[kind];
       track = createTrack({ name: opts.name || pr.name, color: ROLE_COLORS[opts.role || pr.roles?.[0]] || color, role: opts.role || pr.roles?.[0] || null, instrument: { type: pr.instrument.type, preset: kind, params: {} } });
@@ -127,6 +130,7 @@ export function createActions(app) {
     nt.activePatternId = patMap[t.activePatternId] || null;
     const fxMap = {};
     nt.fx = nt.fx.map((f) => { const id = uid('fx'); fxMap[f.id] = id; return { ...f, id }; });
+    if (nt.patch?.nodes) for (const n of nt.patch.nodes) if (n.fxId && fxMap[n.fxId]) n.fxId = fxMap[n.fxId];
     nt.automation = (nt.automation || []).map((l) => ({
       ...l, id: uid('aut'),
       target: String(l.target).replace(/^fx:([^:]+):/, (m, fid) => (fxMap[fid] ? `fx:${fxMap[fid]}:` : m)),
@@ -890,6 +894,8 @@ export function createActions(app) {
         { label: 'Project file (.heroic.json)', icon: 'save', onClick: () => saveProject() },
       ] },
       '-',
+      { label: 'Plugins (SoundFonts, Faust, WAM)…', icon: 'plug', onClick: () => import('./plugins-dialog.js').then((m) => m.openPluginsDialog(app)) },
+      '-',
       { label: 'Enable MIDI keyboard input', icon: 'piano', onClick: () => enableMidiInput() },
       { label: `Computer keyboard piano (\`)`, icon: 'keyboard', onClick: () => { app.keyboardPiano.enabled = !app.keyboardPiano.enabled; toast(`Keyboard piano ${app.keyboardPiano.enabled ? 'ON' : 'OFF'}`); } },
       { label: `Theme: ${ui.get('theme') === 'dark' ? 'switch to light' : 'switch to dark'}`, icon: 'sun', onClick: () => ui.set({ theme: ui.get('theme') === 'dark' ? 'light' : 'dark' }) },
@@ -908,6 +914,7 @@ export function createActions(app) {
       { label: 'Init: FM synth', icon: 'wave', onClick: () => addTrack('fm', extra) },
       { label: 'Init: Organ', icon: 'wave', onClick: () => addTrack('organ', extra) },
       { label: 'Sampler', icon: 'wave', onClick: () => addTrack('sampler', extra) },
+      { label: 'Plugin instrument (SoundFont / Faust / WAM)…', icon: 'plug', onClick: () => import('./plugins-dialog.js').then((m) => m.openPluginsDialog(app, { type: 'instrument' })) },
       { label: 'Audio track', icon: 'wave', onClick: () => addTrack('audio', extra) },
       { label: 'Code track (Strudel)', icon: 'code', onClick: () => { addTrack('code', extra); ui.set({ view: 'code' }); } },
     ];
@@ -1013,13 +1020,13 @@ export function createActions(app) {
         card('folder', 'Open project', 'Continue a saved .heroic.json file', () => openProject()),
         card('layers', 'Recent in browser', 'Restore an autosaved session', () => showLocalProjects()),
       ),
-      h('p.muted', { style: { textAlign: 'center', fontSize: '12px' } }, 'Tip: press ? any time for shortcuts. Space plays, 1–6 switch views, ` toggles the keyboard piano.'));
+      h('p.muted', { style: { textAlign: 'center', fontSize: '12px' } }, 'Tip: press ? any time for shortcuts. Space plays, 1–7 switch views, ` toggles the keyboard piano.'));
     const m = modal({ title: '', body, width: 820, cls: 'welcome' });
   }
 
   function showHelp() {
     const sc = [
-      ['Space', 'Play / pause'], ['Enter', 'Stop (twice: return to start)'], ['1 – 6', 'Arrange, Scenes, Step Rack, Piano Roll, Mixer, Code'],
+      ['Space', 'Play / pause'], ['Enter', 'Stop (twice: return to start)'], ['1 – 7', 'Arrange, Scenes, Step Rack, Piano Roll, Mixer, Code, Plugboard'],
       ['P', 'Toggle Pattern / Song mode'], ['L', 'Toggle loop'], ['M', 'Metronome'], ['R', 'Record'], ['`', 'Computer keyboard piano'],
       ['Z…M / Q…P', 'Play notes (keyboard piano on)'], ['- / =', 'Octave down / up'], ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'],
       ['Ctrl+S / Ctrl+O', 'Save / open project'], ['Ctrl+E', 'Export WAV'], ['B / D / A', 'Toggle browser / device / assistant panels'],
@@ -1037,7 +1044,8 @@ export function createActions(app) {
           h('li', 'Analog, FM and Organ synth engines with presets for every role.'),
           h('li', '20 synthesized drum kits; drop samples on pads to replace sounds.'),
           h('li', 'Sampler with slicing; audio tracks for loops and vocals.'),
-          h('li', 'Insert effects per track, Reverb & Delay buses, master limiter.'))),
+          h('li', 'Insert effects per track, Reverb & Delay buses, master limiter.'),
+          h('li', 'Plugboard (7): patch effects with cables — parallel chains, splits, sidechain ducking.'))),
         h('div', h('h4', 'Code'), h('ul',
           h('li', 'Code tracks run Strudel-compatible mini-notation: s("bd*4, ~ cp"), note("c3 e3 g3").s("sawtooth").'),
           h('li', 'Import .strudel files, play them alongside the rest of the song, then "Render to tracks" to edit them as patterns.'),

@@ -1046,20 +1046,23 @@ export function createPianoView(app) {
     return Math.ceil(end - EPS);
   }
   function voiceChord(rootPc, type, at) {
-    const pcsArr = T.chordPitchClasses ? T.chordPitchClasses(rootPc, type) : T.chordNotes(rootPc, type).map((m) => m % 12);
-    if (S.voicing === 'smooth' && T.voiceLead) {
+    if (S.voicing === 'smooth' && T.voiceChord) {
+      // voice-led from the chord before it, clean low-interval limits, ~C3–C5
       const before = cur.pat.notes.filter((n) => n.start < at - EPS);
+      let prev = [];
       if (before.length) {
         const lastStart = Math.max(...before.map((n) => n.start));
-        const prev = before.filter((n) => Math.abs(n.start - lastStart) < EPS).map((n) => n.pitch);
-        try { const v = T.voiceLead(prev, pcsArr, [50, 79]); if (v?.length) return v; } catch { /* fall through */ }
+        prev = before.filter((n) => Math.abs(n.start - lastStart) < EPS).map((n) => n.pitch);
       }
+      try { const v = T.voiceChord({ root: rootPc, type }, { prev, range: [52, 76], maxVoices: 5 }); if (v?.length) return v; } catch { /* fall through */ }
     }
     let rootMidi = 48 + rootPc;
     if (rootMidi > 55) rootMidi -= 12;
     if (rootMidi < 48) rootMidi += 12;
     const voicing = S.voicing === 'smooth' ? 'close' : S.voicing;
-    return T.chordNotes(rootMidi + 12, type, { voicing });
+    const notes = T.chordNotes(rootMidi + 12, type, { voicing });
+    // drop / spread voicings can push 2nds and 3rds into the mud: lift them (no m2 below C4, no 3rds below F3)
+    return T.cleanVoicing ? T.cleanVoicing(notes) : notes;
   }
   function insertChord(rootPc, type, { at } = {}) {
     if (!cur.pat || isDrum) return;
@@ -1082,12 +1085,16 @@ export function createPianoView(app) {
       if (deg >= 0) {
         try {
           const c = T.diatonicChord(k.root, k.scale, deg);
-          return T.chordNotes(m, c.type);
+          return clean(T.chordNotes(m, c.type));
         } catch { /* fall back */ }
       }
-      return T.chordNotes(m, 'maj');
+      return clean(T.chordNotes(m, 'maj'));
     }
-    return T.chordNotes(pitch, S.chordType);
+    return clean(T.chordNotes(pitch, S.chordType));
+  }
+  /** Stamped chords keep their clicked root but never stack 2nds / 3rds in the low register. */
+  function clean(notes) {
+    return T.cleanVoicing ? T.cleanVoicing(notes) : notes;
   }
 
   // clipboard

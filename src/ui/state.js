@@ -7,7 +7,7 @@ export class UIState extends Emitter {
   constructor() {
     super();
     this.state = {
-      view: 'arrange', // 'arrange' | 'session' | 'rack' | 'piano' | 'mixer' | 'code'
+      view: 'arrange', // 'arrange' | 'session' | 'rack' | 'piano' | 'mixer' | 'code' | 'patch'
       selectedTrackId: null,
       selectedPatternId: null,
       selectedClipIds: [],

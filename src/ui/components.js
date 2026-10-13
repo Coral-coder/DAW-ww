@@ -232,6 +232,29 @@ export function iconButton(ic, onClick, title, cls = '') {
  * paramPanel({defs: ParamDef[], values, onChange(key, value, {final}), color, compact})
  * Groups params by `section`; advanced params go into a nested "Advanced" <details>.
  */
+// Track pickers (ParamDef type 'track', e.g. the ducker's key source) list the project's tracks.
+let trackOptionsProvider = () => [];
+/** fn() -> [{value: trackId, label}] — installed by the app shell. */
+export function setTrackOptionsProvider(fn) { trackOptionsProvider = fn || (() => []); }
+
+/** <select> of tracks ('' = none) that refreshes its options whenever it is opened. */
+export function trackSelect({ value, onChange, title, exclude = null, noneLabel = '— none —' }) {
+  const el = h('select.track-select', { title: title || 'Choose a track' });
+  let cur = value || '';
+  const fill = () => {
+    const opts = [{ value: '', label: noneLabel }, ...trackOptionsProvider().filter((o) => o.value !== exclude)];
+    if (cur && !opts.some((o) => o.value === cur)) opts.push({ value: cur, label: '(deleted track)' });
+    el.replaceChildren(...opts.map((o) => h('option', { value: o.value }, o.label)));
+    el.value = cur;
+  };
+  fill();
+  el.addEventListener('pointerdown', fill);
+  el.addEventListener('focus', fill);
+  el.addEventListener('change', () => { cur = el.value; onChange && onChange(cur); });
+  el.setValue = (v) => { cur = v || ''; fill(); };
+  return el;
+}
+
 export function paramPanel({ defs, values = {}, onChange, color, sectionsOpen = {}, onSectionToggle }) {
   const root = h('div.param-panel');
   const bySection = new Map();
@@ -266,10 +289,10 @@ export function paramPanel({ defs, values = {}, onChange, color, sectionsOpen = 
     const open = sectionsOpen[section] ?? true;
     const det = h('details.param-section', { open }, h('summary', section));
     det.addEventListener('toggle', () => onSectionToggle && onSectionToggle(section, det.open));
-    const row = h('div.param-row', basic.map(makeControl));
+    const row = h('div.param-row', basic.map(makeControl).filter(Boolean));
     det.appendChild(row);
     if (adv.length) {
-      const advDet = h('details.param-advanced', h('summary', `Advanced (${adv.length})`), h('div.param-row', adv.map(makeControl)));
+      const advDet = h('details.param-advanced', h('summary', `Advanced (${adv.length})`), h('div.param-row', adv.map(makeControl).filter(Boolean)));
       det.appendChild(advDet);
     }
     root.appendChild(det);

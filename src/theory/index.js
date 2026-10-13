@@ -4,3 +4,4 @@ export * from './scales.js';
 export * from './chords.js';
 export * from './keys.js';
 export * from './progressions.js';
+export * from './voicing.js';

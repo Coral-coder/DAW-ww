@@ -6,6 +6,7 @@ export * from './bass.js';
 export * from './melody.js';
 export * from './arp.js';
 export * from './analyze.js';
+export * from './fit.js';
 export * from './song.js';
 export * from './assistant.js';
 export { generateBassline as generateBass } from './bass.js';

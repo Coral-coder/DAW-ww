@@ -464,7 +464,9 @@ export function createBrowserPanel(app) {
       const dur = (prog.durs?.[i] ?? 1) * bpb;
       if (chord) {
         let voicing;
-        if (prev.length && theory.voiceLead) voicing = theory.voiceLead(prev, chord.notes, [50, 76]);
+        // clean, voice-led voicings around C3–C5 (no low clusters, common tones held)
+        if (theory.voiceChord) voicing = theory.voiceChord(chord, { prev, range: [52, 76], maxVoices: 5 });
+        else if (prev.length && theory.voiceLead) voicing = theory.voiceLead(prev, chord.notes, [50, 76]);
         else { let r = 48 + chord.root; if (r > 55) r -= 12; voicing = theory.chordNotes(r + 12, chord.type, {}); }
         if (!voicing?.length) voicing = chord.notes.map((pc) => 60 + pc);
         prev = voicing;

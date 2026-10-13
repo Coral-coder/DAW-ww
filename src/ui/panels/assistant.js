@@ -126,6 +126,7 @@ export function createAssistantPanel(app) {
       || p.tracks.find((x) => x.type === 'instrument' && x.instrument?.type !== 'drums') || null;
   }
   function voicingFor(chord, prev) {
+    if (theory.voiceChord) { const v = theory.voiceChord(chord, { prev: prev || [], range: [52, 76], maxVoices: 5 }); if (v?.length) return v; }
     if (prev?.length && theory.voiceLead) { const v = theory.voiceLead(prev, chord.notes || theory.chordPitchClasses(chord.root, chord.type), [52, 76]); if (v?.length) return v; }
     let r = 60 + chord.root; if (r > 66) r -= 12;
     return theory.chordNotes(r, chord.type, {});

@@ -5,6 +5,7 @@ import { mod12, scaleNotesInRange, chordPitchClasses } from '../theory/index.js'
 import { getGenre } from './genres.js';
 import { resolveKey } from './harmony.js';
 import { makeNote } from './note-util.js';
+import { fitNotesToHarmony } from './fit.js';
 
 export const MELODY_STYLES = {
   lead: { name: 'Lead', grid: 0.25, notesPerBar: [4, 8], legato: 0.85, leap: 0.25, syncopation: 0.3, range: [62, 84] },
@@ -200,6 +201,8 @@ export function generateMelody(opts = {}) {
       });
     }
   }
+  // judge every note against the chord it sounds over (chord-scale), not just the project scale
+  fitNotesToHarmony(out, progression, { key: { root, scale }, blues: genre?.id === 'blues' || /blues/.test(scale), range: [lo, hi] });
   return out.sort((a, b) => a.start - b.start);
 }
 
@@ -262,5 +265,6 @@ export function generateCounterMelody(opts = {}) {
     prevMel = mel ? mel.pitch : prevMel;
     prevInterval = mel ? (mel.pitch - p) % 12 : null;
   }
+  fitNotesToHarmony(out, progression, { key: { root, scale }, range: [lo, hi] });
   return out;
 }

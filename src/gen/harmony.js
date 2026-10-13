@@ -1,8 +1,9 @@
 // Chord progression generation + rhythmic rendering of progressions into notes.
 import { createRng, clamp } from '../core/util.js';
 import {
-  romanToChord, getProgression, findProgressions, suggestNextChords, voiceLead, isMinorScale,
+  romanToChord, getProgression, findProgressions, suggestNextChords, isMinorScale,
   chordPitchClasses, chordName, resolveScaleId, mod12, parseKey, scalePitchClasses, SCALES,
+  chordVoicingPcs, voiceChord, keyPitchClasses, getChordType,
 } from '../theory/index.js';
 import { getGenre } from './genres.js';
 import { makeNote } from './note-util.js';
@@ -67,37 +68,48 @@ export function progressionBars(p) {
   return p.romans.reduce((s, _, i) => s + (p.durs?.[i] ?? 1), 0);
 }
 
-/** Chord pitch classes trimmed to `max` voices: omit the 5th first, then the 11th (as pianists do). */
-export function voicingPitchClasses(chord, max = 5) {
-  let pcs = chordPitchClasses(chord.root, chord.type);
-  if (pcs.length <= max) return pcs;
-  const fifth = mod12(chord.root + 7);
-  if (pcs.includes(fifth)) pcs = pcs.filter((p) => p !== fifth);
-  const eleventh = mod12(chord.root + 5);
-  if (pcs.length > max && pcs.includes(eleventh)) pcs = pcs.filter((p) => p !== eleventh);
-  return pcs.slice(0, max);
+/** Chord pitch classes trimmed to `max` voices: omit the 5th first, then a clashing 11th, then 13th / 9th. */
+export function voicingPitchClasses(chord, max = 5, opts = {}) {
+  return chordVoicingPcs(chord, max, opts);
 }
+
+/** Chord styles that are short, punchy hits: thinner voicings (max 4 notes) keep them tight. */
+export const STAB_STYLES = new Set(['stabs', 'house', 'offbeat', 'skank', 'pulse8', 'trance-gate', 'future', 'power', 'bossa', 'montuno']);
 
 const EXT_RE = /(7|9|11|13|6|sus|add|5|ø|°|\+|maj)/;
 
 /**
  * Re-colour a plain triad for a genre's harmonic flavour (only when the roman had no explicit extension).
  * flavor: 'neo-soul' | 'gospel' | 'house' | 'comp' | 'bossa' | 'future' | 'power' | 'lofi' | other (unchanged)
+ * Extensions are taken from the key (opts.key = {root, scale}) so they never contradict it or the chord quality:
+ * a 7th is added only in the form the key provides (maj7 vs b7), a 9th only when the natural 9 is diatonic
+ * (no m9 on iii in major — that would be a b9-against-the-key F#), minor chords never get a major 3rd, and
+ * dominants get natural 9/13 only (alterations stay explicit in the roman numeral).
  */
-export function colorChord(chord, flavor, rng = createRng(1)) {
+export function colorChord(chord, flavor, rng = createRng(1), opts = {}) {
   if (!chord || !flavor) return chord;
   const explicit = EXT_RE.test(String(chord.roman || '').replace(/^[b#]*[ivIV]+/, ''));
   let type = chord.type;
-  const isDom = chord.type === 'maj' && chord.function === 'dominant';
+  const keyPcs = opts.key ? keyPitchClasses(opts.key.root, opts.key.scale) : null;
+  const r = chord.root;
+  const inKey = (i) => !keyPcs || keyPcs.includes(mod12(r + i));
+  const isDom = chord.type === 'maj' && (chord.function === 'dominant' || (keyPcs && inKey(10) && !inKey(11)));
+  const rich = ['neo-soul', 'gospel', 'lofi', 'comp', 'bossa'].includes(flavor);
+  const seventhish = ['house', 'stabs-7', 'future'].includes(flavor);
   if (flavor === 'power') type = '5';
-  else if (!explicit) {
-    if (['neo-soul', 'gospel', 'lofi', 'comp', 'bossa'].includes(flavor)) {
-      if (type === 'maj') type = isDom ? (rng.chance(0.5) ? '13' : '9') : rng.chance(0.6) ? 'maj9' : 'maj7';
-      else if (type === 'min') type = rng.chance(0.6) ? 'm9' : 'm7';
-      else if (type === 'dim') type = 'm7b5';
-    } else if (['house', 'stabs-7', 'future', 'trance-gate'].includes(flavor)) {
-      if (type === 'maj') type = isDom ? '7' : flavor === 'trance-gate' ? 'maj' : 'maj7';
-      else if (type === 'min') type = flavor === 'trance-gate' ? 'min' : 'm7';
+  else if (!explicit && (rich || seventhish)) {
+    if (type === 'maj') {
+      if (isDom) {
+        const nine = rich && inKey(2) && (!keyPcs || !inKey(1));
+        type = nine ? (inKey(9) && rng.chance(0.5) ? '13' : '9') : '7';
+      } else if (inKey(11)) type = rich && inKey(2) && rng.chance(0.6) ? 'maj9' : 'maj7';
+      else if (rich && inKey(2)) type = 'add9';
+    } else if (type === 'min') {
+      if (inKey(10)) type = rich && inKey(2) && rng.chance(0.6) ? 'm9' : 'm7';
+      else if (rich && inKey(2)) type = 'madd9';
+    } else if (type === 'dim') {
+      if (inKey(10)) type = 'm7b5';
+      else if (inKey(9) && rich) type = 'dim7';
     }
   }
   if (type === chord.type) return chord;
@@ -146,14 +158,13 @@ export function generateProgression(opts = {}) {
     const it = items[i % items.length];
     const chord0 = romanToChord(it.roman, root, scale) || romanToChord(minor ? 'i' : 'I', root, scale);
     chord0.function = mod12(chord0.root - root) === 7 ? 'dominant' : undefined;
-    const chord = colorChord(chord0, flavor, rng);
+    const chord = colorChord(chord0, flavor, rng, { key: { root, scale } });
     const durBeats = Math.min(it.bars * bpb, total - beat);
     let notes;
-    if (chord.type === '5') {
-      let r = 40 + mod12(chord.root - 4);
-      notes = [r, r + 7, r + 12];
-    } else {
-      notes = voiceLead(prev, voicingPitchClasses(chord, opts.maxVoices || 5), range);
+    if (chord.type === '5') notes = voiceChord(chord, { range: [40, 64] });
+    else {
+      const maxVoices = opts.maxVoices || (STAB_STYLES.has(opts.style || genre?.chordStyle) ? 4 : 5);
+      notes = voiceChord(chord, { prev, range, maxVoices });
     }
     out.push({ roman: it.roman, chord, startBeat: beat, durBeats, notes });
     prev = notes;
@@ -279,12 +290,14 @@ export function progressionToNotes(progression, opts = {}) {
         push(p, t + off, dur - off, vel * (h.strum ? 1 - k * 0.04 : 1));
       });
     }
-    // gospel / neo-soul: chromatic approach chord a half-step below the next chord
-    if ((style === 'gospel' || style === 'neo-soul') && rng.chance(0.4)) {
+    // gospel: a 16th-note chromatic "sidestep" (the next chord a half step below) — only into a free slot, so it
+    // never stacks on top of a chord that is still ringing (that made 10-note semitone clusters)
+    if (style === 'gospel' && rng.chance(0.4)) {
       const t = b * bpb + bpb - 0.25;
       const cur = chordAt(t);
       const nxt = chordAt(b * bpb + bpb + 1e-3);
-      if (nxt && nxt !== cur && t + 0.25 < length) {
+      const busy = out.some((n) => n.start < t + 0.25 - 1e-6 && n.start + n.dur > t + 1e-6);
+      if (nxt && nxt !== cur && t + 0.25 < length && !busy) {
         for (const p of nxt.notes) push(p - 1, t, 0.22, baseVel * 0.55);
       }
     }

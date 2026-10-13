@@ -7,6 +7,8 @@ import { knob, select, toggle, button, iconButton, paramPanel, contextMenu, prom
 import { createEffect, DRUM_PADS } from '../../core/model.js';
 import { clamp, deepClone } from '../../core/util.js';
 import { EFFECT_DEFS, EFFECT_CATEGORIES, INSTRUMENT_DEFS, PRESETS, DRUM_KITS, resolveEffectParams } from '../../audio/index.js';
+import { isPatchActive, patchFxOrder } from '../../core/patch.js';
+import { pluginInstrumentEditor, pluginEffectEditor, openPluginDialog } from '../plugin-device.js';
 
 // ============================================================================ effect presets
 /** Small curated starting points per effect type (merged over the defaults). */
@@ -57,7 +59,7 @@ const CAT_ICONS = { 'EQ & Filter': 'sliders', Dynamics: 'volume', Distortion: 's
 
 /** Open the grouped "add effect" menu at pos; calls onPick(type, params). Shared with the mixer. */
 export function showEffectMenu(pos, onPick) {
-  const types = Object.keys(EFFECT_DEFS || {});
+  const types = Object.keys(EFFECT_DEFS || {}).filter((t) => !EFFECT_DEFS[t].plugin);
   const cats = [...new Set([...(EFFECT_CATEGORIES || []), ...types.map((t) => EFFECT_DEFS[t].category || 'Other')])]
     .filter((c) => types.some((t) => (EFFECT_DEFS[t].category || 'Other') === c));
   const titles = {};
@@ -71,6 +73,7 @@ export function showEffectMenu(pos, onPick) {
       }),
     });
   }
+  items.push({ label: 'Plugin effect (Faust / WAM)…', icon: 'plug', onClick: () => openPluginDialog({ tab: 'catalog', type: 'effect', onPickEffect: onPick }) });
   const withPresets = types.filter((t) => EFFECT_PRESETS[t]);
   if (withPresets.length) {
     items.push('-', {
@@ -230,6 +233,7 @@ export function createDevicePanel(app) {
     const t = tgt.track;
     return JSON.stringify([
       tgt.kind, tgt.id, tgt.name, tgt.color, fxSig(tgt.fx),
+      t && isPatchActive(t) ? patchFxOrder(t).join(',') : 0,
       // effects with a track picker must rebuild when tracks are added / renamed
       tgt.fx.some((f) => EFFECT_DEFS?.[f.type]?.params?.some((d) => d.type === 'track')) ? p.tracks.map((t) => `${t.id}:${t.name}`).join(',') : '',
       t ? [t.type, t.instrument?.type, t.instrument?.preset] : null,
@@ -279,9 +283,20 @@ export function createDevicePanel(app) {
     // first card: instrument / info
     const first = tgt.kind === 'track' ? (tgt.track.type === 'instrument' ? instrumentCard(ctx) : tgt.track.type === 'code' ? codeCard(ctx) : audioCard(ctx)) : busInfoCard(ctx);
     if (first) addCard(first);
-    tgt.fx.forEach((fx, i) => {
+    const patched = tgt.kind === 'track' && isPatchActive(tgt.track);
+    let list = tgt.fx;
+    if (patched) {
+      // plugboard routing: show the effects in signal-flow (topological) order
+      const byId = new Map(tgt.fx.map((f) => [f.id, f]));
+      list = patchFxOrder(tgt.track).map((id) => byId.get(id)).filter(Boolean);
       chain.appendChild(h('div.dv-arrow', icon('chevronRight', 14)));
-      addCard(effectCard(ctx, fx, i));
+      chain.appendChild(h('div.dv-plug-note', { title: 'This channel’s effects are wired on the Plugboard (view 7): parallel branches, splits and sidechains. Cards are shown in signal-flow order and stay fully editable.' },
+        icon('plug', 18), h('span', 'Routed by the Plugboard'),
+        button('Open plugboard', () => { actions.selectTrack(tgt.id); app.showView('patch'); }, { icon: 'plug', cls: 'small', title: 'Open the Plugboard view for this channel (7)' })));
+    }
+    list.forEach((fx, i) => {
+      chain.appendChild(h('div.dv-arrow', icon('chevronRight', 14)));
+      addCard(effectCard(ctx, fx, i, patched));
     });
     chain.appendChild(h('div.dv-arrow', icon('chevronRight', 14)));
     chain.appendChild(addEffectCard(tgt));
@@ -369,7 +384,13 @@ export function createDevicePanel(app) {
     }
 
     let presetSel = null, modDot = null;
-    if (ins) {
+    if (ins && instDefs(ins.type)?.plugin) {
+      parts.push(
+        button('Load plugin…', () => openPluginDialog({ tab: 'catalog', type: 'instrument', trackId: tgt.id }), { icon: 'plug', cls: 'small', title: 'Choose a SoundFont, Faust or Web Audio Module instrument for this track' }),
+        iconButton('save', () => saveUserPreset(tgt), 'Save these settings as a user preset (stored in this browser)'),
+        iconButton('menu', (e) => contextMenu(e, instrumentMenu(tgt, ins)), 'More: swap instrument, manage user presets'),
+      );
+    } else if (ins) {
       const opts = presetOptions(ins);
       const curVal = () => {
         const tr = store.get().tracks.find((x) => x.id === tgt.id);
@@ -399,6 +420,7 @@ export function createDevicePanel(app) {
         iconButton('dice', (e) => randomize(tgt, ins, e.shiftKey ? 0.9 : 0.4), 'Randomize — mutate the main parameters within musical ranges (Shift-click: wilder). Ctrl+Z undoes.'),
         iconButton('save', () => saveUserPreset(tgt), 'Save these settings as a user preset (stored in this browser)'),
         iconButton('menu', (e) => contextMenu(e, instrumentMenu(tgt, ins)), 'More: init, swap instrument, manage user presets'),
+        button('Load plugin…', () => openPluginDialog({ tab: 'catalog', type: 'instrument', trackId: tgt.id }), { icon: 'plug', cls: 'small', title: 'Replace this instrument with a SoundFont, Faust or Web Audio Module plugin' }),
       );
     }
     parts.push(h('div.spacer'));
@@ -412,6 +434,9 @@ export function createDevicePanel(app) {
       } else if (t.type === 'code') {
         parts.push(button('Code editor', () => { actions.selectTrack(t.id); app.showView('code'); }, { icon: 'code', cls: 'small', title: 'Open the live-code editor (6)' }));
       }
+    }
+    if (tgt.kind === 'track' && isPatchActive(tgt.track)) {
+      parts.push(button('Plugboard', () => { actions.selectTrack(tgt.id); app.showView('patch'); }, { icon: 'plug', cls: 'small dv-plugboard', title: 'This channel is routed on the Plugboard — open it (7)' }));
     }
     parts.push(button('Effect', (e) => showEffectMenu(e, (type, params) => addEffect(tgt, type, params)), { icon: 'plus', cls: 'small', title: 'Add an insert effect to the end of the chain' }));
     const el = h('div.dv-header-row', parts);
@@ -463,13 +488,15 @@ export function createDevicePanel(app) {
       { header: instDefs(ins.type)?.name || 'Instrument' },
       { label: 'Init (reset all parameters)', icon: 'undo', onClick: () => editTarget(tgt, 'Init instrument', (t) => {
         const kit = t.instrument.params?.kit || t.instrument.preset || '808';
-        t.instrument = ins.type === 'drums' ? { type: 'drums', preset: kit, params: { kit } } : { type: ins.type, preset: null, params: {} };
+        const keep = instDefs(ins.type)?.plugin ? Object.fromEntries(['name', 'code', 'url', 'library', 'instrument', 'state'].filter((k) => t.instrument.params?.[k] !== undefined).map((k) => [k, t.instrument.params[k]])) : {};
+        t.instrument = ins.type === 'drums' ? { type: 'drums', preset: kit, params: { kit } } : { type: ins.type, preset: null, params: keep };
       }) },
       { label: 'Revert to preset (clear my edits)', disabled: !ins.preset, onClick: () => editIns(tgt, 'Revert to preset', (i) => { i.params = i.type === 'drums' ? { kit: i.params.kit || i.preset } : i.type === 'sampler' && i.params.sampleId ? { sampleId: i.params.sampleId } : {}; }) },
       { label: 'Randomize (subtle)', icon: 'dice', onClick: () => randomize(tgt, ins, 0.25) },
       { label: 'Randomize (wild)', icon: 'dice', onClick: () => randomize(tgt, ins, 0.9) },
       '-',
-      { label: 'Swap instrument', icon: 'wave', submenu: types.map(([type, d]) => ({ label: d.name, disabled: type === ins.type, onClick: () => editTarget(tgt, `Instrument: ${d.name}`, (t) => { t.instrument = type === 'drums' ? { type, preset: '808', params: { kit: '808' } } : { type, preset: null, params: {} }; }) })) },
+      { label: 'Load plugin instrument…', icon: 'plug', onClick: () => openPluginDialog({ tab: 'catalog', type: 'instrument', trackId: tgt.id }) },
+      { label: 'Swap instrument', icon: 'wave', submenu: types.filter(([, d]) => !d.plugin).map(([type, d]) => ({ label: d.name, disabled: type === ins.type, onClick: () => editTarget(tgt, `Instrument: ${d.name}`, (t) => { t.instrument = type === 'drums' ? { type, preset: '808', params: { kit: '808' } } : { type, preset: null, params: {} }; }) })) },
       '-',
       { label: 'Save as user preset…', icon: 'save', onClick: () => saveUserPreset(tgt) },
       { label: 'Delete user preset', icon: 'trash', disabled: !user.length, submenu: user.length ? user.map(([id, u]) => ({ label: u.name, onClick: async () => {
@@ -592,6 +619,7 @@ export function createDevicePanel(app) {
     if (ins.type === 'organ') updaters.push(drawbarEditor(shell.body, def, onParam));
     if (ins.type === 'drums') updaters.push(drumEditor(shell.body, tgt));
     if (ins.type === 'sampler') updaters.push(samplerEditor(shell.body, tgt, onParam));
+    if (def.plugin) updaters.push(pluginInstrumentEditor(app, shell.body, tgt, ins, { resolved, edit: (lbl, fn, o) => editIns(tgt, lbl, (i) => fn(i.params), o) }));
 
     const pb = paramsBlock(panelDefs(def.params, skip), resolved, ins.type, onParam);
     shell.body.appendChild(h('div.dv-params', pb.el));
@@ -1141,24 +1169,25 @@ export function createDevicePanel(app) {
   }
 
   // ---------------------------------------------------------------- effect card
-  function effectCard(ctx, fx, index) {
+  function effectCard(ctx, fx, index, patched = false) {
     const { tgt } = ctx;
     const def = EFFECT_DEFS?.[fx.type];
-    const name = def?.name || fx.type;
+    const name = (def?.plugin && fx.params?.name) || def?.name || fx.type;
     const power = h(`button.dv-power${fx.enabled ? '.on' : ''}`, { type: 'button', title: fx.enabled ? 'Bypass this effect' : 'Enable this effect' }, icon('power', 12));
     power.addEventListener('click', (e) => { e.stopPropagation(); editTarget(tgt, `${fx.enabled ? 'Bypass' : 'Enable'} ${name}`, (o) => { const f = o.fx.find((x) => x.id === fx.id); if (f) f.enabled = !f.enabled; }); });
     const grip = h('span.dv-grip', { title: 'Drag to reorder' }, '⋮⋮');
     const left = iconButton('chevronRight', () => moveEffect(tgt, fx.id, index - 1), 'Move left', 'dv-move-left');
     const right = iconButton('chevronRight', () => moveEffect(tgt, fx.id, index + 2), 'Move right', 'dv-move-right');
-    if (index === 0) left.disabled = true;
-    if (index === tgt.fx.length - 1) right.disabled = true;
+    if (index === 0 || patched) left.disabled = true;
+    if (index === tgt.fx.length - 1 || patched) right.disabled = true;
+    if (patched) { left.title = right.title = 'Order is set by the Plugboard cables'; }
     const presets = EFFECT_PRESETS[fx.type];
     const presetBtn = presets ? h('button.dv-fx-preset', { type: 'button', title: 'Effect presets' }, 'Presets ▾') : null;
     presetBtn?.addEventListener('click', (e) => contextMenu(e, [
       { header: `${name} presets` },
       ...Object.entries(presets).map(([n, params]) => ({ label: n, onClick: () => editTarget(tgt, `${name}: ${n}`, (o) => { const f = o.fx.find((x) => x.id === fx.id); if (f) f.params = { ...params }; }) })),
       '-',
-      { label: 'Reset to defaults', icon: 'undo', onClick: () => editTarget(tgt, `${name}: reset`, (o) => { const f = o.fx.find((x) => x.id === fx.id); if (f) f.params = {}; }) },
+      { label: 'Reset to defaults', icon: 'undo', onClick: () => editTarget(tgt, `${name}: reset`, (o) => { const f = o.fx.find((x) => x.id === fx.id); if (f) f.params = EFFECT_DEFS[f.type]?.plugin ? { name: f.params?.name, code: f.params?.code, url: f.params?.url } : {}; }) },
     ]));
     const gr = ['compressor', 'limiter', 'gate'].includes(fx.type) ? h('div.dv-gr', { title: 'Gain reduction' }, h('div.dv-gr-fill'), h('span.dv-gr-val')) : null;
     const remove = iconButton('x', () => editTarget(tgt, `Remove ${name}`, (o) => { o.fx = o.fx.filter((x) => x.id !== fx.id); }), 'Remove this effect', 'dv-remove');
@@ -1172,15 +1201,16 @@ export function createDevicePanel(app) {
       { header: name },
       { label: fx.enabled ? 'Bypass' : 'Enable', icon: 'power', onClick: () => power.click() },
       { label: 'Duplicate', icon: 'copy', onClick: () => editTarget(tgt, `Duplicate ${name}`, (o) => { const i = o.fx.findIndex((x) => x.id === fx.id); if (i >= 0) o.fx.splice(i + 1, 0, createEffect(fx.type, deepClone(fx.params || {}))); }) },
-      { label: 'Move left', disabled: index === 0, onClick: () => moveEffect(tgt, fx.id, index - 1) },
-      { label: 'Move right', disabled: index === tgt.fx.length - 1, onClick: () => moveEffect(tgt, fx.id, index + 2) },
-      { label: 'Reset to defaults', icon: 'undo', onClick: () => editTarget(tgt, `${name}: reset`, (o) => { const f = o.fx.find((x) => x.id === fx.id); if (f) f.params = {}; }) },
+      patched ? { label: 'Show on the Plugboard', icon: 'plug', onClick: () => { actions.selectTrack(tgt.id); app.showView('patch'); } } : null,
+      { label: 'Move left', disabled: index === 0 || patched, onClick: () => moveEffect(tgt, fx.id, index - 1) },
+      { label: 'Move right', disabled: index === tgt.fx.length - 1 || patched, onClick: () => moveEffect(tgt, fx.id, index + 2) },
+      { label: 'Reset to defaults', icon: 'undo', onClick: () => editTarget(tgt, `${name}: reset`, (o) => { const f = o.fx.find((x) => x.id === fx.id); if (f) f.params = EFFECT_DEFS[f.type]?.plugin ? { name: f.params?.name, code: f.params?.code, url: f.params?.url } : {}; }) },
       '-',
       { label: 'Remove', icon: 'trash', onClick: () => remove.click() },
-    ]));
+    ].filter(Boolean)));
 
-    // drag to reorder (HTML5 DnD on the header)
-    shell.head.draggable = true;
+    // drag to reorder (HTML5 DnD on the header) — not on plugboard channels (cables set the order)
+    shell.head.draggable = !patched;
     shell.head.addEventListener('dragstart', (e) => {
       e.dataTransfer.setData('application/x-heroic-fx', fx.id);
       e.dataTransfer.effectAllowed = 'move';
@@ -1222,11 +1252,13 @@ export function createDevicePanel(app) {
       if (f) { f.params = f.params || {}; f.params[k] = v; }
     }, { coalesce: true }));
     shell.body.appendChild(h('div.dv-params', pb.el));
+    const plugUpd = def.plugin ? pluginEffectEditor(app, shell.body, fx, { edit: (lbl, fn, o) => editTarget(tgt, lbl, (ow) => { const f = ow.fx.find((x) => x.id === fx.id); if (f) { f.params = f.params || {}; fn(f.params); } }, o) }) : null;
     return {
       el: shell.el,
       update(c) {
         const f = c.tgt.fx.find((x) => x.id === fx.id);
         if (f) pb.update(resolveEffectParams ? resolveEffectParams(f) : f.params || {});
+        if (f && plugUpd) plugUpd(f);
       },
     };
   }

@@ -2,7 +2,8 @@
 import { Store } from '../core/store.js';
 import { UIState } from './state.js';
 import { h, icon } from './dom.js';
-import { toast } from './components.js';
+import { toast, setTrackOptionsProvider } from './components.js';
+import { patchNeedsReconcile, reconcilePatch } from '../core/patch.js';
 import { AudioEngine, PRESETS } from '../audio/index.js';
 import { createActions } from './actions.js';
 import { createHeader } from './header.js';
@@ -15,6 +16,7 @@ export const VIEWS = [
   { id: 'piano', label: 'Piano Roll', icon: 'piano', key: '4', module: './views/piano.js', factory: 'createPianoView', help: 'Edit notes, chords and melodies with scale guides.' },
   { id: 'mixer', label: 'Mixer', icon: 'mixer', key: '5', module: './views/mixer.js', factory: 'createMixerView', help: 'Levels, panning, sends, inserts and buses.' },
   { id: 'code', label: 'Code', icon: 'code', key: '6', module: './views/code.js', factory: 'createCodeView', help: 'Strudel-style live coding; import & expand .strudel files.' },
+  { id: 'patch', label: 'Plugboard', icon: 'plug', key: '7', module: './views/patch.js', factory: 'createPatchView', help: 'Plugboard: patch effects with cables — parallel chains, splits, sidechain ducking, whole-song routing.' },
 ];
 
 export async function createApp(rootEl) {
@@ -50,12 +52,20 @@ export async function createApp(rootEl) {
       }
     }, { undo: false });
   });
+  // Plugboard tracks: effects added/removed elsewhere (device panel, mixer, assistant…) are
+  // placed on / taken off the board so the patch always matches track.fx.
+  store.on('change', (p) => {
+    if (!p.tracks.some(patchNeedsReconcile)) return;
+    store.transact('Update plugboard', (pp) => { for (const t of pp.tracks) reconcilePatch(t); }, { undo: false });
+  });
   store.on('change', (_p, label) => schedule('project', label));
+  setTrackOptionsProvider(() => store.get().tracks.map((t) => ({ value: t.id, label: t.name })));
   ui.on('change', (changed) => schedule('ui', changed));
   app.subscribe = (fn) => { subs.add(fn); return () => subs.delete(fn); };
   app.requestRender = () => schedule('project', 'refresh');
 
   app.actions = createActions(app);
+  import('./plugins-dialog.js').then((m) => m.installPluginUi(app)).catch((e) => console.warn('[plugins] UI', e)); // SoundFont / Faust / WAM plugins
 
   // ---- layout ----
   const header = createHeader(app);
