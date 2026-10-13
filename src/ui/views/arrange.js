@@ -762,6 +762,446 @@ export function createArrangeView(app) {
     ctx.fill();
   }
 
+  // ------------------------------------------------------------------ automation: targets
+  const numDefs = (defs) => (defs || []).filter((d) => d.type === 'number');
+  /** Grouped automation targets for a track: [{ name, kind, items:[{target, label, def, section}] }] */
+  function targetGroups(t) {
+    const p = get();
+    const groups = [];
+    const mixer = [
+      { target: 'volume', label: 'Volume', def: MIXER_TARGETS.volume },
+      { target: 'pan', label: 'Pan', def: MIXER_TARGETS.pan },
+      ...(p.buses || []).map((b) => ({ target: `send:${b.id}`, label: `Send → ${b.name}`, def: MIXER_TARGETS.send })),
+    ];
+    groups.push({ name: 'Mixer', kind: 'mixer', items: mixer });
+    if (t.type === 'instrument' && t.instrument) {
+      const { type } = resolveInstrumentDef(t.instrument);
+      const idef = INSTRUMENT_DEFS[type];
+      if (idef) groups.push({ name: `Instrument · ${idef.name}`, kind: 'inst', items: numDefs(idef.params).map((d) => ({ target: `inst:${d.key}`, label: d.label, def: d, section: d.section || 'Main' })) });
+    }
+    (t.fx || []).forEach((f, k) => {
+      const ed = EFFECT_DEFS[f.type];
+      if (!ed) return;
+      groups.push({ name: `FX ${k + 1} · ${ed.name}`, kind: 'fx', fxId: f.id, items: numDefs(ed.params).map((d) => ({ target: `fx:${f.id}:${d.key}`, label: d.label, def: d, section: d.section })) });
+    });
+    return groups;
+  }
+
+  /** { label, def, staticValue, missing } for a lane target on track t. */
+  function targetInfo(t, target) {
+    const p = get();
+    const tg = parseTarget(target);
+    const miss = (label) => ({ label, def: { min: 0, max: 1, curve: 'lin', step: 0.01 }, staticValue: 0, missing: true });
+    if (!tg) return miss(`Unknown target (${target})`);
+    if (tg.kind === 'volume') return { label: 'Volume', def: MIXER_TARGETS.volume, staticValue: t.volume ?? 0.8 };
+    if (tg.kind === 'pan') return { label: 'Pan', def: MIXER_TARGETS.pan, staticValue: t.pan || 0 };
+    if (tg.kind === 'send') {
+      const bus = (p.buses || []).find((b) => b.id === tg.busId);
+      if (!bus) return miss('Send → (deleted bus)');
+      return { label: `Send → ${bus.name}`, def: MIXER_TARGETS.send, staticValue: t.sends?.[tg.busId] || 0 };
+    }
+    if (tg.kind === 'inst') {
+      if (t.type !== 'instrument' || !t.instrument) return miss(`${tg.key} (no instrument)`);
+      const res = resolveInstrumentDef(t.instrument);
+      const d = INSTRUMENT_DEFS[res.type]?.params.find((x) => x.key === tg.key);
+      if (!d) return miss(`${tg.key} (not in ${res.type})`);
+      return { label: `${INSTRUMENT_DEFS[res.type].name}: ${d.label}`, def: d, staticValue: res.params[tg.key] ?? d.default };
+    }
+    const fx = (t.fx || []).find((f) => f.id === tg.fxId);
+    const ed = fx && EFFECT_DEFS[fx.type];
+    const d = ed?.params.find((x) => x.key === tg.key);
+    if (!d) return miss(`${tg.key} (effect removed)`);
+    const k = t.fx.indexOf(fx) + 1;
+    return { label: `FX ${k} ${ed.name}: ${d.label}`, def: d, staticValue: resolveEffectParams(fx)[tg.key] ?? d.default };
+  }
+
+  const fmtVal = (def, v) => formatValue({ ...def, type: 'number' }, v);
+  const quant = (def, v) => {
+    const st = def.step > 0 ? def.step : 0;
+    if (st) v = Math.round(v / st) * st;
+    return clamp(+(+v).toFixed(6), def.min ?? 0, def.max ?? 1);
+  };
+  const autoY = (y, def, v) => y + AUTO_PAD + (1 - toNorm(def, v)) * (AUTO_H - 2 * AUTO_PAD);
+  const normAtY = (y) => clamp(1 - (y - AUTO_PAD) / (AUTO_H - 2 * AUTO_PAD), 0, 1);
+  /** Automation points snap to the grid, but never coarser than one beat. */
+  const autoSnap = (b, ev) => {
+    if (ev && (ev.ctrlKey || ev.metaKey || ev.shiftKey)) return b;
+    const st = Math.min(snapStep() || 0, 1);
+    return st ? Math.round(b / st) * st : b;
+  };
+  const posLabel = (b) => `${Math.floor(b / bpbNow()) + 1}.${+(mod(b, bpbNow()) + 1).toFixed(2)}`;
+
+  let autoHover = null; // { laneId, idx }  hovered/dragged point (for highlight)
+
+  function drawAutoLane(ctx, p, t, a, y, W, sx, b0, b1) {
+    const rgb = hexToRgb(t.color);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, y + 1, W, AUTO_H - 1);
+    ctx.clip();
+    ctx.font = `10.5px ${theme.font}`;
+    ctx.textBaseline = 'middle';
+    if (!a.lane) {
+      ctx.fillStyle = theme.text3;
+      ctx.fillText('No automation lanes yet — use “+ Lane” on the left (or right-click the track header ▸ Add automation)', 10, y + AUTO_H / 2);
+      ctx.restore();
+      return;
+    }
+    const lane = a.lane;
+    const info = targetInfo(t, lane.target);
+    const def = info.def;
+    const on = lane.enabled !== false && !info.missing;
+    const pts = lane.points || [];
+    const col = on ? rgba(rgb, 1) : rgba([140, 146, 160], 0.8);
+    // centre line for bipolar targets
+    if ((def.min ?? 0) < 0 && (def.max ?? 1) > 0) {
+      ctx.fillStyle = theme.autoLine;
+      ctx.fillRect(0, Math.round(autoY(y, def, 0)), W, 1);
+    }
+    if (!pts.length) {
+      const yy = Math.round(autoY(y, def, info.staticValue)) + 0.5;
+      ctx.strokeStyle = rgba(rgb, 0.45);
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(W, yy); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = theme.text3;
+      ctx.fillText(`${info.label}: ${fmtVal(def, info.staticValue)} — click to add a point · right-click for ramps & LFO shapes`, 10, yy < y + AUTO_H / 2 ? yy + 10 : yy - 9);
+      ctx.restore();
+      return;
+    }
+    // curve: sample every 2px, plus the exact breakpoints (keeps corners and vertical jumps)
+    const xs = [];
+    const lin = !def.curve || def.curve === 'lin';
+    if (!lin) for (let x = 0; x <= W + 2; x += 2) xs.push([x, valueAt(pts, (x + sx) / ppb)]);
+    else { xs.push([0, valueAt(pts, b0)]); xs.push([W + 2, valueAt(pts, (W + 2 + sx) / ppb)]); }
+    for (const pt of pts) { const x = pt.beat * ppb - sx; if (x >= -2 && x <= W + 2) xs.push([x, pt.value, true]); }
+    xs.sort((m, n) => m[0] - n[0] || (m[2] ? 0 : n[2] ? 0 : 0));
+    // keep breakpoint order for vertical jumps (stable sort keeps insertion order for equal x)
+    ctx.beginPath();
+    xs.forEach(([x, v], k) => { const yy = autoY(y, def, v); if (k) ctx.lineTo(x, yy); else ctx.moveTo(x, yy); });
+    ctx.lineTo(W + 2, y + AUTO_H); ctx.lineTo(0, y + AUTO_H); ctx.closePath();
+    ctx.fillStyle = on ? rgba(rgb, theme.dark ? 0.14 : 0.18) : 'rgba(128,128,140,.08)';
+    ctx.fill();
+    ctx.beginPath();
+    xs.forEach(([x, v], k) => { const yy = autoY(y, def, v); if (k) ctx.lineTo(x, yy); else ctx.moveTo(x, yy); });
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 1.6;
+    if (!on) ctx.setLineDash([5, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // points
+    pts.forEach((pt, k) => {
+      const x = pt.beat * ppb - sx;
+      if (x < -6 || x > W + 6) return;
+      const yy = autoY(y, def, pt.value);
+      const hot = autoHover && autoHover.laneId === lane.id && autoHover.idx === k;
+      ctx.beginPath();
+      ctx.arc(x, yy, hot ? 5 : 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = hot ? theme.sel : col;
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = theme.dark ? '#0b0d12' : '#ffffff';
+      ctx.stroke();
+    });
+    if (!on) {
+      ctx.fillStyle = theme.text3;
+      ctx.fillText(info.missing ? `${info.label} — target missing, lane ignored` : 'Lane disabled (bypassed)', 10, y + 11);
+    }
+    ctx.restore();
+  }
+
+  // ------------------------------------------------------------------ automation: editing
+  const findLane = (pp, trackId, laneId) => pp.tracks.find((x) => x.id === trackId)?.automation?.find((l) => l.id === laneId) || null;
+  function editLane(trackId, laneId, label, fn, opts) {
+    store.transact(label, (pp) => { const l = findLane(pp, trackId, laneId); if (l) fn(l, pp); }, opts);
+  }
+
+  function addLane(trackId, target, { points = [] } = {}) {
+    const t = trackById(trackId);
+    if (!t) return null;
+    autoOpen.add(trackId);
+    savePrefs();
+    const existing = (t.automation || []).find((l) => l.target === target);
+    if (existing) {
+      syncHeaders(); layout(); drawNow();
+      app.setStatus?.(`"${targetInfo(t, target).label}" already has a lane on ${t.name}.`);
+      return existing;
+    }
+    const lane = createAutomationLane(target, points);
+    store.transact('Add automation lane', (pp) => {
+      const tt = pp.tracks.find((x) => x.id === trackId);
+      if (tt) tt.automation = [...(tt.automation || []), lane];
+    });
+    actions.selectTrack(trackId);
+    if (get().mode !== 'song') app.setStatus?.('Automation plays in SONG mode (press P) — lanes are ignored in pattern mode.');
+    return lane;
+  }
+
+  function deleteLane(trackId, laneId) {
+    store.transact('Delete automation lane', (pp) => {
+      const tt = pp.tracks.find((x) => x.id === trackId);
+      if (tt) tt.automation = (tt.automation || []).filter((l) => l.id !== laneId);
+    });
+  }
+
+  function setLaneTarget(trackId, laneId, target) {
+    const t = trackById(trackId);
+    const lane = t?.automation?.find((l) => l.id === laneId);
+    if (!lane || lane.target === target) return;
+    if (t.automation.some((l) => l.target === target)) { toast('That parameter already has a lane on this track.', { level: 'warn' }); syncHeaders(); return; }
+    const from = targetInfo(t, lane.target).def;
+    const to = targetInfo(t, target).def;
+    editLane(trackId, laneId, 'Change automation target', (l) => {
+      l.target = target;
+      l.points = l.points.map((pt) => ({ beat: pt.beat, value: quant(to, fromNorm(to, toNorm(from, pt.value))) })); // keep the shape
+    });
+  }
+
+  function toggleAutoOpen(trackId, open = !autoOpen.has(trackId)) {
+    if (open) autoOpen.add(trackId); else autoOpen.delete(trackId);
+    savePrefs();
+    syncHeaders();
+    layout();
+    drawNow();
+  }
+
+  /** Range for ramp / LFO tools: selected clips on the track, else the loop region, else 4 bars at the playhead. */
+  function shapeRange(trackId) {
+    const p = get();
+    const cs = selectedClips();
+    const own = cs.filter((c) => c.trackId === trackId);
+    const use = own.length ? own : cs;
+    if (use.length) return { b0: Math.min(...use.map((c) => c.start)), b1: Math.max(...use.map((c) => c.start + c.length)), name: 'the selection' };
+    if (p.loop && p.loop.end > p.loop.start) return { b0: p.loop.start, b1: p.loop.end, name: 'the loop region' };
+    const b = snapB(pos(), null, Math.floor);
+    return { b0: b, b1: b + bpbNow() * 4, name: '4 bars from the playhead' };
+  }
+
+  function writeShape(t, lane, kind, opts = {}) {
+    const { b0, b1, name } = shapeRange(t.id);
+    const def = targetInfo(t, lane.target).def;
+    const map = (u) => quant(def, fromNorm(def, u));
+    let pts;
+    if (kind === 'up' || kind === 'down') pts = rampPoints(b0, b1, kind === 'up' ? 0 : 1, kind === 'up' ? 1 : 0);
+    else pts = lfoPoints({ b0, b1, shape: kind, periodBeats: opts.bars * bpbNow(), min: 0, max: 1 });
+    pts = pts.map((pt) => ({ beat: pt.beat, value: map(pt.value) }));
+    editLane(t.id, lane.id, kind === 'up' || kind === 'down' ? 'Automation ramp' : 'Automation LFO', (l) => { l.points = replaceRange(l.points, b0, b1, pts); l.enabled = true; });
+    app.setStatus?.(`Wrote ${kind === 'up' ? 'a ramp up' : kind === 'down' ? 'a ramp down' : `a ${kind} LFO`} over ${name} (bar ${Math.floor(b0 / bpbNow()) + 1}–${Math.ceil(b1 / bpbNow()) + 1}).`);
+  }
+
+  /** "Add automation ▸" submenu: Mixer ▸ …, Instrument ▸ section ▸ …, Effects ▸ fx ▸ … */
+  function addAutomationItems(trackId) {
+    const t = trackById(trackId);
+    if (!t) return [];
+    const have = new Set((t.automation || []).map((l) => l.target));
+    const item = (it) => ({ label: `${have.has(it.target) ? '● ' : ''}${it.label}`, onClick: () => addLane(trackId, it.target) });
+    const out = [];
+    const fxGroups = [];
+    for (const g of targetGroups(t)) {
+      if (g.kind === 'mixer') out.push({ label: 'Mixer', icon: 'sliders', submenu: g.items.map(item) });
+      else if (g.kind === 'inst') {
+        const sections = new Map();
+        for (const it of g.items) { if (!sections.has(it.section)) sections.set(it.section, []); sections.get(it.section).push(it); }
+        out.push({ label: g.name.replace('Instrument · ', 'Instrument: '), icon: 'piano', submenu: sections.size > 1 ? [...sections].map(([sec, its]) => ({ label: sec, submenu: its.map(item) })) : g.items.map(item) });
+      } else if (g.items.length) fxGroups.push({ label: g.name, submenu: g.items.map(item) });
+    }
+    if (fxGroups.length) out.push({ label: 'Effects', icon: 'wand', submenu: fxGroups });
+    else out.push({ label: 'Effects (add an insert effect first)', disabled: true });
+    return out;
+  }
+
+  function autoTrackMenuItems(trackId) {
+    const open = autoOpen.has(trackId);
+    const n = trackById(trackId)?.automation?.length || 0;
+    return [
+      { label: 'Add automation', icon: 'sliders', submenu: addAutomationItems(trackId) },
+      { label: `${open ? 'Hide' : 'Show'} automation lanes${n ? ` (${n})` : ''}`, onClick: () => toggleAutoOpen(trackId, !open) },
+    ];
+  }
+
+  function laneMenu(t, lane) {
+    const info = targetInfo(t, lane.target);
+    const { name } = shapeRange(t.id);
+    const rates = [[0.25, '1/4 bar'], [0.5, '1/2 bar'], [1, '1 bar'], [2, '2 bars'], [4, '4 bars']];
+    const shapes = [['sine', 'Sine'], ['triangle', 'Triangle'], ['saw', 'Saw up'], ['ramp', 'Saw down'], ['square', 'Square']];
+    const groups = targetGroups(t);
+    return [
+      { header: info.label },
+      { label: lane.enabled !== false ? 'Disable lane (bypass)' : 'Enable lane', icon: 'power', onClick: () => editLane(t.id, lane.id, 'Toggle automation lane', (l) => { l.enabled = l.enabled === false; }) },
+      '-',
+      { label: `Ramp up over ${name}`, icon: 'sparkles', onClick: () => writeShape(t, lane, 'up') },
+      { label: `Ramp down over ${name}`, icon: 'sparkles', onClick: () => writeShape(t, lane, 'down') },
+      { label: `LFO shape over ${name}`, icon: 'wave', submenu: shapes.map(([k, lbl]) => ({ label: lbl, submenu: rates.map(([bars, rl]) => ({ label: `Cycle: ${rl}`, onClick: () => writeShape(t, lane, k, { bars }) })) })) },
+      '-',
+      { label: 'Change parameter', icon: 'sliders', submenu: groups.map((g) => ({ label: g.name, submenu: g.items.map((it) => ({ label: `${it.target === lane.target ? '● ' : ''}${it.label}`, onClick: () => setLaneTarget(t.id, lane.id, it.target) })) })) },
+      { label: 'Clear all points', icon: 'x', disabled: !lane.points?.length, onClick: () => editLane(t.id, lane.id, 'Clear automation', (l) => { l.points = []; }) },
+      { label: 'Delete lane', icon: 'trash', onClick: () => deleteLane(t.id, lane.id) },
+      { label: 'Hide automation lanes', onClick: () => toggleAutoOpen(t.id, false) },
+    ];
+  }
+
+  /** Hit-test inside an automation lane: nearest point index (or -1) and curve distance. */
+  function autoPick(hit) {
+    const { lane } = hit.auto;
+    const t = hit.track;
+    const def = targetInfo(t, lane.target).def;
+    const ly = hit.y - hit.auto.y; // y inside the lane
+    let best = -1, bd = Infinity;
+    lane.points.forEach((pt, k) => {
+      const dx = pt.beat * ppb - hit.x, dy = autoY(0, def, pt.value) - ly;
+      const d = Math.hypot(dx, dy);
+      if (d <= PT_HIT && d < bd) { bd = d; best = k; }
+    });
+    const curveV = valueAt(lane.points, hit.beat, null);
+    const curveD = curveV == null ? Infinity : Math.abs(autoY(0, def, curveV) - ly);
+    return { idx: best, def, ly, curveD };
+  }
+
+  function startAutoDrag(e, hit) {
+    const t = hit.track;
+    const lane0 = hit.auto.lane;
+    const laneId = lane0.id;
+    const pk = autoPick(hit);
+    const def = pk.def;
+    const info = targetInfo(t, lane0.target);
+    if (pk.idx >= 0 && e.altKey) { deletePoint(t.id, laneId, pk.idx); return; }
+    const tx = dragTx('Edit automation');
+    const pts0 = lane0.points.map((pt) => ({ ...pt }));
+    // Alt-drag on the line between two points: move that segment vertically
+    if (pk.idx < 0 && e.altKey && pk.curveD < 8 && pts0.length > 1) {
+      let i0 = -1;
+      for (let k = 0; k < pts0.length - 1; k++) if (pts0[k].beat <= hit.beat && pts0[k + 1].beat >= hit.beat) { i0 = k; break; }
+      if (i0 < 0) return;
+      beginDrag();
+      startDrag(e, (_dx, dy, ev) => {
+        const dn = -dy / (AUTO_H - 2 * AUTO_PAD) * (ev.shiftKey ? 0.25 : 1);
+        tx((pp) => {
+          const l = findLane(pp, t.id, laneId);
+          if (!l) return;
+          for (const k of [i0, i0 + 1]) l.points[k].value = quant(def, fromNorm(def, toNorm(def, pts0[k].value) + dn));
+          app.setStatus?.(`${info.label}: ${fmtVal(def, l.points[i0].value)} → ${fmtVal(def, l.points[i0 + 1].value)}`);
+        });
+      }, () => { endDrag(); drawNow(); });
+      return;
+    }
+    let idx = pk.idx;
+    if (idx < 0) {
+      // add a point: on (or near) the line keep the curve's value, elsewhere take the pointer height
+      const beat = Math.max(0, autoSnap(hit.beat, e));
+      const value = quant(def, pk.curveD < 6 ? valueAt(pts0, beat) : fromNorm(def, normAtY(pk.ly)));
+      const np = { beat: +beat.toFixed(6), value };
+      const next = sortPoints([...pts0, np]);
+      idx = next.indexOf(np);
+      pts0.splice(0, pts0.length, ...next.map((x) => ({ ...x })));
+      tx((pp) => { const l = findLane(pp, t.id, laneId); if (l) { l.points = next.map((x) => ({ ...x })); l.enabled = l.enabled !== false; } });
+      app.setStatus?.(`${info.label}: ${fmtVal(def, value)} @ ${posLabel(beat)}`);
+    }
+    const o = pts0[idx];
+    const lo = idx > 0 ? pts0[idx - 1].beat : 0;
+    const hi = idx < pts0.length - 1 ? pts0[idx + 1].beat : Infinity;
+    const n0 = toNorm(def, o.value);
+    autoHover = { laneId, idx };
+    beginDrag();
+    drawNow();
+    startDrag(e, (dx, dy, ev) => {
+      const fine = ev.shiftKey;
+      const b = clamp(autoSnap(o.beat + (dx / ppb) * (fine ? 0.25 : 1), ev), lo, hi);
+      const v = quant(def, fromNorm(def, n0 - (dy / (AUTO_H - 2 * AUTO_PAD)) * (fine ? 0.25 : 1)));
+      tx((pp) => { const l = findLane(pp, t.id, laneId); if (l && l.points[idx]) l.points[idx] = { beat: +b.toFixed(6), value: v }; });
+      showAutoTip(ev.clientX, ev.clientY, `${info.label}: ${fmtVal(def, v)} @ ${posLabel(b)}`);
+      app.setStatus?.(`${info.label}: ${fmtVal(def, v)} @ ${posLabel(b)}`);
+    }, () => { endDrag(); hideAutoTip(); drawNow(); });
+  }
+
+  function deletePoint(trackId, laneId, idx) {
+    editLane(trackId, laneId, 'Delete automation point', (l) => { l.points = l.points.filter((_, k) => k !== idx); });
+    autoHover = null;
+  }
+
+  const autoTip = h('div.arr-auto-tip.hidden');
+  function showAutoTip(clientX, clientY, text) {
+    const r = lanes.getBoundingClientRect();
+    autoTip.textContent = text;
+    autoTip.classList.remove('hidden');
+    autoTip.style.transform = `translate(${Math.min(clientX - r.left + 12, r.width - 180)}px, ${clientY - r.top - 26}px)`;
+  }
+  const hideAutoTip = () => autoTip.classList.add('hidden');
+
+  // ------------------------------------------------------------------ automation lane headers
+  const autoHeads = new Map(); // `${trackId}|${laneId|'empty'}` -> { el, update }
+  function makeAutoHeader(trackId, laneId) {
+    const el = h('div.arr-ah');
+    if (!laneId) {
+      const add = button('Lane', (e) => menuAt(e.currentTarget, addAutomationItems(trackId)), { icon: 'plus', cls: 'small', title: 'Add an automation lane: volume, pan, sends, instrument or effect parameters' });
+      el.append(h('span.arr-ah-empty', 'Automation'), add, iconButton('x', () => toggleAutoOpen(trackId, false), 'Hide automation lanes', 'arr-mini'));
+      return { el, update(r, a) { el.style.top = a.y + 'px'; el.style.height = AUTO_H + 'px'; el.style.setProperty('--tc', r.t.color); } };
+    }
+    let selKey = '';
+    let sel = null;
+    const selWrap = h('span.arr-ah-selwrap');
+    const onT = toggle({ label: 'On', cls: 'arr-ah-on', title: 'Enable / bypass this automation lane', onChange: (v) => editLane(trackId, laneId, 'Toggle automation lane', (l) => { l.enabled = v; }) });
+    const val = h('span.arr-ah-val', { title: 'Automated value at the playhead (song mode)' });
+    const more = iconButton('chevronDown', (e) => { const t = trackById(trackId); const l = t?.automation?.find((x) => x.id === laneId); if (l) menuAt(e.currentTarget, laneMenu(t, l)); }, 'Lane options: ramps, LFO shapes, clear, change parameter', 'arr-mini');
+    const del = iconButton('trash', () => deleteLane(trackId, laneId), 'Delete this automation lane', 'arr-mini');
+    const add = iconButton('plus', (e) => menuAt(e.currentTarget, addAutomationItems(trackId)), 'Add another automation lane', 'arr-mini');
+    el.append(h('div.arr-ah-row', selWrap), h('div.arr-ah-row', onT, val, h('span.spacer'), add, more, del));
+    el.addEventListener('contextmenu', (e) => { e.preventDefault(); const t = trackById(trackId); const l = t?.automation?.find((x) => x.id === laneId); if (l) contextMenu(e, laneMenu(t, l)); });
+    return {
+      el, val,
+      update(r, a) {
+        const t = r.t, lane = a.lane;
+        el.style.top = a.y + 'px';
+        el.style.height = AUTO_H + 'px';
+        el.style.setProperty('--tc', t.color);
+        el.classList.toggle('off', lane.enabled === false);
+        onT.setValue(lane.enabled !== false);
+        const groups = targetGroups(t);
+        const opts = [];
+        for (const g of groups) for (const it of g.items) opts.push({ value: it.target, label: it.label, group: g.name });
+        if (!opts.some((o) => o.value === lane.target)) opts.unshift({ value: lane.target, label: targetInfo(t, lane.target).label });
+        const key = opts.map((o) => o.value + o.label).join('|') + '#' + lane.target;
+        if (key !== selKey) {
+          selKey = key;
+          sel = select({ options: opts, value: lane.target, cls: 'arr-ah-sel', title: 'Automated parameter', onChange: (v) => setLaneTarget(trackId, laneId, v) });
+          selWrap.replaceChildren(sel);
+        }
+        el.dataset.lane = laneId;
+      },
+    };
+  }
+
+  function syncAutoHeaders(L) {
+    const seen = new Set();
+    for (const r of L.rows) {
+      for (const a of r.auto) {
+        const key = `${r.t.id}|${a.lane ? a.lane.id : 'empty'}`;
+        seen.add(key);
+        let hd = autoHeads.get(key);
+        if (!hd) { hd = makeAutoHeader(r.t.id, a.lane?.id || null); autoHeads.set(key, hd); headsInner.insertBefore(hd.el, addRow); }
+        hd.update(r, a);
+      }
+    }
+    for (const [k, hd] of autoHeads) if (!seen.has(k)) { hd.el.remove(); autoHeads.delete(k); }
+  }
+
+  function updateAutoValues(p, L, sy, H) {
+    const b = pos();
+    for (const r of L.rows) {
+      if (!r.auto.length || r.y + r.h < sy || r.y > sy + H) continue;
+      for (const a of r.auto) {
+        if (!a.lane) continue;
+        const hd = autoHeads.get(`${r.t.id}|${a.lane.id}`);
+        if (!hd?.val) continue;
+        const info = targetInfo(r.t, a.lane.target);
+        const v = a.lane.points?.length ? valueAt(a.lane.points, b) : info.staticValue;
+        const txt = fmtVal(info.def, v);
+        if (hd.val.textContent !== txt) hd.val.textContent = txt;
+        hd.val.classList.toggle('live', p.mode === 'song' && !!a.lane.points?.length && a.lane.enabled !== false);
+      }
+    }
+  }
+
   // ------------------------------------------------------------------ draw: top (ruler / markers / loop)
   const markerColor = (p, m) => {
     const i = (p.markers || []).indexOf(m);
