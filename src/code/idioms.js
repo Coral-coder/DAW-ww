@@ -85,6 +85,15 @@ export function grooveSnap(t, { early = 0.012, late = LATE_MAX } = {}) {
   return best ? best.g : null;
 }
 
+/** Snaps to the coarsest fine grid (8ths of a beat, triplets, 64ths, 1/24) within a few ms; else snapBeat. */
+export function snapFine(t) {
+  for (const r of [8, 6, 12, 16, 24]) {
+    const g = Math.round(t * r) / r;
+    if (t - g >= -0.006 && t - g <= 0.014) return g;
+  }
+  return snapBeat(t);
+}
+
 /**
  * Swing as Strudel's swingBy(x, n) plays it: in every slice of h beats (h = 1: 8th swing, 0.5: 16th swing) the
  * second half is delayed by d beats. unswing(t) maps a played time back to the straight time the code writes.
@@ -130,14 +139,14 @@ export function detectSwing(notes, prior = null) {
 export function quantizePart(notes, L, { groove = null } = {}) {
   const snapStart = (t) => {
     if (!groove) return snapBeat(t);
-    if (!(groove.d > 0)) return grooveSnap(t) ?? snapBeat(t);
+    if (!(groove.d > 0)) return grooveSnap(t, { late: 0.012 }) ?? snapFine(t) ?? snapBeat(t);
     // code time c plays at c (first half of a swing slice) or c + d (second half): pick the closest
     const { h, d } = groove;
     const second = (c) => c - Math.floor(c / h + 1e-9) * h >= h / 2 - 1e-9;
     const real = (c) => (second(c) ? c + d : c);
     let best = null;
     for (const u of [t, t - d]) {
-      for (const [c, grid] of [[grooveSnap(u), true], [snapBeat(u), false]]) {
+      for (const [c, grid] of [[grooveSnap(u), true], [snapFine(u), false]]) {
         if (c === null) continue;
         const off = t - real(c);
         // the 16th grid with late-only humanisation first; finer grid positions only when nothing else fits
