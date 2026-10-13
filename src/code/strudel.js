@@ -238,9 +238,22 @@ export function transformSource(source, { wrapLast = true } = {}) {
   };
   const lineStartOf = (pos) => masked.lastIndexOf('\n', pos - 1) + 1;
 
+  // arguments of samples(…) / soundAlias(…) etc. are URLs and sample maps, never mini-notation
+  const plainRanges = [];
+  for (const m of masked.matchAll(/\b(samples|soundAlias|aliasBank|loadSoundfont|addVoicings)\s*\(/g)) {
+    const open = m.index + m[0].length - 1;
+    let dd = 0;
+    let k = open;
+    for (; k < masked.length; k++) {
+      if (masked[k] === '(') dd++;
+      else if (masked[k] === ')' && --dd === 0) break;
+    }
+    plainRanges.push([open, k]);
+  }
   // string literals -> mini patterns (double quotes & backticks without interpolation)
   for (const lit of literals) {
     if (lit.quote === "'" || lit.interp || lit.end - lit.start < 2) continue;
+    if (plainRanges.some(([a, b]) => lit.start > a && lit.start < b)) continue;
     // keep object keys like {"s": 1} as plain strings
     let a = lit.start - 1;
     while (a >= 0 && /\s/.test(masked[a])) a--;
@@ -323,6 +336,34 @@ export function transformSource(source, { wrapLast = true } = {}) {
   };
 }
 
+// ------------------------------------------------------------------------------- sample packs
+
+// `samples('github:user/repo')` / `samples({name: [urls]}, base)` register custom sample packs.
+// The loader is injectable (setSampleLoader) so this module stays Node-importable; in a browser it
+// defaults to src/audio/library/strudel-sounds.js registerSamples() via a lazy dynamic import.
+let sampleLoader = null;
+const requestedPacks = new Map(); // key -> Promise (each pack is fetched once per session)
+export function setSampleLoader(fn) { sampleLoader = typeof fn === 'function' ? fn : null; }
+function defaultSampleLoader(mapOrUrl, base) {
+  if (typeof window === 'undefined') return Promise.resolve(null);
+  return import('../audio/library/strudel-sounds.js').then((m) => m.registerSamples(mapOrUrl, base));
+}
+/** Starts loading a sample pack (fire and forget; errors are reported once). Returns the promise. */
+export function loadSamples(mapOrUrl, base) {
+  if (mapOrUrl === undefined || mapOrUrl === null || mapOrUrl === '') return Promise.resolve(null);
+  let key;
+  try { key = typeof mapOrUrl === 'string' ? `${mapOrUrl}|${base ?? ''}` : JSON.stringify([mapOrUrl, base ?? '']); } catch { key = String(mapOrUrl); }
+  if (requestedPacks.has(key)) return requestedPacks.get(key);
+  const loader = sampleLoader || defaultSampleLoader;
+  const p = Promise.resolve().then(() => loader(mapOrUrl, base)).catch((e) => {
+    requestedPacks.delete(key); // allow a retry on the next evaluation
+    if (typeof console !== 'undefined') console.warn('[strudel] samples() failed:', e?.message || e);
+    return null;
+  });
+  requestedPacks.set(key, p);
+  return p;
+}
+
 // ---------------------------------------------------------------------------------- evaluate
 
 const errMsg = (e) => (e && e.message ? e.message : String(e));
@@ -350,7 +391,7 @@ export function evaluate(source) {
     setcpm: (x) => { result.cps = Number(plainStr(x)) / 60; },
     setbpm: (x) => { result.cps = Number(plainStr(x)) / 240; },
     hush: () => { hushed = true; return silence; },
-    samples: () => undefined,
+    samples: (x, base) => { loadSamples(plainStr(x), plainStr(base)); return undefined; },
     soundAlias: () => undefined,
     aliasBank: () => undefined,
     loadSoundfont: () => undefined,

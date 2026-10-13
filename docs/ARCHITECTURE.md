@@ -197,15 +197,35 @@ limits: no m2 below C4, no M2 below G3, no 3rds below F3, no m9 between voices),
 
 ## Code engine (`src/code/*.js`) — pure, Strudel-compatible subset
 
-* `evaluate(source) -> { patterns: Pattern[], cps: number|null, error: string|null }` — supports
-  `$:` multiple patterns, `setcps/setcpm`, `stack/cat/seq/...`, method chains.
-* `queryEvents(evaluated, beginCycle, endCycle) -> [{ begin, end, value }]` — onsets only, in cycles.
-  `value` keys: `s, n, note (midi number or name), freq, gain, velocity, pan, cutoff/lpf, resonance,
-  hcutoff/hpf, room, delay, delaytime, delayfeedback, crush, shape, attack, decay, sustain, release,
-  legato, bank, speed, orbit, ...` — `note` is normalized to MIDI number when possible.
+* `evaluate(source) -> { patterns: Pattern[], entries: [{name, pattern, muted, block}], labels: [{name, muted, start, end}], cps, error }`
+  — supports `$:` / `name:` labelled patterns (`_name:` muted; a label's block ends at the next label or the
+  next top-level statement such as `const x = …`), `setcps/setcpm`, `stack/cat/seq/arrange/...`, method chains.
+  `samples(url | map, base)` calls the injectable loader (`setSampleLoader(fn)`; in a browser it defaults to
+  `src/audio/library/strudel-sounds.js` `registerSamples`, lazily imported) once per pack.
+* `queryEvents(evaluated, beginCycle, endCycle, {active?}) -> [{ begin, end, value, pattern, name, block, locations }]`
+  — onsets in cycles (`active: true`: events overlapping the window instead). `value` keys: `s, n, note (midi number
+  or name), freq, gain, velocity, pan, cutoff/lpf, resonance, hcutoff/hpf, room, delay, delaytime, delayfeedback,
+  crush, shape, attack, decay, sustain, release, legato, bank, speed, orbit, ...` — `note` is normalized to MIDI.
+  `locations: [{start, end}]` are absolute source offsets of the mini-notation tokens that produced the event
+  (mini.js tags every atom; Pattern ops merge `hap.context.locations` like Strudel; the transform passes each
+  string literal's offset) — used for Strudel-style live highlighting.
 * `convert.js`: `codeToPatterns(source, {cycles, beatsPerCycle}) -> [{name, kind:'drums'|'melodic', notes, sound}]`
-  and `patternsToCode(project) -> string` (export project as Strudel code).
-
+  and `patternsToCode(project) -> string` (compact export of the active patterns).
+* `song-code.js` ("Song as code", shown pinned as "Song (live)" in the Code view, regenerated ~250 ms after any
+  project change): `songToCode(project) -> {code, mode, blocks, labels}` — `setcpm(bpm/beatsPerBar)` header, swing
+  as `all(x => x.swingBy(…))`, one `// ── Track ──` section per track: pattern mode → `label: <active pattern>`,
+  song mode → one `const label_pattern = …` per pattern + `label: arrange([bars, const|silence], …)`; drums as
+  per-voice mini-notation (`s("bd*4, [~ sd]*2, hh*8")`, `perc:<pitch>` for pads without a name, `stack(...)`
+  with `.velocity("…")` when velocities vary), melodic as `note("<[c3,e3,g3]@2 …>")` (one alternation step per bar
+  group, `@` durations, chords, non-overlapping layers); `.s(preset)` / `.bank(kit)`, `.gain(volume/0.8)`,
+  `.pan((pan+1)/2)`, lpf/hpf/room/delay/shape/crush from the first enabled matching insert; muted or solo-silenced
+  tracks get `_label:`; code tracks are embedded verbatim (their setcpm/all lines commented out). Onsets are
+  snapped to 16ths (humanised/strummed) or a 1/24-beat grid, velocities to 0.05.
+  `applySongCode(project, code, {presets, kits, keepComplexAsCode}) -> report` mutates the project (call inside one
+  `store.transact`): only blocks whose code changed are applied — notes + length of the active pattern (song mode:
+  the edited `const` patterns; arrangement edits are reported, not applied), gain/pan/effects, `.s()`/`.bank()`
+  instrument changes, tempo/swing; removed blocks or `_label:` mute (tracks are never deleted); new labels create
+  tracks; random/signal/non-repeating blocks are returned in `report.complex` (or kept as code tracks).
 ## Audio (`src/audio/*.js`) — browser only (may import theory)
 
 * `INSTRUMENT_DEFS {type: {name, params: ParamDef[]}}`, `EFFECT_DEFS {type: {name, params}}`,

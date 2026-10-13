@@ -1,12 +1,16 @@
 // Code view: Strudel-style live coding inside the DAW.
-// Left: code tracks list. Main: editor (code-editor.js) + live punchcard visualisation.
-// Right (optional): searchable function reference drawer.
+// Left: "Song (live)" — the whole project as Strudel code, always in sync — then the code tracks.
+// Main: editor (code-editor.js) with Strudel-style live highlighting of the sounding tokens +
+// a live punchcard / piano-roll visualisation. Right (optional): searchable function reference.
 import { h, icon, fitCanvas, cssVar, startDrag } from '../dom.js';
-import { iconButton, button, contextMenu, toggle, select, toast, promptText } from '../components.js';
+import { iconButton, button, contextMenu, toggle, select, toast, promptText, modal } from '../components.js';
 import { createCodeEditor, splitBlocks } from '../code-editor.js';
 import { beatsPerBar } from '../../core/model.js';
+import { deepClone } from '../../core/util.js';
 import { isTyping } from '../keyboard.js';
 import * as strudel from '../../code/strudel.js';
+import { songToCode, applySongCode } from '../../code/song-code.js';
+import { PRESETS, DRUM_KITS } from '../../audio/index.js';
 
 const LS_AUTO = 'heroic-code-autoapply';
 const LS_VIZ_H = 'heroic-code-viz-h';
@@ -15,6 +19,11 @@ const LS_WIN = 'heroic-code-viz-window';
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } };
 
+const SONG = 'song';
+const SONG_DEBOUNCE = 250;
+const FADE_SEC = 0.32; // highlight fade-out after an event ends
+const PULSE_SEC = 0.28; // gutter pulse after a block triggers
+const LABEL_COLORS = ['#ffd43b', '#4dabf7', '#ff6b6b', '#38d9a9', '#9775fa', '#ffa94d', '#f783ac', '#3bc9db', '#a9e34b', '#e599f7'];
 const SYNTH_WAVES = new Set(['sawtooth', 'saw', 'square', 'sine', 'triangle', 'tri', 'supersaw', 'pulse']);
 const NOTE_NAMES = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
 const midiName = (m) => NOTE_NAMES[((Math.round(m) % 12) + 12) % 12] + (Math.floor(Math.round(m) / 12) - 1);
@@ -74,11 +83,20 @@ function popover(anchor, content, { width = 360, cls = '' } = {}) {
   return { el, close };
 }
 
+/** '#rrggbb' -> 'rgba(r,g,b,a)' (falls back to the colour itself). */
+function rgba(hex, a) {
+  const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(String(hex || '').trim());
+  if (!m) return hex;
+  return `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${a})`;
+}
+
+const lineAt = (text, off) => { let n = 0; for (let i = text.indexOf('\n'); i >= 0 && i < off; i = text.indexOf('\n', i + 1)) n++; return n; };
+
 export function createCodeView(app) {
   const { store, ui, engine, actions } = app;
   let visible = false;
-  let trackId = null; // code track shown in the editor
-  let lastCodeTrack = null;
+  let entry = SONG; // SONG or the id of the code track shown in the editor
+  let trackId = null; // code track shown (null while the Song is shown)
   const drafts = new Map(); // trackId -> unapplied editor text
   const localErr = new Map(); // trackId -> {error, line} from local evaluate on apply
   const engineErr = new Map(); // trackId -> error string from engine 'code-error'
@@ -88,6 +106,14 @@ export function createCodeView(app) {
   let vizWindow = lsGet(LS_WIN, 2);
   let refOpen = !!lsGet(LS_REF, false);
   let opt = { examples: [], reference: [], file: {}, convert: {} };
+
+  // song (live) state
+  let song = null; // songToCode(project) result
+  let songDraft = null; // edited song code, not applied yet
+  let songStale = false; // the project changed while the song was being edited
+  let songErr = null; // {error, line}
+  let songTimer = null;
+  let songMeta = null; // derived: { res, labelBlock: [], bars: [] }
 
   // ------------------------------------------------------------ evaluation helpers
   function evaluate(code) {
@@ -123,40 +149,89 @@ export function createCodeView(app) {
     return null;
   }
   const codeTracks = () => store.get().tracks.filter((t) => t.type === 'code');
-  const currentTrack = () => store.get().tracks.find((t) => t.id === trackId && t.type === 'code') || null;
+  const currentTrack = () => (entry === SONG ? null : store.get().tracks.find((t) => t.id === trackId && t.type === 'code') || null);
   const bufferOf = (t) => (drafts.has(t.id) ? drafts.get(t.id) : t.code || '');
   const isDirty = (t) => !!t && drafts.has(t.id) && drafts.get(t.id) !== (t.code || '');
+  const isSong = () => entry === SONG;
+  const songText = () => songDraft ?? song?.code ?? '';
+
+  // ------------------------------------------------------------ song (live) generation
+  function regenSong() {
+    clearTimeout(songTimer);
+    songTimer = null;
+    let next;
+    try { next = songToCode(store.get()); } catch (e) { console.error('[song code]', e); return; }
+    const changed = !song || next.code !== song.code;
+    song = next;
+    if (!changed) return;
+    songMeta = null;
+    if (songDraft !== null) {
+      songStale = true;
+    } else if (visible && isSong() && editor.getValue() !== song.code) {
+      editor.setValue(song.code); // keeps scroll position and cursor
+      lastQueryKey = '';
+      vizDirty = true;
+    }
+    if (visible) { renderStatus(); renderList(codeTracks()); }
+  }
+  function scheduleSongRegen() {
+    clearTimeout(songTimer);
+    songTimer = setTimeout(regenSong, SONG_DEBOUNCE);
+  }
+
+  /** Evaluated song + where each labelled block lives (colours, gutter bars). */
+  function getSongMeta() {
+    if (!song) regenSong();
+    if (songMeta && songMeta.code === song.code) return songMeta;
+    const res = evaluate(song.code);
+    const blocks = song.blocks.filter((b) => b.kind === 'instrument' || b.kind === 'code');
+    const bars = blocks.map((b) => ({
+      key: b.trackId, color: b.color || '#ffd43b', name: b.name, label: b.label, kind: b.kind,
+      line0: lineAt(song.code, b.start + 1), line1: Math.max(lineAt(song.code, b.start + 1), lineAt(song.code, Math.max(b.start, b.end - 2))),
+      start: b.start, end: b.end,
+    }));
+    const labelBar = (res.labels || []).map((l) => bars.findIndex((b) => l.start >= b.start && l.start < b.end));
+    songMeta = { code: song.code, res, bars, labelBar };
+    return songMeta;
+  }
 
   // ------------------------------------------------------------ DOM: toolbar
   const playBtn = iconButton('play', () => actions.togglePlay(), 'Play / pause the whole project (Space)', 'code-play');
   const stopBtn = iconButton('stop', () => actions.stop(), 'Stop (Ctrl+.)');
-  const applyBtn = button('Apply', () => applyNow(), { icon: 'play', title: 'Evaluate the code and apply it to the track (Ctrl+Enter / Shift+Enter). Alt+Enter applies only the block under the cursor.', cls: 'code-apply' });
+  const applyBtn = button('Apply', () => applyNow(), { icon: 'play', title: 'Evaluate the code and apply it (Ctrl+Enter / Shift+Enter). Alt+Enter applies only the block under the cursor.', cls: 'code-apply' });
+  const revertBtn = button('Discard edits', () => discardSongDraft(), { icon: 'undo', title: 'Throw away your edits and show the project as it is now', cls: 'code-compact hidden' });
   const autoToggle = toggle({ label: 'Auto', value: autoApply, title: 'Auto-apply: re-evaluate 600 ms after you stop typing — only when the code has no errors', onChange: (v) => { autoApply = v; lsSet(LS_AUTO, v); if (v) scheduleAuto(); } });
   const dirtyEl = h('span.code-dirty', { title: 'Editor state' });
   const examplesBtn = button('Examples', (e) => openExamples(e.currentTarget), { icon: 'sparkles', title: 'Load an example pattern (replace this track or open as a new track)', cls: 'code-compact' });
   const refBtn = button('Reference', () => setRefOpen(!refOpen), { icon: 'help', title: 'Function reference: every supported function with examples (click to insert)', cls: 'code-compact' });
   const importBtn = button('Import', (e) => openImportMenu(e.currentTarget), { icon: 'upload', title: 'Import a .strudel / .js / .txt file or paste code / a strudel.cc link (you can also drop files onto this view)', cls: 'code-compact' });
   importBtn.appendChild(icon('chevronDown', 12));
-  const exportBtn = button('Export', (e) => openExportMenu(e.currentTarget), { icon: 'download', title: 'Download, copy or export the whole project as code', cls: 'code-compact' });
+  const exportBtn = button('Export', (e) => openExportMenu(e.currentTarget), { icon: 'download', title: 'Download, copy or export the code', cls: 'code-compact' });
   exportBtn.appendChild(icon('chevronDown', 12));
   examplesBtn.appendChild(icon('chevronDown', 12));
   const cyclesSel = select({ options: [1, 2, 4, 8, 16].map((c) => ({ value: c, label: `${c} cycle${c > 1 ? 's' : ''}` })), value: renderCycles, title: 'How many cycles (bars) to render into patterns', onChange: (v) => { renderCycles = Number(v); } });
   const renderBtn = button('Render to tracks', () => { const t = currentTrack(); if (t) { if (isDirty(t)) applyNow(); actions.renderCodeToTracks(t.id, { cycles: renderCycles }); } }, { icon: 'layers', title: 'Expand this code into editable instrument/drum tracks with patterns (the code track gets muted)' });
-  const fromProjectBtn = button('From project', () => actions.exportCode(), { icon: 'code', title: 'Convert the project\'s tracks & patterns into Strudel code (open it as a new code track)', cls: 'code-compact' });
+  const renderWrap = h('div.code-render', renderBtn, cyclesSel);
   const tempoBtn = button('', () => adoptTempo(), { icon: 'metronome', title: 'This code sets its own tempo with setcps/setcpm — click to set the project BPM to match (1 cycle = 1 bar)', cls: 'code-tempo hidden' });
   const toolbar = h('div.view-toolbar.code-toolbar',
-    playBtn, stopBtn, h('div.sep'), applyBtn, autoToggle, dirtyEl, h('div.sep'),
+    playBtn, stopBtn, h('div.sep'), applyBtn, revertBtn, autoToggle, dirtyEl, h('div.sep'),
     examplesBtn, refBtn, h('div.sep'), importBtn, exportBtn, h('div.sep'),
-    h('div.code-render', renderBtn, cyclesSel), fromProjectBtn, tempoBtn);
+    renderWrap, tempoBtn);
 
   // ------------------------------------------------------------ DOM: track list
+  const songItem = h('div.code-item.code-song', { tabIndex: 0, title: 'The whole project as Strudel code — always in sync. Edit it and press Ctrl+Enter to apply your edits to the project.' });
+  songItem.addEventListener('click', () => selectEntry(SONG));
+  songItem.addEventListener('keydown', (e) => { if (e.key === 'Enter') selectEntry(SONG); });
   const listBody = h('div.code-list-body');
   const addBtn = iconButton('plus', () => newCodeTrack(), 'New code track');
-  const listEl = h('div.code-list', h('div.code-list-header', h('span', 'Code tracks'), h('div.spacer'), addBtn), listBody,
+  const listEl = h('div.code-list',
+    h('div.code-list-pinned', songItem),
+    h('div.code-list-header', h('span', 'Code tracks'), h('div.spacer'), addBtn), listBody,
     h('div.code-list-foot', h('button.code-link', { type: 'button', onclick: () => actions.importStrudel(), title: 'Import a .strudel file' }, icon('upload', 12), 'Import .strudel')));
 
   // ------------------------------------------------------------ DOM: editor + viz
   const errBar = h('div.code-errbar.hidden');
+  const staleBar = h('div.code-stalebar.hidden');
   const editor = createCodeEditor({
     placeholder: '// Type Strudel code, e.g.\n$: s("bd*4, ~ cp, hh*8")\n$: note("c2 eb2 g2 bb2").s("sawtooth").lpf(800)',
     onChange: onEditorChange,
@@ -165,16 +240,18 @@ export function createCodeView(app) {
     onStop: () => actions.stop(),
   });
   const hint = h('div.code-hint',
-    h('span', h('kbd', 'Ctrl+Enter'), ' apply'), h('span', h('kbd', 'Alt+Enter'), ' apply block'), h('span', h('kbd', 'Ctrl+.'), ' stop'),
+    h('span', h('kbd', 'Ctrl+Enter'), ' apply'), h('span.code-hint-block', h('kbd', 'Alt+Enter'), ' apply block'), h('span', h('kbd', 'Ctrl+.'), ' stop'),
     h('span', h('kbd', 'Ctrl+/'), ' comment'), h('span', h('kbd', 'Tab'), ' indent'), h('div.spacer'), h('span.code-hint-info'));
   const hintInfo = hint.querySelector('.code-hint-info');
+  const hintBlock = hint.querySelector('.code-hint-block');
 
   const vizCanvas = h('canvas.code-viz-canvas');
   const vizInfo = h('span.code-viz-info');
   const winSel = select({ options: [1, 2, 4, 8].map((c) => ({ value: c, label: `${c} cycle${c > 1 ? 's' : ''}` })), value: vizWindow, title: 'Visible window', onChange: (v) => { vizWindow = Number(v); lsSet(LS_WIN, vizWindow); lastQueryKey = ''; vizDirty = true; } });
   const vizResizer = h('div.code-viz-resizer', { title: 'Drag to resize' });
+  const vizTitle = h('b', 'Live pattern');
   const vizEl = h('div.code-viz', { style: { flexBasis: lsGet(LS_VIZ_H, 190) + 'px' } }, vizResizer,
-    h('div.code-viz-head', icon('grid', 13), h('b', 'Live pattern'), vizInfo, h('div.spacer'), h('span.muted', 'window'), winSel),
+    h('div.code-viz-head', icon('grid', 13), vizTitle, vizInfo, h('div.spacer'), h('span.muted', 'window'), winSel),
     h('div.code-viz-wrap', vizCanvas));
   vizResizer.addEventListener('pointerdown', (e) => {
     e.preventDefault();
@@ -182,7 +259,7 @@ export function createCodeView(app) {
     startDrag(e, (_dx, dy) => { const nh = Math.max(70, Math.min(600, h0 - dy)); vizEl.style.flexBasis = nh + 'px'; vizDirty = true; }, () => lsSet(LS_VIZ_H, vizEl.offsetHeight));
   });
 
-  const editorWrap = h('div.code-editor-wrap', errBar, editor.el, hint);
+  const editorWrap = h('div.code-editor-wrap', errBar, staleBar, editor.el, hint);
   const mainEl = h('div.code-main', editorWrap, vizEl);
 
   // ------------------------------------------------------------ DOM: reference drawer
@@ -192,30 +269,36 @@ export function createCodeView(app) {
   refSearch.addEventListener('input', renderReference);
   refSearch.addEventListener('keydown', (e) => e.stopPropagation());
 
-  // ------------------------------------------------------------ DOM: empty state
-  const emptyEl = h('div.code-empty');
-
   const dropOverlay = h('div.code-drop.hidden', h('div', icon('upload', 28), h('b', 'Drop a .strudel / .js / .txt file'), h('span', 'It opens as a new code track')));
-  const body = h('div.code-body', listEl, mainEl, refEl, emptyEl);
+  const body = h('div.code-body', listEl, mainEl, refEl);
   const el = h('div.code-view', toolbar, body, dropOverlay);
 
-  // ------------------------------------------------------------ track selection
-  function resolveTrack() {
-    const tracks = codeTracks();
-    const sel = ui.get('selectedTrackId');
-    let t = tracks.find((x) => x.id === sel) || tracks.find((x) => x.id === trackId) || tracks.find((x) => x.id === lastCodeTrack) || tracks[0] || null;
-    return t;
+  // ------------------------------------------------------------ entry selection
+  function selectEntry(id) {
+    if (id !== SONG) { actions.selectTrack(id); return; } // ui change -> subscription switches the entry
+    setEntry(SONG);
+  }
+  function setEntry(id) {
+    if (id !== SONG && !codeTracks().some((t) => t.id === id)) id = SONG;
+    const changed = id !== entry;
+    entry = id;
+    trackId = id === SONG ? null : id;
+    if (changed) { lastQueryKey = ''; vizDirty = true; lastHlKey = ''; editor.setHighlights([]); }
+    if (visible) render();
   }
 
-  function showTrack(t) {
-    const changed = (t?.id || null) !== trackId;
-    trackId = t?.id || null;
-    if (t) lastCodeTrack = t.id;
-    if (changed && t) {
+  function showEntry(changed) {
+    if (isSong()) {
+      if (!song) regenSong();
+      const text = songText();
+      if (editor.getValue() !== text) editor.setValue(text);
+      return;
+    }
+    const t = currentTrack();
+    if (!t) return;
+    if (changed) {
       editor.setValue(bufferOf(t));
-      lastQueryKey = '';
-      vizDirty = true;
-    } else if (t && !isDirty(t) && editor.getValue() !== (t.code || '')) {
+    } else if (!isDirty(t) && editor.getValue() !== (t.code || '')) {
       // external change (undo, other view) while editor is clean -> follow it
       drafts.delete(t.id);
       editor.setValue(t.code || '');
@@ -226,26 +309,53 @@ export function createCodeView(app) {
 
   function newCodeTrack(code, name) {
     const t = actions.addTrack('code', code !== undefined ? { code, name } : {});
-    if (t) { actions.selectTrack(t.id); setTimeout(() => editor.focus(), 30); }
+    if (t) { actions.selectTrack(t.id); setEntry(t.id); setTimeout(() => editor.focus(), 30); }
     return t;
   }
 
   // ------------------------------------------------------------ rendering
+  let shownEntry = null;
   function render() {
-    const tracks = codeTracks();
-    const t = resolveTrack();
-    showTrack(t);
-    const empty = !tracks.length;
-    el.classList.toggle('is-empty', empty);
-    if (empty) renderEmpty();
-    renderList(tracks);
+    if (entry !== SONG && !currentTrack()) { entry = SONG; trackId = null; }
+    const changed = shownEntry !== entry;
+    shownEntry = entry;
+    showEntry(changed);
+    el.classList.toggle('is-song', isSong());
+    renderList(codeTracks());
     renderStatus();
-    refEl.classList.toggle('hidden', !refOpen || empty);
+    refEl.classList.toggle('hidden', !refOpen);
     refBtn.classList.toggle('on', refOpen);
-    for (const b of [applyBtn, renderBtn, exportBtn, autoToggle, cyclesSel]) b.disabled = empty;
+    const t = currentTrack();
+    for (const b of [renderBtn, autoToggle, cyclesSel]) b.disabled = !t;
+    renderWrap.classList.toggle('hidden', isSong());
+    autoToggle.classList.toggle('hidden', isSong());
+    hintBlock.classList.toggle('hidden', isSong());
+    applyBtn.querySelector('span:not(.icon)').textContent = isSong() ? 'Apply to project' : 'Apply';
+    vizTitle.textContent = isSong() ? 'Song — live piano roll' : 'Live pattern';
+  }
+
+  function renderSongItem() {
+    const p = store.get();
+    const n = p.tracks.filter((t) => t.type === 'instrument' || t.type === 'code').length;
+    const err = songErr?.error;
+    const dirty = songDraft !== null && songDraft !== song?.code;
+    const dot = h(`span.code-dot${err ? '.err' : dirty ? '.dirty' : '.live'}`, { title: err ? `Error: ${err}` : dirty ? 'Edited — Ctrl+Enter applies it to the project' : 'In sync with the project' });
+    songItem.className = `code-item code-song${isSong() ? ' active' : ''}`;
+    songItem.replaceChildren(
+      h('span.code-song-icon', icon('music', 14)),
+      h('div.code-item-main',
+        h('div.code-item-name', dot, h('span', 'Song (live)')),
+        h('div.code-item-meta', dirty ? `editing${songStale ? ' · project changed' : ''}` : `${n} track${n === 1 ? '' : 's'} · ${p.mode === 'song' ? 'arrangement' : 'patterns'}`)));
   }
 
   function renderList(tracks) {
+    renderSongItem();
+    if (!tracks.length) {
+      listBody.replaceChildren(h('div.code-list-empty', h('p', 'No code tracks yet.'),
+        h('button.btn.small', { type: 'button', onclick: () => newCodeTrack(), title: 'Create an empty code track' }, icon('plus', 12), 'New code track'),
+        h('button.btn.small', { type: 'button', onclick: (e) => openExamples(e.currentTarget), title: 'Start from an example' }, icon('sparkles', 12), 'Examples')));
+      return;
+    }
     listBody.replaceChildren(...tracks.map((t) => {
       const err = localErr.get(t.id)?.error || engineErr.get(t.id);
       const dirty = isDirty(t);
@@ -255,14 +365,14 @@ export function createCodeView(app) {
       s.addEventListener('click', (e) => { e.stopPropagation(); actions.updateTrack(t.id, (tt) => { tt.solo = !tt.solo; }, t.solo ? 'Unsolo' : 'Solo'); });
       const statusDot = h(`span.code-dot${err ? '.err' : dirty ? '.dirty' : '.ok'}`, { title: err ? `Error: ${err}` : dirty ? 'Unsaved changes' : 'Applied' });
       const lines = (t.code || '').split('\n').filter((l) => l.trim() && !l.trim().startsWith('//')).length;
-      const row = h(`div.code-item${t.id === trackId ? '.active' : ''}${t.mute ? '.muted' : ''}`, { title: 'Click to edit · double-click to rename · right-click for more', tabIndex: 0 },
+      const row = h(`div.code-item${t.id === trackId && !isSong() ? '.active' : ''}${t.mute ? '.muted' : ''}`, { title: 'Click to edit · double-click to rename · right-click for more', tabIndex: 0 },
         h('span.track-color', { style: { background: t.color } }),
         h('div.code-item-main', h('div.code-item-name', statusDot, h('span', t.name)), h('div.code-item-meta', `${lines} line${lines === 1 ? '' : 's'}${dirty ? ' · edited' : ''}`)),
         m, s);
-      row.addEventListener('click', () => { actions.selectTrack(t.id); });
+      row.addEventListener('click', () => selectEntry(t.id));
       row.addEventListener('dblclick', () => actions.renameTrack(t.id));
       row.addEventListener('contextmenu', (e) => contextMenu(e, [
-        { label: 'Apply code', icon: 'play', onClick: () => { actions.selectTrack(t.id); setTimeout(applyNow, 0); } },
+        { label: 'Apply code', icon: 'play', onClick: () => { selectEntry(t.id); setTimeout(applyNow, 0); } },
         { label: 'Render to tracks', icon: 'layers', onClick: () => actions.renderCodeToTracks(t.id, { cycles: renderCycles }) },
         { label: 'Download .strudel', icon: 'download', onClick: () => downloadCode(t) },
         '-',
@@ -272,28 +382,40 @@ export function createCodeView(app) {
     }));
   }
 
-  function renderEmpty() {
-    const exList = h('div.code-empty-examples');
-    loadOptionalModules().then((o) => {
-      exList.replaceChildren(...o.examples.slice(0, 8).map((ex) => {
-        const b = h('button.code-ex-card', { type: 'button', title: ex.code }, h('b', ex.name), h('span', ex.genre || ''));
-        b.addEventListener('click', () => newCodeTrack(ex.code, ex.name));
-        return b;
-      }));
-    });
-    emptyEl.replaceChildren(h('div.empty-state',
-      icon('code', 34),
-      h('h3', 'Live-code your music'),
-      h('p', 'Code tracks play Strudel-style patterns alongside the rest of your project. Write mini-notation like ', h('code', 's("bd*4, ~ cp")'), ', import a .strudel file from strudel.cc, or start from an example.'),
-      h('div.row.wrap', { style: { justifyContent: 'center' } },
-        button('New code track', () => newCodeTrack(), { icon: 'plus', primary: true, title: 'Create an empty code track' }),
-        button('Import .strudel file', () => actions.importStrudel(), { icon: 'upload', title: 'Open a .strudel / .js / .txt file' }),
-        button('Project → code', () => actions.exportCode(), { icon: 'code', title: 'Turn the current project into Strudel code' })),
-      h('div.section-title', 'Or start from an example'), exList,
-      h('p.muted', { style: { fontSize: '12px' } }, 'Tip: drop .strudel files anywhere on this view.')));
+  function setErrBar(err, line, src) {
+    if (err) {
+      errBar.replaceChildren(icon('x', 13), h('b', line ? `Line ${line}: ` : 'Error: '), h('span', String(err)),
+        h('span.code-errbar-src', src),
+        h('span.muted', isSong() ? ' — nothing was applied; the project is unchanged.' : ' — the last working version keeps playing.'));
+      errBar.classList.remove('hidden');
+      editor.setErrorLine(line);
+    } else {
+      errBar.classList.add('hidden');
+      editor.setErrorLine(null);
+    }
   }
 
   function renderStatus() {
+    if (isSong()) {
+      const dirty = songDraft !== null && songDraft !== song?.code;
+      const err = songErr?.error;
+      dirtyEl.className = 'code-dirty' + (err ? ' err' : dirty ? ' dirty' : ' ok');
+      dirtyEl.textContent = err ? '● Error' : dirty ? '● Editing — Ctrl+Enter to apply to the project' : '● Live — in sync with the project';
+      applyBtn.classList.toggle('primary', dirty);
+      revertBtn.classList.toggle('hidden', !dirty);
+      setErrBar(err, songErr?.line, 'song');
+      staleBar.classList.toggle('hidden', !(dirty && songStale));
+      if (dirty && songStale) {
+        staleBar.replaceChildren(icon('bulb', 13), h('span', 'The project changed while you were editing. Apply to merge your edits, or '),
+          h('button.code-link', { type: 'button', onclick: () => discardSongDraft() }, 'discard them'), h('span', ' to see the current project.'));
+      }
+      tempoBtn.classList.add('hidden');
+      const p = store.get();
+      hintInfo.textContent = `Song · ${p.bpm} BPM · ${p.mode === 'song' ? 'song mode (arrangement)' : 'pattern mode'}`;
+      return;
+    }
+    staleBar.classList.add('hidden');
+    revertBtn.classList.add('hidden');
     const t = currentTrack();
     const dirty = isDirty(t);
     const le = t && localErr.get(t.id);
@@ -302,17 +424,7 @@ export function createCodeView(app) {
     dirtyEl.className = 'code-dirty' + (err ? ' err' : dirty ? ' dirty' : t ? ' ok' : '');
     dirtyEl.textContent = !t ? '' : err ? '● Error' : dirty ? '● Unsaved changes — Ctrl+Enter to apply' : '● Applied';
     applyBtn.classList.toggle('primary', !!dirty);
-    if (err) {
-      const line = le?.line ?? errorLineOf(err, t.code);
-      errBar.replaceChildren(icon('x', 13), h('b', line ? `Line ${line}: ` : 'Error: '), h('span', String(err)),
-        h('span.code-errbar-src', le ? 'evaluation' : 'engine'),
-        h('span.muted', ' — the last working version keeps playing.'));
-      errBar.classList.remove('hidden');
-      editor.setErrorLine(line);
-    } else {
-      errBar.classList.add('hidden');
-      editor.setErrorLine(null);
-    }
+    setErrBar(err, err ? (le?.line ?? errorLineOf(err, t.code)) : null, le ? 'evaluation' : 'engine');
     // tempo adoption
     const res = t ? evaluate(t.code || '') : null;
     const cps = res && !res.error ? res.cps : null;
@@ -327,7 +439,7 @@ export function createCodeView(app) {
     hintInfo.textContent = t ? `${t.name}${t.mute ? ' (muted)' : ''} · ${nPat} pattern${nPat === 1 ? '' : 's'}${cps ? ` · ${+cps.toFixed(3)} cps` : ''}` : '';
   }
 
-  // ------------------------------------------------------------ apply
+  // ------------------------------------------------------------ apply (code tracks)
   function commit(code, { label = 'Edit code', coalesce = false } = {}) {
     const t = currentTrack();
     if (!t) return null;
@@ -344,6 +456,7 @@ export function createCodeView(app) {
   }
 
   function applyNow() {
+    if (isSong()) { applySong(); return; }
     const t = currentTrack();
     if (!t) return;
     const code = editor.getValue();
@@ -359,6 +472,7 @@ export function createCodeView(app) {
   }
 
   function applyBlock(text, { index, blocks }) {
+    if (isSong()) { applySong(); return; }
     const t = currentTrack();
     if (!t) return;
     const applied = splitBlocks(t.code || '');
@@ -377,10 +491,87 @@ export function createCodeView(app) {
     renderList(codeTracks());
   }
 
+  // ------------------------------------------------------------ apply (song -> project)
+  function discardSongDraft() {
+    songDraft = null;
+    songStale = false;
+    songErr = null;
+    regenSong();
+    if (isSong()) editor.setValue(song.code);
+    renderStatus();
+    renderList(codeTracks());
+  }
+
+  function askKeepAsCode(complex) {
+    return new Promise((resolve) => {
+      let answer = null;
+      modal({
+        title: 'Some blocks aren\'t plain notes',
+        width: 520,
+        body: h('div.col',
+          h('p', 'These blocks use randomness, continuous signals or never repeat, so they can\'t be written into a pattern as fixed notes:'),
+          h('ul.code-complex-list', complex.map((c) => h('li', h('code', c.label), h('span.muted', ` — ${c.reason}`)))),
+          h('p.muted', 'Keep them playing as code tracks (the instrument track gets muted so nothing doubles up), or skip them for now.')),
+        actions: [
+          { label: 'Cancel', onClick: () => { answer = 'cancel'; } },
+          { label: 'Skip them', onClick: () => { answer = 'skip'; } },
+          { label: 'Keep as code tracks', primary: true, onClick: () => { answer = 'keep'; } },
+        ],
+        onClose: () => resolve(answer || 'cancel'),
+      });
+    });
+  }
+
+  async function applySong() {
+    if (!song) regenSong();
+    const text = editor.getValue();
+    if (text === song.code && songDraft === null) {
+      app.setStatus?.('The song code is already in sync with the project.');
+      if (!engine.isPlaying) actions.play?.();
+      return;
+    }
+    const opts = { presets: PRESETS, kits: DRUM_KITS };
+    let dry;
+    try { dry = applySongCode(deepClone(store.get()), text, opts); } catch (e) { console.error(e); dry = { error: String(e?.message || e) }; }
+    if (dry.error) {
+      songErr = { error: dry.error, line: errorLineOf(dry.error, text) ?? locateErrorBlock(text) };
+      renderStatus();
+      renderList(codeTracks());
+      app.setStatus?.(`Song code error: ${dry.error}`);
+      return;
+    }
+    songErr = null;
+    let keep = false;
+    if (dry.complex.length) {
+      const a = await askKeepAsCode(dry.complex);
+      if (a === 'cancel') { renderStatus(); return; }
+      keep = a === 'keep';
+    }
+    let rep = dry;
+    if (dry.changed || (keep && dry.complex.length)) {
+      store.transact('Apply song code', (p) => { rep = applySongCode(p, text, { ...opts, keepComplexAsCode: keep }); });
+    }
+    songDraft = null;
+    songStale = false;
+    regenSong();
+    if (isSong()) editor.setValue(song.code);
+    renderStatus();
+    renderList(codeTracks());
+    // report
+    const parts = [];
+    if (rep.changes.length) parts.push(rep.changes.slice(0, 4).join(' · ') + (rep.changes.length > 4 ? ` · +${rep.changes.length - 4} more` : ''));
+    if (rep.muted.length) parts.push(`Muted (block removed or "_" added): ${rep.muted.join(', ')} — tracks are never deleted from here; unmute or delete them in the mixer.`);
+    if (!keep && rep.complex?.length) parts.push(`Skipped: ${rep.complex.map((c) => c.label).join(', ')}`);
+    if (!parts.length && !rep.warnings.length) parts.push('Nothing to change — the project already matches the code.');
+    if (parts.length) toast(parts.join('\n'), { level: rep.changed ? 'success' : 'info', timeout: 6000 });
+    for (const w of rep.warnings) toast(w, { level: 'warn', timeout: 7000 });
+    app.setStatus?.(rep.changed ? `Applied song code: ${rep.changes.length + rep.muted.length} change(s).` : 'Song code: nothing changed.');
+  }
+
   let autoTimer = null;
   function scheduleAuto() {
     clearTimeout(autoTimer);
-    if (!autoApply) return;
+    if (!autoApply || isSong()) return;
     autoTimer = setTimeout(() => {
       const t = currentTrack();
       if (!t || !isDirty(t)) return;
@@ -392,6 +583,16 @@ export function createCodeView(app) {
   }
 
   function onEditorChange(text) {
+    lastHlKey = '';
+    editor.setHighlights([]);
+    if (isSong()) {
+      const was = songDraft !== null;
+      songDraft = song && text === song.code ? null : text;
+      if (songDraft === null) { songStale = false; songErr = null; }
+      if (was !== (songDraft !== null)) renderSongItem();
+      renderStatus();
+      return;
+    }
     const t = currentTrack();
     if (!t) return;
     if (text === (t.code || '')) drafts.delete(t.id); else drafts.set(t.id, text);
@@ -416,8 +617,8 @@ export function createCodeView(app) {
   // ------------------------------------------------------------ export / examples / reference
   async function downloadCode(t) {
     const o = await loadOptionalModules();
-    const code = t.id === trackId ? editor.getValue() : t.code || '';
-    const name = (t.name || 'pattern').replace(/[^\w\- ]+/g, '').trim() || 'pattern';
+    const code = t ? (t.id === trackId && !isSong() ? editor.getValue() : t.code || '') : editor.getValue();
+    const name = ((t ? t.name : store.get().name) || 'pattern').replace(/[^\w\- ]+/g, '').trim() || 'pattern';
     if (typeof o.file.downloadStrudel === 'function') {
       try { o.file.downloadStrudel(code, name); return; } catch (e) { console.warn(e); }
     }
@@ -438,14 +639,15 @@ export function createCodeView(app) {
 
   function openExportMenu(anchor) {
     const t = currentTrack();
+    const song0 = isSong();
     const r = anchor.getBoundingClientRect();
     contextMenu({ clientX: r.left, clientY: r.bottom + 2, preventDefault() {} }, [
-      { header: 'This track' },
-      { label: 'Download .strudel', icon: 'download', disabled: !t, onClick: () => downloadCode(t) },
-      { label: 'Copy code to clipboard', icon: 'copy', disabled: !t, onClick: async () => {
+      { header: song0 ? 'Song code' : 'This track' },
+      { label: 'Download .strudel', icon: 'download', disabled: !t && !song0, onClick: () => downloadCode(t) },
+      { label: 'Copy code to clipboard', icon: 'copy', disabled: !t && !song0, onClick: async () => {
         try { await navigator.clipboard.writeText(editor.getValue()); toast('Code copied — paste it into strudel.cc or share it', { level: 'success' }); } catch { toast('Clipboard not available', { level: 'warn' }); }
       } },
-      { label: 'Open in strudel.cc', icon: 'code', disabled: !t, onClick: async () => {
+      { label: 'Open in strudel.cc', icon: 'code', disabled: !t && !song0, onClick: async () => {
         const o = await loadOptionalModules();
         const code = editor.getValue();
         let url;
@@ -454,7 +656,8 @@ export function createCodeView(app) {
       } },
       '-',
       { header: 'Project' },
-      { label: 'Export whole project as code…', icon: 'layers', onClick: () => actions.exportCode() },
+      { label: 'Save the song code as a new code track', icon: 'layers', onClick: () => { regenSong(); newCodeTrack(song.code, 'Song code'); } },
+      { label: 'Export patterns as compact code…', icon: 'code', onClick: () => actions.exportCode() },
     ]);
   }
 
@@ -488,7 +691,7 @@ export function createCodeView(app) {
   function setRefOpen(v) {
     refOpen = v;
     lsSet(LS_REF, v);
-    refEl.classList.toggle('hidden', !v || el.classList.contains('is-empty'));
+    refEl.classList.toggle('hidden', !v);
     refBtn.classList.toggle('on', v);
     if (v) { renderReference(); setTimeout(() => refSearch.focus(), 20); }
     vizDirty = true;
@@ -510,11 +713,136 @@ export function createCodeView(app) {
     }));
   }
 
+  // ------------------------------------------------------------ live source (what's highlighted)
+  /**
+   * The evaluated code behind the editor, when the editor shows exactly that code:
+   * { res, colorOf(ev) -> css colour, barOf(ev) -> index, bars: [{line0, line1, color}] } | null
+   */
+  const trackMetaCache = new Map();
+  function liveSource() {
+    if (isSong()) {
+      if (!song || songDraft !== null) return null;
+      const m = getSongMeta();
+      if (m.res.error) return null;
+      return {
+        res: m.res, bars: m.bars,
+        barOf: (ev) => (ev.block !== undefined ? m.labelBar[ev.block] ?? -1 : -1),
+        colorOf: (ev) => { const i = ev.block !== undefined ? m.labelBar[ev.block] : -1; return i >= 0 ? m.bars[i].color : '#ffd43b'; },
+      };
+    }
+    const t = currentTrack();
+    if (!t || isDirty(t) || t.mute) return null;
+    const code = t.code || '';
+    let res = evaluate(code);
+    if (res.error) res = lastGood.get(t.id) && lastGood.get(t.id).code === code ? lastGood.get(t.id) : null;
+    else lastGood.set(t.id, { ...res, code });
+    if (!res) return null;
+    let meta = trackMetaCache.get(t.id);
+    if (!meta || meta.code !== code || meta.color !== t.color) {
+      const labels = res.labels || [];
+      const bars = labels.map((l, i) => ({
+        color: labels.length > 1 ? LABEL_COLORS[i % LABEL_COLORS.length] : (t.color || LABEL_COLORS[0]),
+        line0: lineAt(code, l.start), line1: Math.max(lineAt(code, l.start), lineAt(code, Math.max(l.start, l.end - 1))), name: l.name,
+      }));
+      meta = { code, color: t.color, bars };
+      trackMetaCache.set(t.id, meta);
+    }
+    const bars = meta.bars;
+    return {
+      res, bars,
+      barOf: (ev) => (ev.block !== undefined && ev.block < bars.length ? ev.block : -1),
+      colorOf: (ev) => (ev.block !== undefined && bars[ev.block] ? bars[ev.block].color : (t.color || LABEL_COLORS[0])),
+    };
+  }
+
+  /** Transport position (cycles) that is being HEARD now: scheduler time minus output latency. */
+  function audibleCycle() {
+    const bpb = beatsPerBar(store.get());
+    let beat = null;
+    const ctx = engine.ctx;
+    if (ctx && engine.isPlaying && engine.beatAtTime) {
+      const lat = (ctx.outputLatency || 0) + (ctx.baseLatency || 0);
+      try { beat = engine.beatAtTime(ctx.currentTime - lat); } catch { beat = null; }
+    }
+    if (beat == null) { try { beat = engine.getPosition(); } catch { beat = 0; } }
+    return beat / bpb;
+  }
+
+  /** Events overlapping cycle k (cached per evaluated result). */
+  function chunk(res, k) {
+    if (!res._chunks) res._chunks = new Map();
+    let evs = res._chunks.get(k);
+    if (!evs) {
+      try { evs = strudel.queryEvents(res, k, k + 1, { active: true }); } catch { evs = []; }
+      if (res._chunks.size > 24) res._chunks.delete(res._chunks.keys().next().value);
+      res._chunks.set(k, evs);
+    }
+    return evs;
+  }
+
+  let lastHlKey = '';
+  let liveActive = []; // events active now (for the viz)
+  function updateLive() {
+    const src = liveSource();
+    const playing = !!engine.isPlaying;
+    if (!src) {
+      if (lastHlKey !== 'none') { editor.setHighlights([]); editor.setBlockBars([]); lastHlKey = 'none'; }
+      liveActive = [];
+      return;
+    }
+    if (!playing) {
+      const key = 'idle|' + src.bars.length + '|' + (src.bars[0]?.line0 ?? '');
+      if (lastHlKey !== key) {
+        editor.setHighlights([]);
+        editor.setBlockBars(src.bars.map((b) => ({ line0: b.line0, line1: b.line1, color: b.color, alpha: 0.28 })));
+        lastHlKey = key;
+      }
+      liveActive = [];
+      return;
+    }
+    lastHlKey = 'live';
+    const p = store.get();
+    const bpb = beatsPerBar(p);
+    const cps = p.bpm / 60 / bpb;
+    const cyc = audibleCycle();
+    const fade = FADE_SEC * cps;
+    const pulse = PULSE_SEC * cps;
+    const k = Math.floor(cyc);
+    const evs = k === Math.floor(cyc - fade) ? chunk(src.res, k) : chunk(src.res, k - 1).concat(chunk(src.res, k));
+    const seen = new Set();
+    const boxes = [];
+    const barAlpha = src.bars.map(() => 0.28);
+    const active = [];
+    for (const ev of evs) {
+      if (ev.begin > cyc + 1e-9 || ev.end + fade < cyc) continue;
+      const key = `${ev.begin}|${ev.pattern}|${ev.locations[0]?.start}|${ev.value.note ?? ev.value.s}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const on = cyc < ev.end;
+      const alpha = on ? 1 : Math.max(0, 1 - (cyc - ev.end) / fade);
+      if (alpha <= 0.02) continue;
+      const color = src.colorOf(ev);
+      if (on) active.push({ ...ev, color });
+      for (const l of ev.locations) boxes.push({ start: l.start, end: l.end, color, alpha });
+      const bi = src.barOf(ev);
+      if (bi >= 0 && on) {
+        const since = cyc - ev.begin;
+        const a = since < pulse ? 1 - 0.45 * (since / pulse) : 0.55;
+        if (a > barAlpha[bi]) barAlpha[bi] = a;
+      }
+    }
+    // overlapping boxes: keep the brightest per range
+    const byRange = new Map();
+    for (const b of boxes) { const kk = b.start * 1e6 + b.end; const o = byRange.get(kk); if (!o || o.alpha < b.alpha) byRange.set(kk, b); }
+    editor.setHighlights([...byRange.values()]);
+    editor.setBlockBars(src.bars.map((b, i) => ({ line0: b.line0, line1: b.line1, color: b.color, alpha: barAlpha[i] })));
+    liveActive = active;
+  }
+
   // ------------------------------------------------------------ visualisation
   let vizDirty = true;
   let lastQueryKey = '';
   let cached = { events: [], rows: [], c0: 0, c1: 1 };
-  let lastMarksKey = '';
   let colors = null;
   const readColors = () => {
     colors = { bg: cssVar('--bg'), bg2: cssVar('--bg-2'), bg3: cssVar('--bg-3'), line: cssVar('--line'), text: cssVar('--text'), text2: cssVar('--text-2'), text3: cssVar('--text-3'), accent: cssVar('--accent'), accent2: cssVar('--accent-2'), bar: cssVar('--grid-bar'), beat: cssVar('--grid-beat'), mono: cssVar('--mono') || 'monospace', font: cssVar('--font') || 'sans-serif', light: document.documentElement.dataset.theme === 'light' };
@@ -537,7 +865,7 @@ export function createCodeView(app) {
   const lastGood = new Map(); // trackId -> last evaluated result without errors (what the engine keeps playing)
   function queryWindow(t, c0, c1) {
     let res = evaluate(t.code || '');
-    if (!res.error) lastGood.set(t.id, res);
+    if (!res.error) lastGood.set(t.id, { ...res, code: t.code || '' });
     else res = lastGood.get(t.id);
     if (!res || !strudel.queryEvents) return [];
     try { return strudel.queryEvents(res, c0, c1) || []; } catch (e) { return []; }
@@ -558,7 +886,7 @@ export function createCodeView(app) {
         const lab = eventLabel(e.value);
         if (!rowMap.has(lab.key)) rowMap.set(lab.key, { ...lab, first: e.begin });
         const end = Number.isFinite(e.end) && e.end > e.begin ? e.end : e.begin + 0.125;
-        return { begin: e.begin, end, key: lab.key, value: e.value, locs: e.locations || e.value?.locations || e.context?.locations || null };
+        return { begin: e.begin, end, key: lab.key, value: e.value, block: e.block };
       });
       // drums/samples first (by first appearance), then pitched rows high -> low
       const rows = [...rowMap.values()].sort((a, b) => {
@@ -571,18 +899,154 @@ export function createCodeView(app) {
     return { cyc, ...cached };
   }
 
+  function drawGrid(ctx, H, xOf, c0, c1, top, bpb) {
+    ctx.font = '10px ' + colors.mono;
+    for (let c = c0; c <= c1; c++) {
+      for (let b = 0; b < bpb && c < c1; b++) {
+        const x = Math.round(xOf(c + b / bpb)) + 0.5;
+        ctx.strokeStyle = b === 0 ? colors.bar : colors.beat;
+        ctx.beginPath(); ctx.moveTo(x, top - 2); ctx.lineTo(x, H); ctx.stroke();
+      }
+      if (c < c1) { ctx.fillStyle = colors.text3; ctx.fillText(`${isSong() ? 'bar' : 'cycle'} ${c + (isSong() ? 1 : 0)}`, xOf(c) + 4, 11); }
+    }
+  }
+
+  function drawPlayhead(ctx, H, xOf, cyc, c0, c1, playing) {
+    if (cyc >= c0 && cyc <= c1) {
+      const x = Math.round(xOf(cyc)) + 0.5;
+      ctx.strokeStyle = playing ? colors.accent2 : colors.text3;
+      ctx.lineWidth = playing ? 2 : 1;
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+      ctx.lineWidth = 1;
+    }
+  }
+
+  function roundRect(ctx, x, y, w, hh, r) {
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x, y, w, hh, r); else ctx.rect(x, y, w, hh);
+  }
+
+  /** Song entry: one lane per track (track colour), a mini piano roll inside each lane. */
+  let songViz = { key: '', events: [] };
+  function drawSongViz(ctx, w, H, cyc, playing) {
+    const src = liveSource() || (song && !songDraft ? null : null);
+    const meta = song ? getSongMeta() : null;
+    if (!meta || meta.res.error) {
+      ctx.fillStyle = colors.text3;
+      ctx.font = '12px ' + colors.font;
+      ctx.fillText(songDraft !== null ? 'Editing — apply (Ctrl+Enter) to see the result here.' : 'Fix the error to see the song.', 12, 30);
+      return { rows: 0, events: 0 };
+    }
+    const bpb = beatsPerBar(store.get());
+    const win = vizWindow;
+    const c0 = Math.floor(cyc / win) * win;
+    const c1 = c0 + win;
+    const key = `${meta.code}|${c0}|${c1}`;
+    if (songViz.key !== key) {
+      let evs = [];
+      try { evs = strudel.queryEvents(meta.res, c0, c1, { active: true }); } catch { evs = []; }
+      songViz = { key, events: evs };
+    }
+    const lanes = meta.bars.filter((b) => b.kind !== 'audio');
+    const laneOf = new Map(lanes.map((b, i) => [b, i]));
+    const nL = Math.max(1, lanes.length);
+    const top = 16;
+    const labelW = 86;
+    const gx = labelW, gw = Math.max(10, w - labelW - 6);
+    const laneH = Math.max(8, (H - top - 2) / nL);
+    const xOf = (c) => gx + ((c - c0) / (c1 - c0)) * gw;
+    drawGrid(ctx, H, xOf, c0, c1, top, bpb);
+    // per-lane pitch ranges / drum rows
+    const info = lanes.map(() => ({ lo: 127, hi: 0, drums: new Map() }));
+    const evLane = (ev) => { const bi = ev.block !== undefined ? meta.labelBar[ev.block] : -1; return bi >= 0 ? laneOf.get(meta.bars[bi]) ?? -1 : -1; };
+    for (const ev of songViz.events) {
+      const li = evLane(ev);
+      if (li < 0) continue;
+      const v = ev.value;
+      if (typeof v.note === 'number') { info[li].lo = Math.min(info[li].lo, v.note); info[li].hi = Math.max(info[li].hi, v.note); } else {
+        const k = `${v.s}${v.n !== undefined ? ':' + v.n : ''}`;
+        if (!info[li].drums.has(k)) info[li].drums.set(k, info[li].drums.size);
+      }
+    }
+    lanes.forEach((b, i) => {
+      const y = top + i * laneH;
+      ctx.fillStyle = i % 2 ? (colors.light ? 'rgba(0,0,0,0.035)' : 'rgba(255,255,255,0.03)') : 'transparent';
+      ctx.fillRect(gx, y, gw, laneH);
+      ctx.fillStyle = rgba(b.color, 0.08);
+      ctx.fillRect(gx, y, gw, laneH);
+    });
+    let count = 0;
+    const activeLanes = new Set();
+    for (const ev of songViz.events) {
+      const li = evLane(ev);
+      if (li < 0) continue;
+      const lane = lanes[li];
+      const inf = info[li];
+      const v = ev.value;
+      const y0 = top + li * laneH + 2;
+      const hh = laneH - 4;
+      let y, bh;
+      if (typeof v.note === 'number') {
+        const span = Math.max(1, inf.hi - inf.lo);
+        bh = Math.max(2, Math.min(6, hh / (span + 1)));
+        y = y0 + (1 - (v.note - inf.lo) / span) * (hh - bh);
+        if (inf.hi === inf.lo) y = y0 + (hh - bh) / 2;
+      } else {
+        const n = Math.max(1, inf.drums.size);
+        const k = inf.drums.get(`${v.s}${v.n !== undefined ? ':' + v.n : ''}`) ?? 0;
+        bh = Math.max(2, Math.min(6, hh / n - 1));
+        y = y0 + (k + 0.5) * (hh / n) - bh / 2;
+      }
+      const x0 = xOf(Math.max(c0, ev.begin));
+      const x1 = xOf(Math.min(c1, ev.end));
+      const on = playing && cyc >= ev.begin && cyc < ev.end;
+      const past = playing && cyc >= ev.end;
+      if (on) activeLanes.add(li);
+      ctx.globalAlpha = on ? 1 : past ? 0.4 : 0.8;
+      ctx.fillStyle = lane.color;
+      roundRect(ctx, x0, y, Math.max(2, x1 - x0 - 1), bh, Math.min(2, bh / 2));
+      ctx.fill();
+      if (on) { ctx.save(); ctx.shadowColor = lane.color; ctx.shadowBlur = 8; ctx.strokeStyle = colors.light ? '#000' : '#fff'; ctx.lineWidth = 1; ctx.stroke(); ctx.restore(); }
+      ctx.globalAlpha = 1;
+      count++;
+    }
+    // labels
+    ctx.fillStyle = colors.bg2;
+    ctx.fillRect(0, 0, labelW - 2, H);
+    lanes.forEach((b, i) => {
+      const y = top + i * laneH;
+      const hit = activeLanes.has(i);
+      ctx.fillStyle = b.color;
+      ctx.globalAlpha = hit ? 1 : 0.55;
+      ctx.fillRect(0, y + 1, hit ? 4 : 3, laneH - 2);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = hit ? colors.text : colors.text2;
+      ctx.font = `${Math.min(11, Math.max(8, Math.floor(laneH * 0.6)))}px ${colors.font}`;
+      if (laneH >= 8) ctx.fillText(String(b.name).slice(0, 12), 8, y + laneH / 2 + 4);
+    });
+    drawPlayhead(ctx, H, xOf, cyc, c0, c1, playing);
+    void src;
+    return { rows: lanes.length, events: count };
+  }
+
   function drawViz() {
-    const t = currentTrack();
     if (!colors) readColors();
     const { ctx, w, h: H } = fitCanvas(vizCanvas);
     ctx.clearRect(0, 0, w, H);
     ctx.fillStyle = colors.bg;
     ctx.fillRect(0, 0, w, H);
-    if (!t) return;
-    const pos = (() => { try { return engine.getPosition(); } catch { return 0; } })();
     const playing = !!engine.isPlaying;
+    const cyc = playing ? audibleCycle() : (() => { try { return engine.getPosition() / beatsPerBar(store.get()); } catch { return 0; } })();
+    if (isSong()) {
+      const r = drawSongViz(ctx, w, H, cyc, playing);
+      vizInfo.textContent = `${playing ? '▶' : '■'} bar ${(cyc + 1).toFixed(2)} · ${r.rows} track${r.rows === 1 ? '' : 's'} · ${r.events} event${r.events === 1 ? '' : 's'} in view`;
+      return;
+    }
+    const t = currentTrack();
+    if (!t) return;
+    const pos = cyc * beatsPerBar(store.get());
     const v = computeView(t, pos);
-    const { events, rows, rowIndex, c0, c1, cyc } = v;
+    const { events, rows, rowIndex, c0, c1 } = v;
     const labelW = Math.min(90, Math.max(48, ...rows.map((r) => r.label.length * 7 + 14)));
     const gx = labelW, gw = Math.max(10, w - labelW - 6);
     const nRows = Math.max(1, rows.length);
@@ -590,18 +1054,8 @@ export function createCodeView(app) {
     const top = 16;
     const xOf = (c) => gx + ((c - c0) / (c1 - c0)) * gw;
     const bpb = beatsPerBar(store.get());
-    // grid
+    drawGrid(ctx, H, xOf, c0, c1, top, bpb);
     const monoFont = colors.mono;
-    ctx.font = '10px ' + monoFont;
-    for (let c = c0; c <= c1; c++) {
-      for (let b = 0; b < bpb && c < c1; b++) {
-        const x = Math.round(xOf(c + b / bpb)) + 0.5;
-        ctx.strokeStyle = b === 0 ? colors.bar : colors.beat;
-        ctx.beginPath(); ctx.moveTo(x, top - 2); ctx.lineTo(x, H); ctx.stroke();
-      }
-      if (c < c1) { ctx.fillStyle = colors.text3; ctx.fillText(`cycle ${c}`, xOf(c) + 4, 11); }
-    }
-    // rows
     rows.forEach((r, i) => {
       const y = top + i * rowH;
       if (i % 2) { ctx.fillStyle = colors.light ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.025)'; ctx.fillRect(gx, y, gw, rowH); }
@@ -612,7 +1066,8 @@ export function createCodeView(app) {
       const res = evaluate(t.code || '');
       ctx.fillText(res.error && !lastGood.has(t.id) ? 'Fix the error to see the pattern.' : (t.code || '').trim() ? 'No events in this window.' : 'Write some code and press Ctrl+Enter.', gx + 10, top + 20);
     }
-    // events
+    // events — coloured per labelled block (the same colours as the editor's gutter bars)
+    const src = liveSource();
     const active = [];
     for (const e of events) {
       const i = rowIndex.get(e.key);
@@ -621,17 +1076,18 @@ export function createCodeView(app) {
       const x0 = xOf(Math.max(c0, e.begin)), x1 = xOf(Math.min(c1, e.end));
       const y = top + i * rowH + 1;
       const hgt = Math.max(3, rowH - 2);
-      const hue = r.pitch != null ? (r.pitch % 12) * 30 : hashHue(String(r.sound ?? r.label));
-      const on = cyc >= e.begin && cyc < e.end;
+      const on = playing && cyc >= e.begin && cyc < e.end;
       const past = cyc >= e.end;
       if (on) active.push(e);
       const light = colors.light;
-      ctx.fillStyle = on ? `hsl(${hue} 95% ${light ? 45 : 68}%)` : `hsla(${hue} 75% ${light ? 45 : 58}% / ${past && playing ? 0.45 : 0.85})`;
+      const col = src && src.bars.length > 1 ? src.colorOf(e) : null;
+      const hue = r.pitch != null ? (r.pitch % 12) * 30 : hashHue(String(r.sound ?? r.label));
+      if (col) { ctx.fillStyle = col; ctx.globalAlpha = on ? 1 : past && playing ? 0.45 : 0.85; } else ctx.fillStyle = on ? `hsl(${hue} 95% ${light ? 45 : 68}%)` : `hsla(${hue} 75% ${light ? 45 : 58}% / ${past && playing ? 0.45 : 0.85})`;
       const ww = Math.max(2, x1 - x0 - 1);
-      ctx.beginPath();
-      if (ctx.roundRect) ctx.roundRect(x0, y, ww, hgt, Math.min(3, hgt / 2)); else ctx.rect(x0, y, ww, hgt);
+      roundRect(ctx, x0, y, ww, hgt, Math.min(3, hgt / 2));
       ctx.fill();
-      if (on) { ctx.save(); ctx.shadowColor = `hsl(${hue} 100% 60%)`; ctx.shadowBlur = 10; ctx.strokeStyle = light ? '#000' : '#fff'; ctx.lineWidth = 1; ctx.stroke(); ctx.restore(); }
+      ctx.globalAlpha = 1;
+      if (on) { ctx.save(); ctx.shadowColor = col || `hsl(${hue} 100% 60%)`; ctx.shadowBlur = 10; ctx.strokeStyle = light ? '#000' : '#fff'; ctx.lineWidth = 1; ctx.stroke(); ctx.restore(); }
     }
     // labels
     ctx.fillStyle = colors.bg2;
@@ -643,49 +1099,38 @@ export function createCodeView(app) {
       if (rowH >= 6) { ctx.font = `${Math.min(10, Math.floor(rowH))}px ${monoFont}`; ctx.fillText(r.label.slice(0, 12), 6, y + rowH / 2 + Math.min(10, rowH) * 0.35); }
       if (hit) { ctx.fillStyle = colors.accent2; ctx.fillRect(0, y + 1, 3, rowH - 2); }
     });
-    // playhead
-    if (cyc >= c0 && cyc <= c1) {
-      const x = Math.round(xOf(cyc)) + 0.5;
-      ctx.strokeStyle = playing ? colors.accent2 : colors.text3;
-      ctx.lineWidth = playing ? 2 : 1;
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-      ctx.lineWidth = 1;
-    }
+    drawPlayhead(ctx, H, xOf, cyc, c0, c1, playing);
     vizInfo.textContent = `${playing ? '▶' : '■'} cycle ${cyc.toFixed(2)} · ${rows.length} row${rows.length === 1 ? '' : 's'} · ${events.length} event${events.length === 1 ? '' : 's'} in view`;
-    // Strudel-style source highlighting (when the engine reports source locations)
-    updateMarks(t, playing ? active : []);
-  }
-
-  function updateMarks(t, active) {
-    if (isDirty(t)) { if (lastMarksKey) { editor.setMarks([]); lastMarksKey = ''; } return; }
-    const ranges = [];
-    for (const e of active) {
-      for (const l of e.locs || []) {
-        const start = Array.isArray(l) ? l[0] : (l.start ?? l.from);
-        const end = Array.isArray(l) ? l[1] : (l.end ?? l.to);
-        if (Number.isFinite(start) && Number.isFinite(end)) ranges.push({ start, end });
-      }
-    }
-    const key = ranges.map((r) => r.start + '-' + r.end).join(',');
-    if (key !== lastMarksKey) { lastMarksKey = key; editor.setMarks(ranges); }
   }
 
   let raf = 0;
+  let wasPlaying = false;
   function loop() {
     raf = 0;
     if (!visible) return;
-    if (engine.isPlaying || vizDirty) {
+    const playing = !!engine.isPlaying;
+    try { updateLive(); } catch (e) { console.error('[code highlight]', e); }
+    if (playing || vizDirty || wasPlaying) {
       vizDirty = false;
       try { drawViz(); } catch (e) { console.error('[code viz]', e); }
     }
+    wasPlaying = playing;
     raf = requestAnimationFrame(loop);
   }
   const ro = new ResizeObserver(() => { vizDirty = true; });
   ro.observe(vizCanvas);
 
   // ------------------------------------------------------------ events
+  let lastSel = ui.get('selectedTrackId');
   app.subscribe((r) => {
     if ('theme' in r.ui) { colors = null; vizDirty = true; }
+    if (r.project) scheduleSongRegen();
+    if ('selectedTrackId' in r.ui) {
+      const sel = ui.get('selectedTrackId');
+      // a code track selected anywhere (new / imported / clicked) opens it here
+      if (sel !== lastSel && codeTracks().some((t) => t.id === sel)) { entry = sel; trackId = sel; lastHlKey = ''; }
+      lastSel = sel;
+    }
     if (!visible) return;
     if (r.project || 'selectedTrackId' in r.ui) {
       // drop stale drafts of deleted tracks
@@ -695,6 +1140,7 @@ export function createCodeView(app) {
       vizDirty = true;
     }
   });
+  store.on?.('load', () => { songDraft = null; songStale = false; songErr = null; entry = SONG; trackId = null; song = null; regenSong(); if (visible) render(); });
   engine.on?.('code-error', ({ trackId: id, error }) => {
     engineErr.set(id, error);
     if (visible) { renderStatus(); renderList(codeTracks()); }
@@ -704,7 +1150,7 @@ export function createCodeView(app) {
     engineErr.delete(id);
     if (visible) { renderStatus(); renderList(codeTracks()); }
   });
-  engine.on?.('state', () => { vizDirty = true; playBtn.replaceChildren(icon(engine.isPlaying ? 'pause' : 'play')); playBtn.classList.toggle('on', !!engine.isPlaying); });
+  engine.on?.('state', () => { vizDirty = true; lastHlKey = ''; playBtn.replaceChildren(icon(engine.isPlaying ? 'pause' : 'play')); playBtn.classList.toggle('on', !!engine.isPlaying); });
   engine.on?.('position', () => { if (!engine.isPlaying) vizDirty = true; });
 
   // view-level shortcuts when focus is outside the editor
@@ -737,12 +1183,18 @@ export function createCodeView(app) {
   return {
     el,
     editor,
+    /** For automation/tests: the current song code and the entry shown. */
+    getSongCode: () => { regenSong(); return song.code; },
+    getEntry: () => entry,
+    selectSong: () => setEntry(SONG),
     show() {
       visible = true;
       colors = null;
+      regenSong();
       render();
       if (refOpen) renderReference();
       vizDirty = true;
+      lastHlKey = '';
       playBtn.replaceChildren(icon(engine.isPlaying ? 'pause' : 'play'));
       if (!raf) raf = requestAnimationFrame(loop);
     },

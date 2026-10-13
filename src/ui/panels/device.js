@@ -8,6 +8,7 @@ import { createEffect, DRUM_PADS } from '../../core/model.js';
 import { clamp, deepClone } from '../../core/util.js';
 import { EFFECT_DEFS, EFFECT_CATEGORIES, INSTRUMENT_DEFS, PRESETS, DRUM_KITS, resolveEffectParams } from '../../audio/index.js';
 import { isPatchActive, patchFxOrder } from '../../core/patch.js';
+import { DRUM_MACHINES } from '../../audio/library/drum-machines.js';
 import { pluginInstrumentEditor, pluginEffectEditor, openPluginDialog } from '../plugin-device.js';
 
 // ============================================================================ effect presets
@@ -345,7 +346,9 @@ export function createDevicePanel(app) {
   // ---------------------------------------------------------------- header
   function presetOptions(ins) {
     const opts = [];
-    if (ins.type === 'drums') {
+    if (ins.type === 'drumsampler') {
+      for (const [id, m] of Object.entries(DRUM_MACHINES)) opts.push({ value: id, label: `${m.name} (${m.year})`, group: 'Sampled machines' });
+    } else if (ins.type === 'drums') {
       for (const [id, k] of Object.entries(DRUM_KITS || {})) opts.push({ value: id, label: k.name, group: 'Kits' });
     } else {
       opts.push({ value: '', label: '— Init (no preset) —' });
@@ -396,12 +399,13 @@ export function createDevicePanel(app) {
         const tr = store.get().tracks.find((x) => x.id === tgt.id);
         const i2 = tr?.instrument || ins;
         if (i2.type === 'drums') return i2.params?.kit || i2.preset || '808';
+        if (i2.type === 'drumsampler') return i2.params?.machine || 'RolandTR909';
         if (i2.preset) return i2.preset;
         const u = lastUserPreset.get(tgt.id);
         return u && opts.some((o) => o.value === 'user:' + u) ? 'user:' + u : '';
       };
       if (!opts.some((o) => o.value === curVal())) opts.unshift({ value: curVal(), label: ins.preset ? `${ins.preset} (missing)` : '— Custom —' });
-      presetSel = select({ options: opts, value: curVal(), cls: 'dv-preset', title: ins.type === 'drums' ? 'Drum kit — choose the sound set for all 16 pads' : 'Preset — load a sound (your edits override the preset until you choose another)', onChange: (v) => applyPreset(tgt, ins, v) });
+      presetSel = select({ options: opts, value: curVal(), cls: 'dv-preset', title: ins.type === 'drums' ? 'Drum kit — choose the sound set for all 16 pads' : ins.type === 'drumsampler' ? 'Drum machine — real samples of the classic machine (synthesized kit plays while loading / offline)' : 'Preset — load a sound (your edits override the preset until you choose another)', onChange: (v) => applyPreset(tgt, ins, v) });
       const step = (dir) => {
         const vals = opts.map((o) => o.value).filter((v) => v !== '' || ins.type !== 'drums');
         const i = vals.indexOf(presetSel.value);
@@ -410,7 +414,7 @@ export function createDevicePanel(app) {
         applyPreset(tgt, ins, nv);
       };
       modDot = h('button.dv-mod', { type: 'button', title: 'Edited — your changes override the preset. Click to revert to the preset.' }, '● edited');
-      modDot.addEventListener('click', () => editIns(tgt, 'Revert to preset', (i) => { i.params = i.type === 'drums' ? { kit: i.params.kit || i.preset } : i.type === 'sampler' && i.params.sampleId ? { sampleId: i.params.sampleId } : {}; }));
+      modDot.addEventListener('click', () => editIns(tgt, 'Revert to preset', (i) => { i.params = i.type === 'drums' ? { kit: i.params.kit || i.preset, ...(i.params.machine ? { machine: i.params.machine } : {}) } : i.type === 'drumsampler' ? { machine: i.params.machine } : i.type === 'sampler' && i.params.sampleId ? { sampleId: i.params.sampleId } : {}; }));
       parts.push(
         h('div.dv-preset-group',
           iconButton('chevronRight', () => step(-1), 'Previous preset', 'dv-prev'),
@@ -462,6 +466,10 @@ export function createDevicePanel(app) {
       return;
     }
     lastUserPreset.delete(tgt.id);
+    if (ins.type === 'drumsampler') {
+      editTarget(tgt, `Machine: ${DRUM_MACHINES[v]?.name || v}`, (t) => { t.instrument = { type: 'drumsampler', preset: null, params: { ...(t.instrument.params || {}), machine: v } }; });
+      return;
+    }
     if (ins.type === 'drums') {
       editTarget(tgt, `Kit: ${DRUM_KITS[v]?.name || v}`, (t) => {
         const pads = t.instrument.params?.pads;
@@ -491,7 +499,7 @@ export function createDevicePanel(app) {
         const keep = instDefs(ins.type)?.plugin ? Object.fromEntries(['name', 'code', 'url', 'library', 'instrument', 'state'].filter((k) => t.instrument.params?.[k] !== undefined).map((k) => [k, t.instrument.params[k]])) : {};
         t.instrument = ins.type === 'drums' ? { type: 'drums', preset: kit, params: { kit } } : { type: ins.type, preset: null, params: keep };
       }) },
-      { label: 'Revert to preset (clear my edits)', disabled: !ins.preset, onClick: () => editIns(tgt, 'Revert to preset', (i) => { i.params = i.type === 'drums' ? { kit: i.params.kit || i.preset } : i.type === 'sampler' && i.params.sampleId ? { sampleId: i.params.sampleId } : {}; }) },
+      { label: 'Revert to preset (clear my edits)', disabled: !ins.preset, onClick: () => editIns(tgt, 'Revert to preset', (i) => { i.params = i.type === 'drums' ? { kit: i.params.kit || i.preset, ...(i.params.machine ? { machine: i.params.machine } : {}) } : i.type === 'drumsampler' ? { machine: i.params.machine } : i.type === 'sampler' && i.params.sampleId ? { sampleId: i.params.sampleId } : {}; }) },
       { label: 'Randomize (subtle)', icon: 'dice', onClick: () => randomize(tgt, ins, 0.25) },
       { label: 'Randomize (wild)', icon: 'dice', onClick: () => randomize(tgt, ins, 0.9) },
       '-',
@@ -599,7 +607,7 @@ export function createDevicePanel(app) {
     const { tgt, ins, resolved } = ctx;
     const def = instDefs(ins.type);
     const key = 'ins:' + tgt.id;
-    const shell = cardShell({ key, title: def?.name || ins.type, iconName: ins.type === 'drums' ? 'drum' : ins.type === 'sampler' ? 'wave' : 'piano', color: tgt.color, cls: `dv-instrument.dv-ins-${ins.type}`, help: 'Instrument — generates the sound of this track' });
+    const shell = cardShell({ key, title: def?.name || ins.type, iconName: ins.type === 'drums' || ins.type === 'drumsampler' ? 'drum' : ins.type === 'sampler' ? 'wave' : 'piano', color: tgt.color, cls: `dv-instrument.dv-ins-${ins.type}`, help: 'Instrument — generates the sound of this track' });
     if (shell.collapsed) return { el: shell.el };
     if (!def) {
       shell.body.appendChild(h('div.dv-note', `Unknown instrument type “${ins.type}”.`));
@@ -611,13 +619,14 @@ export function createDevicePanel(app) {
 
     let skip = [];
     if (ins.type === 'drums') skip = ['kit'];
+    if (ins.type === 'drumsampler') skip = ['machine']; // picked in the header
     if (ins.type === 'organ') skip = ['Drawbars'];
     if (ins.type === 'sampler') skip = ['start', 'end', 'loopStart', 'loopEnd'];
 
     // instrument-specific editors
     if (ins.type === 'synth') updaters.push(synthVisuals(shell.body));
     if (ins.type === 'organ') updaters.push(drawbarEditor(shell.body, def, onParam));
-    if (ins.type === 'drums') updaters.push(drumEditor(shell.body, tgt));
+    if (ins.type === 'drums' || ins.type === 'drumsampler') updaters.push(drumEditor(shell.body, tgt));
     if (ins.type === 'sampler') updaters.push(samplerEditor(shell.body, tgt, onParam));
     if (def.plugin) updaters.push(pluginInstrumentEditor(app, shell.body, tgt, ins, { resolved, edit: (lbl, fn, o) => editIns(tgt, lbl, (i) => fn(i.params), o) }));
 
@@ -780,8 +789,9 @@ export function createDevicePanel(app) {
 
   // ---- drums: 4x4 pads + selected pad editor
   function drumEditor(body, tgt) {
-    const padDefs = instDefs('drums')?.padParams || [];
-    const numDefs = padDefs.filter((d) => d.type === 'number');
+    const padDefs = instDefs(tgt.track?.instrument?.type)?.padParams || instDefs('drums')?.padParams || [];
+    const allNumDefs = padDefs.filter((d) => d.type === 'number');
+    let numDefs = allNumDefs;
     const grid = h('div.dv-pads');
     const padEls = new Map();
     const editor = h('div.dv-pad-editor');
@@ -849,6 +859,7 @@ export function createDevicePanel(app) {
       edCtl = {};
       const pad = DRUM_PADS.find((x) => x.key === selectedPad.get(trackId)) || DRUM_PADS[0];
       const vals = lastResolved?.pads?.[pad.key] || {};
+      numDefs = allNumDefs.filter((d) => d.key !== 'variant' || lastResolved?.machine); // variation: sampled machines only
       const knobs = numDefs.map((d) => {
         const k = knob({ def: d, value: vals[d.key] ?? d.default, size: 32, onChange: (v, { final }) => editPad(pad.key, `${pad.name}: ${d.label}`, (pd) => { pd[d.key] = v; }, { coalesce: true }) });
         edCtl[d.key] = k;
@@ -873,7 +884,8 @@ export function createDevicePanel(app) {
       muteT?.setValue(!!vals.mute);
       const s = vals.sampleId ? store.get().samples?.[vals.sampleId] : null;
       if (sampleLbl) {
-        sampleLbl.textContent = s ? s.name : vals.sampleId ? 'missing sample' : 'Kit voice (synthesized)';
+        const mach = DRUM_MACHINES[lastResolved?.machine];
+        sampleLbl.textContent = s ? s.name : vals.sampleId ? 'missing sample' : mach ? `${mach.name} sample` : 'Kit voice (synthesized)';
         sampleLbl.classList.toggle('has', !!s);
         editor.querySelector('.dv-clear-sample')?.classList.toggle('hidden', !vals.sampleId);
       }
@@ -882,7 +894,9 @@ export function createDevicePanel(app) {
     renderPadSel();
     let edBuilt = false;
     return (r) => {
+      const machineChanged = edBuilt && !!lastResolved?.machine !== !!r?.machine;
       lastResolved = r;
+      if (machineChanged) renderEditor();
       for (const pad of DRUM_PADS) {
         const pv = r.pads?.[pad.key] || {};
         const e = padEls.get(pad.key);

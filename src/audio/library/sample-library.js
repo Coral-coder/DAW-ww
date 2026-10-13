@@ -200,12 +200,11 @@ export class SampleLibrary {
   /** Mirror preference, e.g. ['jsdelivr', 'raw']. */
   setMirrorOrder(order) { if (Array.isArray(order) && order.length) this.order = order.slice(); }
 
-  _skipFor(url) {
+  /** Mirror order for a URL: mirrors that keep failing for its repo are tried last (never dropped). */
+  _orderFor(url) {
     const repo = repoOf(url);
-    const skip = new Set();
-    for (const m of this.order) if ((this.mirrorFail.get(`${m}|${repo}`) || 0) >= 2) skip.add(m);
-    if (skip.size >= this.order.length) skip.clear(); // never give up on every mirror
-    return skip;
+    const bad = (m) => (this.mirrorFail.get(`${m}|${repo}`) || 0) >= 2;
+    return [...this.order.filter((m) => !bad(m)), ...this.order.filter(bad)];
   }
   _markMirror(mirror, url, ok) {
     const k = `${mirror}|${repoOf(url)}`;
@@ -239,7 +238,7 @@ export class SampleLibrary {
 
   async _fetchNetwork(url) {
     const tried = [];
-    for (const candidate of mirrorsFor(url, this.order, this._skipFor(url))) {
+    for (const candidate of mirrorsFor(url, this._orderFor(url))) {
       const mirror = candidate.startsWith(JSDELIVR_HOST) ? 'jsdelivr' : candidate.startsWith(RAW_HOST) ? 'raw' : 'direct';
       let timer = null;
       try {
@@ -384,6 +383,6 @@ export class SampleLibrary {
 /** Shared app-wide library instance (lazy: does nothing until used). */
 export const library = new SampleLibrary();
 if (typeof window !== 'undefined') {
-  // debugging / tests: window.heroic.samples is wired by the app; this is a fallback handle
+  // debugging / automation handle
   try { window.__dawwwSamples = library; } catch { /* */ }
 }

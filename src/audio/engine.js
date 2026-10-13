@@ -13,6 +13,7 @@ import { Emitter } from '../core/util.js';
 import { MixGraph } from './mixer.js';
 import { Scheduler, CodeCache } from './scheduler.js';
 import { renderOffline as renderOfflineImpl, decodeSampleData, findSampleIdByName } from './render.js';
+import { prefetchCodeSamples } from './code-instrument.js';
 
 export class AudioEngine extends Emitter {
   constructor(store) {
@@ -36,6 +37,8 @@ export class AudioEngine extends Emitter {
     this.codeCache = new CodeCache((trackId, res) => {
       this._codeStatus.set(trackId, res);
       if (res.ok) this.emit('code-ok', { trackId, cps: res.cps });
+      // start loading the library samples this code plays (Strudel drum machines, Dirt-Samples…)
+      if (res.ok) prefetchCodeSamples(this.ctx, this.codeCache.entries.get(trackId)?.evaluated).catch(() => {});
       else this.emit('code-error', { trackId, error: res.error });
     });
     this._unsubs = [
@@ -79,6 +82,7 @@ export class AudioEngine extends Emitter {
         onTick: (project) => this._automateTick(project),
       });
       try { this.graph.sync(this.project); } catch (e) { this._error(e); }
+      for (const e of this.codeCache.entries.values()) prefetchCodeSamples(ctx, e.evaluated).catch(() => {});
       if (ctx.state === 'suspended') ctx.resume().catch(() => {});
       this._sampleKeys = '';
       this._syncSamples(this.project);

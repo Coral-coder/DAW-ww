@@ -4,7 +4,10 @@
 //
 // createCodeEditor({ value, onChange(text), onApply(text), onApplyBlock(text, block), onStop(), placeholder })
 //   -> { el, getValue, setValue(text, {keepUndo}), focus, insertAtCursor(text), setErrorLine(line|null),
-//        setMarks([{start, end, cls?}]), getBlockAt(pos), getCursor() }
+//        setMarks([{start, end, cls?}]), getBlockAt(pos), getCursor(),
+//        setHighlights([{start, end, color, alpha}]),   live token boxes (Strudel-style; cheap, per frame)
+//        setBlockBars([{line0, line1, color, alpha}]),   gutter colour bars per labelled block (0-based lines)
+//        lineOfOffset(offset), visibleLines() -> [first, last] }
 // The root element has class `code-editor` (keyboard.js ignores global shortcuts inside it).
 import { h } from './dom.js';
 
@@ -137,10 +140,13 @@ export function createCodeEditor(opts = {}) {
   const hl = h('pre.ce-highlight', { 'aria-hidden': 'true' });
   const marks = h('pre.ce-marks', { 'aria-hidden': 'true' });
   const band = h('div.ce-errband.hidden');
+  const hlLayer = h('div.ce-hl', { 'aria-hidden': 'true' });
+  const barLayer = h('div.ce-bars', { 'aria-hidden': 'true' });
   const flash = h('div.ce-flash');
   const ta = h('textarea.ce-input', { spellcheck: false, autocapitalize: 'off', autocomplete: 'off', wrap: 'off', placeholder, 'aria-label': 'Code editor' });
   ta.setAttribute('autocorrect', 'off');
-  const stage = h('div.ce-stage', band, flash, hl, marks, ta);
+  const stage = h('div.ce-stage', band, flash, hl, marks, hlLayer, ta);
+  gutter.appendChild(barLayer);
   const el = h('div.code-editor', gutter, stage);
 
   let lastLineCount = 0;
@@ -159,6 +165,7 @@ export function createCodeEditor(opts = {}) {
     }
   }
   function renderHighlight() {
+    computeLines();
     hl.innerHTML = highlightCode(ta.value) + '\n ';
     renderMarks();
     renderGutter();
@@ -179,8 +186,8 @@ export function createCodeEditor(opts = {}) {
   }
   function syncScroll() {
     const x = ta.scrollLeft, y = ta.scrollTop;
-    hl.style.transform = marks.style.transform = `translate(${-x}px, ${-y}px)`;
-    gutterInner.style.transform = `translateY(${-y}px)`;
+    hl.style.transform = marks.style.transform = hlLayer.style.transform = `translate(${-x}px, ${-y}px)`;
+    gutterInner.style.transform = barLayer.style.transform = `translateY(${-y}px)`;
     if (errorLine) band.style.transform = `translateY(${PAD_T + (errorLine - 1) * LINE_H - y}px)`;
   }
   ta.addEventListener('scroll', syncScroll);
@@ -317,6 +324,90 @@ export function createCodeEditor(opts = {}) {
     }
   });
 
+  // ---- live highlights: absolutely positioned boxes, only for visible lines ----
+  let lineStarts = [0];
+  function computeLines() {
+    const v = ta.value;
+    lineStarts = [0];
+    for (let i = v.indexOf('\n'); i >= 0; i = v.indexOf('\n', i + 1)) lineStarts.push(i + 1);
+  }
+  function lineOfOffset(off) {
+    let lo = 0, hi = lineStarts.length - 1;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (lineStarts[mid] <= off) lo = mid; else hi = mid - 1; }
+    return lo;
+  }
+  function colOf(line, off) {
+    const st = lineStarts[line];
+    const seg = ta.value.slice(st, off);
+    if (!seg.includes('\t')) return off - st;
+    let c = 0;
+    for (const ch of seg) c = ch === '\t' ? c + (2 - (c % 2)) : c + 1;
+    return c;
+  }
+  let metrics = null;
+  function measure() {
+    const cs = getComputedStyle(ta);
+    const probe = h('span', { style: { position: 'absolute', visibility: 'hidden', whiteSpace: 'pre', font: cs.font, letterSpacing: cs.letterSpacing } }, 'x'.repeat(200));
+    stage.appendChild(probe);
+    const w = probe.getBoundingClientRect().width / 200;
+    probe.remove();
+    if (!(w > 0)) return null;
+    return { cw: w, padL: parseFloat(cs.paddingLeft) || 14, padT: parseFloat(cs.paddingTop) || PAD_T };
+  }
+  function visibleLines() {
+    const top = ta.scrollTop;
+    const first = Math.max(0, Math.floor((top - PAD_T) / LINE_H) - 1);
+    const last = Math.min(lineStarts.length - 1, Math.ceil((top + (ta.clientHeight || 600) - PAD_T) / LINE_H) + 1);
+    return [first, last];
+  }
+  const hlPool = [];
+  let hlUsed = 0;
+  function setHighlights(list) {
+    if (!list || !list.length) {
+      if (hlUsed) { for (let i = 0; i < hlUsed; i++) hlPool[i].style.display = 'none'; hlUsed = 0; }
+      return;
+    }
+    if (!metrics) metrics = measure();
+    if (!metrics) return;
+    const { cw, padL, padT } = metrics;
+    const [first, last] = visibleLines();
+    const len = ta.value.length;
+    let n = 0;
+    for (const r of list) {
+      const s0 = r.start, e0 = Math.min(r.end, len);
+      if (!(e0 > s0) || s0 < 0) continue;
+      const l0 = lineOfOffset(s0), l1 = lineOfOffset(e0 - 1);
+      if (l1 < first || l0 > last) continue;
+      for (let l = Math.max(l0, first); l <= Math.min(l1, last); l++) {
+        const a = l === l0 ? s0 : lineStarts[l];
+        const b = l === l1 ? e0 : lineStarts[l + 1] - 1;
+        if (b <= a) continue;
+        let d = hlPool[n];
+        if (!d) { d = h('div.ce-hlbox'); hlLayer.appendChild(d); hlPool[n] = d; }
+        n++;
+        const c0 = colOf(l, a), c1 = colOf(l, b);
+        const css = `display:block;left:${(padL + c0 * cw - 2).toFixed(1)}px;top:${padT + l * LINE_H + 1}px;width:${((c1 - c0) * cw + 4).toFixed(1)}px;--hl:${r.color || 'var(--accent-2)'};opacity:${(r.alpha ?? 1).toFixed(2)}`;
+        if (d._css !== css) { d.style.cssText = css; d._css = css; }
+      }
+    }
+    for (let i = n; i < hlUsed; i++) { hlPool[i].style.display = 'none'; hlPool[i]._css = ''; }
+    hlUsed = n;
+  }
+  const barPool = [];
+  let barUsed = 0;
+  function setBlockBars(list) {
+    let n = 0;
+    for (const b of list || []) {
+      let d = barPool[n];
+      if (!d) { d = h('div.ce-bar'); barLayer.appendChild(d); barPool[n] = d; }
+      n++;
+      const css = `display:block;top:${PAD_T + b.line0 * LINE_H}px;height:${(b.line1 - b.line0 + 1) * LINE_H}px;--bar:${b.color || 'var(--accent-2)'};opacity:${(b.alpha ?? 0.3).toFixed(2)};width:${b.alpha > 0.5 ? 4 : 3}px`;
+      if (d._css !== css) { d.style.cssText = css; d._css = css; }
+    }
+    for (let i = n; i < barUsed; i++) { barPool[i].style.display = 'none'; barPool[i]._css = ''; }
+    barUsed = n;
+  }
+
   function setValue(text) {
     if (ta.value === text) return;
     const s = ta.selectionStart, y = ta.scrollTop;
@@ -348,7 +439,8 @@ export function createCodeEditor(opts = {}) {
   ta.value = opts.value || '';
   renderHighlight();
   // keep gutter/overlays aligned if fonts load late
-  if (document.fonts?.ready) document.fonts.ready.then(() => syncScroll());
+  if (document.fonts?.ready) document.fonts.ready.then(() => { metrics = null; syncScroll(); });
+  new ResizeObserver(() => { if (!metrics) return; const m = measure(); if (m) metrics = m; }).observe(stage);
 
   return {
     el,
@@ -362,5 +454,10 @@ export function createCodeEditor(opts = {}) {
     getCursor: () => ta.selectionStart,
     currentBlock,
     refresh: renderHighlight,
+    setHighlights,
+    setBlockBars,
+    lineOfOffset,
+    visibleLines,
+    get scrollTop() { return ta.scrollTop; },
   };
 }

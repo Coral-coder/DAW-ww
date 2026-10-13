@@ -28,10 +28,13 @@ const DRUM_ORDER = new Map(DRUM_PADS.map((p, i) => [p.pitch, i]));
 const FLAT_KEYS = new Set([5, 10, 3, 8, 1, 6]);
 const RES = [1, 2, 4, 3, 8, 6, 12, 16, 24];
 /**
- * Onset quantisation used by the code view: the nearest 16th when within 0.05 beat (humanised or
- * strummed notes), otherwise the nearest 1/24 beat (holds 32nds, 8th and 16th triplets).
+ * Onset quantisation used by the code view: onsets on the 1/24-beat grid (16ths, 32nds, 8th and
+ * 16th triplets) stay; others snap to the nearest 16th when within 0.05 beat (humanised or strummed
+ * notes), else to the nearest 1/24 beat.
  */
 export function snapBeat(b) {
+  const s24 = Math.round(b * 24) / 24;
+  if (Math.abs(b - s24) < 0.002) return s24; // already on the fine grid (32nds, triplets, fast arps)
   const s16 = Math.round(b * 4) / 4;
   if (Math.abs(b - s16) <= 0.05 + 1e-9) return s16;
   return Math.round(b * 24) / 24;
@@ -633,7 +636,7 @@ export function songToCode(project) {
 
 // ---------------------------------------------------------------------------- code -> project
 
-const COMPLEX_RE = /\b(rand|irand|perlin|choose|chooseCycles|randcat|wchoose|shuffle|scramble|sometimes\w*|often|rarely|almostNever|almostAlways|someCycles\w*|degrade\w*|undegradeBy|sine|cosine|saw|isaw|square|tri|sine2|saw2|square2|tri2|rand2|segment|range)\b/;
+const COMPLEX_RE = /\b(rand|irand|perlin|choose|chooseCycles|randcat|wchoose|shuffle|scramble|sometimes\w*|often|rarely|almostNever|almostAlways|someCycles\w*|degrade\w*|undegradeBy|sine|cosine|saw|isaw|square|tri|sine2|saw2|square2|tri2|rand2)\b/;
 
 /** Normalised code for "did the user change this?" comparisons. */
 export function normCode(s) {
@@ -726,7 +729,7 @@ export function patternToNotes(pattern, { bpb, kind, prefer = [], text = '' } = 
   const cycles = Math.max(16, Math.ceil((2 * maxLen) / bpb) * 2);
   let r;
   try { r = eventsToNotes(pattern, { cycles, bpb, kind }); } catch (e) { return { complex: `error: ${e.message}` }; }
-  if (COMPLEX_RE.test(stripComments(text)) || /"[^"]*[?|][^"]*"/.test(stripComments(text))) return { complex: 'uses randomness or continuous signals', ...r };
+  if (COMPLEX_RE.test(stripComments(text).replace(/"[^"]*"|`[^`]*`|'[^']*'/g, '""')) || /"[^"]*[?|][^"]*"/.test(stripComments(text))) return { complex: 'uses randomness or continuous signals', ...r };
   const period = findPeriod(r.notes, cycles, bpb, prefer);
   if (period === null) return { complex: `doesn't repeat within ${cycles} bars`, ...r };
   return { ...r, length: period, notes: r.notes.filter((n) => n.start < period - EPS).map((n) => ({ ...n, dur: Math.min(n.dur, Math.max(0.01, period * 4)) })) };

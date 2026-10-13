@@ -88,7 +88,7 @@ export function pianoTable(sampleRate, zoneMidi, layer = 1, tone = 0, decay = 1,
     for (let i = 0; i < att; i++) out[i] *= i / att;
     let s2 = 0; const nn = Math.min(len, Math.round(0.4 * sr));
     for (let i = 0; i < nn; i++) s2 += out[i] * out[i];
-    const g = 0.3 / Math.sqrt(s2 / nn || 1);
+    const g = 0.5 / Math.sqrt(s2 / nn || 1);
     const fade = Math.round(0.25 * sr);
     for (let i = 0; i < len; i++) out[i] *= g * (i > len - fade ? (len - i) / fade : 1);
     return makeBuffer([out], sr, ctx);

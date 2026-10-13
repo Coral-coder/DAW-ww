@@ -209,3 +209,29 @@
   .code-list { width: 150px; }
   .code-ref { width: 240px; }
 }
+
+/* ---------- live highlighting (Strudel-style) ---------- */
+.ce-hl { position: absolute; top: 0; left: 0; width: 0; height: 0; pointer-events: none; will-change: transform; z-index: 1; }
+.ce-hlbox {
+  position: absolute; height: 18px; border-radius: 3px; pointer-events: none;
+  border: 1.5px solid var(--hl); background: color-mix(in srgb, var(--hl) 22%, transparent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--hl) 55%, transparent);
+  transition: opacity .06s linear;
+}
+.ce-gutter .ce-bars { position: absolute; top: 0; left: 0; width: 6px; height: 0; pointer-events: none; will-change: transform; }
+.ce-bar { position: absolute; left: 0; border-radius: 0 3px 3px 0; background: var(--bar); box-shadow: 0 0 8px color-mix(in srgb, var(--bar) 60%, transparent); transition: opacity .08s linear, width .08s; }
+
+/* ---------- song (live) entry ---------- */
+.code-list-pinned { padding: 4px 4px 2px; border-bottom: 1px solid var(--line); }
+.code-song { padding: 7px 6px; }
+.code-song .code-item-name span:last-child { font-weight: 600; }
+.code-song-icon { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; flex-shrink: 0; color: #111; background: linear-gradient(135deg, var(--accent-2), var(--accent)); }
+.code-dot.live { background: var(--accent-2); box-shadow: 0 0 6px var(--accent-2); }
+.code-list-empty { padding: 8px 6px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-3); }
+.code-list-empty p { margin: 0; }
+.code-stalebar { display: flex; align-items: center; gap: 6px; padding: 5px 10px; font-size: 12px; background: color-mix(in srgb, var(--warn) 16%, var(--bg-2)); border-bottom: 1px solid var(--warn); flex-shrink: 0; }
+.code-stalebar .icon { color: var(--warn); }
+.code-stalebar .code-link { padding: 0; color: var(--accent-2); text-decoration: underline; }
+.code-complex-list { margin: 4px 0; padding-left: 18px; }
+.code-complex-list code { font-family: var(--mono); }
+.code-toolbar .hidden, .code-hint .hidden { display: none !important; }

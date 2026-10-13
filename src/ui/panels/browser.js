@@ -7,6 +7,7 @@ import { uid, createRng } from '../../core/util.js';
 import * as audio from '../../audio/index.js';
 import * as genres from '../../gen/genres.js';
 import * as theory from '../../theory/index.js';
+import { DRUM_MACHINES } from '../../audio/library/drum-machines.js';
 
 const LS_OPEN = 'heroic-browser-open';
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } };
@@ -109,7 +110,7 @@ export function createBrowserPanel(app) {
   const DRUM_KITS = audio.DRUM_KITS || {};
   const GENRES = genres.GENRES || {};
   let query = '';
-  let openState = lsGet(LS_OPEN, { instruments: true, kits: false, samples: true, genres: false, examples: false, patterns: true, progressions: false });
+  let openState = lsGet(LS_OPEN, { instruments: true, machines: true, kits: false, samples: true, genres: false, examples: false, patterns: true, progressions: false });
   let progGenre = 'project';
   let selectedKey = null;
   let opt = { examples: [], gen: {}, wav: {} };
@@ -249,6 +250,44 @@ export function createBrowserPanel(app) {
       actionsEls: [actBtn('plus', 'Add drum track', () => actions.addTrack(id))],
     }));
     return section('kits', 'Drum kits', 'drum', items, { count: items.length });
+  }
+
+  // ---------------------------------------------------------------- sampled drum machines (src/audio/library)
+  function machineInstrument(id) {
+    const kit = DRUM_MACHINES[id]?.kit || '808';
+    return { type: 'drums', preset: kit, params: { kit, machine: id } };
+  }
+  function addMachineTrack(id) {
+    return actions.addTrack('plugin', { instrument: machineInstrument(id), name: DRUM_MACHINES[id]?.name || id, role: 'drums' });
+  }
+  async function previewMachineSound(id) {
+    try {
+      await actions.ensureAudio?.();
+      if (!engine.ctx) return;
+      const { previewMachine } = await import('../../audio/library/preview.js');
+      let tm = null;
+      await previewMachine(engine.ctx, engine.graph?.master?.input || engine.ctx.destination, id, {
+        bpm: Math.min(130, Math.max(80, get().bpm || 104)),
+        onLoading: (on) => { if (on) tm = setTimeout(() => toast(`Loading ${DRUM_MACHINES[id]?.name || id} samples…`), 400); else clearTimeout(tm); },
+      });
+    } catch (e) { toast('Could not preview: ' + e.message, { level: 'error' }); }
+  }
+  function buildMachines() {
+    const items = Object.entries(DRUM_MACHINES).filter(([id, m]) => matches(m.name, m.maker, String(m.year), (m.tags || []).join(' '), id, 'drum machine sampled')).map(([id, m]) => item({
+      key: 'machine:' + id, ic: 'drum', label: m.name, meta: String(m.year || ''),
+      title: `${m.name} — ${m.description}\nClick: preview · double-click: add a drum track · right-click for more`,
+      onClick: () => { setInfo(m.name, m.description, `Real samples (Strudel bank "${id}") — ${(m.tags || []).join(', ')}. Double-click to add a drum track; the synthesized “${DRUM_KITS[m.kit]?.name || m.kit}” kit plays if the samples can't load.`); previewMachineSound(id); },
+      onDblClick: () => addMachineTrack(id),
+      onMenu: (e) => { const t = selectedTrack(); const isDrum = t?.instrument?.type === 'drums' || t?.instrument?.type === 'drumsampler'; contextMenu(e, [
+        { header: m.name },
+        { label: 'Preview', icon: 'play', onClick: () => previewMachineSound(id) },
+        { label: 'Add drum track', icon: 'plus', onClick: () => addMachineTrack(id) },
+        { label: 'Add drum track + beat', icon: 'dice', onClick: () => { const nt = addMachineTrack(id); if (nt) actions.generatePart('drums', { trackId: nt.id }); } },
+        { label: isDrum ? `Load on "${t.name}"` : 'Load on selected drum track', icon: 'drum', disabled: !isDrum, onClick: () => { actions.updateTrack(t.id, (tt) => { tt.instrument.params = { ...(tt.instrument.params || {}), machine: id }; }, `Machine ${m.name}`); toast(`${t.name} now plays the ${m.name}`, { level: 'success' }); } },
+      ]); },
+      actionsEls: [actBtn('play', 'Preview', () => previewMachineSound(id)), actBtn('plus', 'Add drum track', () => addMachineTrack(id))],
+    }));
+    return section('machines', 'Drum machines', 'drum', items, { count: items.length });
   }
 
   // ---------------------------------------------------------------- samples
@@ -526,7 +565,7 @@ export function createBrowserPanel(app) {
   }
   function renderAll() {
     const st = bodyEl.scrollTop;
-    const sections = [buildInstruments(), buildKits(), buildSamples(), buildPatterns(), buildProgressions(), buildGenres(), buildExamples()].filter(Boolean);
+    const sections = [buildInstruments(), buildMachines(), buildKits(), buildSamples(), buildPatterns(), buildProgressions(), buildGenres(), buildExamples()].filter(Boolean);
     if (!sections.length) sections.push(h('div.br-empty.muted', { style: { padding: '16px' } }, `No results for "${query}".`));
     bodyEl.replaceChildren(...sections);
     bodyEl.scrollTop = st;
