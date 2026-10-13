@@ -1,0 +1,12 @@
+{
+  "name": "heroic-daw",
+  "version": "1.0.0",
+  "description": "A feature-rich, zero-dependency web-based digital audio workstation with sequencing, synths, drum machines, sampling, generative composition and Strudel-style live coding.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node scripts/serve.js",
+    "test": "node --test tests/"
+  },
+  "license": "MIT"
+}
