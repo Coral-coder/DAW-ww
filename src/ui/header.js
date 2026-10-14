@@ -6,6 +6,8 @@ import { numberField, select, contextMenu, meter, knob, markAuto } from './compo
 import { AUTO_MODES } from './automation-recorder.js';
 import { SCALES, keyRootName } from '../theory/index.js';
 import { GENRES } from '../gen/genres.js';
+import { priorityOverflow } from './overflow.js';
+const prio = (e, n) => { e.dataset.prio = String(n); return e; };
 import { overriddenLanes } from '../core/automation.js';
 
 export function createHeader(app) {
@@ -112,17 +114,21 @@ export function createHeader(app) {
 
   const el = h('header.app-header',
     h('div.hgroup', menuBtn, logo),
-    h('div.hgroup', undoBtn, redoBtn),
-    h('div.hgroup', playBtn, stopBtn, recBtn, h('div.auto-arm-group', autoBtn, autoMode, reBtn), loopBtn, metroBtn, lcd),
-    h('div.hgroup', h('div.hfield', h('span.hlabel', 'BPM'), bpm, tempoNow), tap, h('div.hfield', h('span.hlabel', 'Sig'), sig), h('div.hfield', h('span.hlabel', 'Swing'), swing)),
-    h('div.hgroup', h('div.hfield', h('span.hlabel', 'Key'), keyRoot), h('div.hfield', h('span.hlabel', 'Scale'), keyScale), h('div.hfield', h('span.hlabel', 'Genre'), genre)),
-    h('div.hgroup', modeSwitch),
+    // data-prio: priority+ overflow (src/ui/overflow.js) — when the row doesn't fit, the highest numbers move into
+    // the "⋯" menu first (genre, swing, undo, master …); transport, BPM, Create and the panel toggles always stay
+    h('div.hgroup', { dataset: { prio: 7 } }, undoBtn, redoBtn),
+    h('div.hgroup', playBtn, stopBtn, recBtn, h('div.auto-arm-group', autoBtn, prio(autoMode, 2), reBtn), loopBtn, metroBtn, lcd),
+    h('div.hgroup', h('div.hfield', h('span.hlabel', 'BPM'), bpm, tempoNow), prio(tap, 4), h('div.hfield', { dataset: { prio: 5 } }, h('span.hlabel', 'Sig'), sig), h('div.hfield', { dataset: { prio: 8 } }, h('span.hlabel', 'Swing'), swing)),
+    h('div.hgroup', h('div.hfield', { dataset: { prio: 1 } }, h('span.hlabel', 'Key'), keyRoot), h('div.hfield', { dataset: { prio: 2 } }, h('span.hlabel', 'Scale'), keyScale), h('div.hfield', { dataset: { prio: 9 } }, h('span.hlabel', 'Genre'), genre)),
+    h('div.hgroup', { dataset: { prio: 3 } }, modeSwitch),
     h('div.hgroup', genBtn),
     h('div.spacer'),
-    h('div.hgroup', masterVol, masterMeter),
+    h('div.hgroup', { dataset: { prio: 6 } }, masterVol, masterMeter),
     h('div.hgroup.ctl-slot'), // hardware control: MIDI learn + command palette (src/control/index.js)
     h('div.hgroup', browserBtn, deviceBtn, assistBtn),
   );
+
+  priorityOverflow(el, { title: 'More transport controls (hidden to fit the window)' });
 
   function sync() {
     const p = store.get();

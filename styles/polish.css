@@ -6,3 +6,18 @@
 .groove-sketch-host { background: var(--bg-2, #15171c); border-radius: 6px; padding: 6px; }
 .groove-sketch { display: flex; align-items: flex-end; height: 44px; gap: 0; }
 .groove-slot { display: block; box-sizing: border-box; border-left: 2px solid var(--accent, #f80); background: color-mix(in srgb, var(--accent, #f80) 25%, transparent); margin: 0 1px; }
+
+/* ---- Priority+ overflow (src/ui/overflow.js): header transport + device panel header row */
+.ovf-hidden { display: none !important; }
+.hgroup:not(:has(> :not(.ovf-hidden))) { display: none; }
+.ovf-more { flex-shrink: 0; }
+.ovf-more.hidden { display: none; }
+.ovf-pop { position: fixed; z-index: 400; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; max-width: min(520px, calc(100vw - 16px));
+  padding: 10px 12px; background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--radius); box-shadow: var(--shadow); }
+.ovf-pop .hgroup { border-left: 0; padding: 0; }
+.ovf-pop .hfield { display: flex; flex-direction: column; align-items: flex-start; }
+.ovf-pop .hfield select { max-width: 180px; }
+
+/* ---- device panel with nothing selected: header row only */
+.device-panel.dv-none .device-body { display: none; }
+.device-panel.dv-none .dv-hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }

@@ -124,3 +124,27 @@ test('groove library: MPC 16th swing presets + project grooves; apply with stren
   assert.equal(acc[1].vel, 0.85);
   assert.equal(notes[1].start, 0.25); // input untouched
 });
+
+import { instrumentEdited } from '../src/core/model.js';
+import { instrumentForRole } from '../src/gen/sound.js';
+
+test('"edited" badge: generated drum tracks are not edited; user edits / legacy sound params are', () => {
+  for (const g of ['house', 'dnb', 'trap', 'techno', 'lofi']) {
+    const ins = instrumentForRole('drums', g);
+    assert.equal(instrumentEdited(ins), false, g);
+  }
+  assert.equal(instrumentEdited({ type: 'drums', preset: '808', params: { kit: '808' } }), false);
+  assert.equal(instrumentEdited({ type: 'synth', preset: 'x', params: { cutoff: 0.3 } }), true);
+  assert.equal(instrumentEdited({ type: 'drums', preset: '808', params: { kit: '808', pads: { kick: { tone: 1 } } }, edited: true }), true);
+  assert.equal(instrumentEdited({ type: 'synth', preset: 'x', params: { cutoff: 0.3 }, edited: false }), false);
+});
+
+import { fitPlan } from '../src/ui/overflow.js';
+
+test('priority+ overflow: hides the highest priorities first until the row fits', () => {
+  const items = [{ prio: 0, width: 100 }, { prio: 3, width: 50 }, { prio: 9, width: 80 }, { prio: 5, width: 40 }, { prio: 9, width: 30 }];
+  assert.deepEqual(fitPlan(items, 500, 600), []);
+  // 650 + 32 (⋯) must drop to ≤ 600: the later prio-9 (30) then the other prio-9 (80)
+  assert.deepEqual(fitPlan(items, 650, 600), [4, 2]);
+  assert.deepEqual(fitPlan(items, 1000, 600), [4, 2, 3, 1]); // never the prio-0 item
+});
