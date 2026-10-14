@@ -72,24 +72,24 @@ bool paramsInfo(const clap_plugin_t*, uint32_t i, clap_param_info_t* info) {
 bool paramsValue(const clap_plugin_t* p, clap_id id, double* v) { if (id != 1) return false; *v = P(p)->gain; return true; }
 bool paramsToText(const clap_plugin_t*, clap_id, double v, char* out, uint32_t size) { snprintf(out, size, "%.2f", v); return true; }
 bool paramsFromText(const clap_plugin_t*, clap_id, const char* t, double* v) { *v = atof(t); return true; }
+void applyEvent(Plug* s, const clap_event_header_t* e) {
+  if (e->space_id != CLAP_CORE_EVENT_SPACE_ID) return;
+  if (e->type == CLAP_EVENT_PARAM_VALUE) {
+    auto* pv = reinterpret_cast<const clap_event_param_value_t*>(e);
+    if (pv->param_id == 1) s->gain = pv->value;
+  } else if (e->type == CLAP_EVENT_NOTE_ON) {
+    s->note = reinterpret_cast<const clap_event_note_t*>(e)->key;
+  } else if (e->type == CLAP_EVENT_NOTE_OFF) {
+    if (reinterpret_cast<const clap_event_note_t*>(e)->key == s->note) s->note = -1;
+  } else if (e->type == CLAP_EVENT_MIDI) {
+    auto* m = reinterpret_cast<const clap_event_midi_t*>(e);
+    if ((m->data[0] & 0xF0) == 0x90 && m->data[2]) s->note = m->data[1];
+    else if (((m->data[0] & 0xF0) == 0x80 || (m->data[0] & 0xF0) == 0x90) && m->data[1] == s->note) s->note = -1;
+  }
+}
 void applyEvents(Plug* s, const clap_input_events_t* in) {
   const uint32_t n = in->size(in);
-  for (uint32_t i = 0; i < n; i++) {
-    const clap_event_header_t* e = in->get(in, i);
-    if (e->space_id != CLAP_CORE_EVENT_SPACE_ID) continue;
-    if (e->type == CLAP_EVENT_PARAM_VALUE) {
-      auto* pv = reinterpret_cast<const clap_event_param_value_t*>(e);
-      if (pv->param_id == 1) s->gain = pv->value;
-    } else if (e->type == CLAP_EVENT_NOTE_ON) {
-      s->note = reinterpret_cast<const clap_event_note_t*>(e)->key;
-    } else if (e->type == CLAP_EVENT_NOTE_OFF) {
-      if (reinterpret_cast<const clap_event_note_t*>(e)->key == s->note) s->note = -1;
-    } else if (e->type == CLAP_EVENT_MIDI) {
-      auto* m = reinterpret_cast<const clap_event_midi_t*>(e);
-      if ((m->data[0] & 0xF0) == 0x90 && m->data[2]) s->note = m->data[1];
-      else if (((m->data[0] & 0xF0) == 0x80 || (m->data[0] & 0xF0) == 0x90) && m->data[1] == s->note) s->note = -1;
-    }
-  }
+  for (uint32_t i = 0; i < n; i++) applyEvent(s, in->get(in, i));
 }
 void paramsFlush(const clap_plugin_t* p, const clap_input_events_t* in, const clap_output_events_t*) { applyEvents(P(p), in); }
 const clap_plugin_params_t kParams = {paramsCount, paramsInfo, paramsValue, paramsToText, paramsFromText, paramsFlush};
@@ -123,22 +123,33 @@ void pStop(const clap_plugin_t*) {}
 void pReset(const clap_plugin_t*) {}
 clap_process_status pProcess(const clap_plugin_t* p, const clap_process_t* proc) {
   Plug* s = P(p);
-  applyEvents(s, proc->in_events);
   const uint32_t n = proc->frames_count;
+  const uint32_t ne = proc->in_events->size(proc->in_events);
+  uint32_t ei = 0;
   float** out = proc->audio_outputs[0].data32;
-  if (s->instrument) {
-    const double f = s->note >= 0 ? 440.0 * std::pow(2.0, (s->note - 69) / 12.0) : 0;
-    for (uint32_t i = 0; i < n; i++) {
+  float** in = s->instrument ? nullptr : proc->audio_inputs[0].data32;
+  for (uint32_t i = 0; i < n; i++) {
+    // sample-accurate events
+    while (ei < ne) {
+      const clap_event_header_t* e = proc->in_events->get(proc->in_events, ei);
+      if (e->time > i) break;
+      applyEvent(s, e);
+      ei++;
+    }
+    if (s->instrument) {
       float v = 0;
-      if (s->note >= 0) { v = (float)(0.25 * s->gain * std::sin(s->phase)); s->phase += 2 * M_PI * f / s->sr; }
+      if (s->note >= 0) {
+        v = (float)(0.25 * s->gain * std::sin(s->phase));
+        s->phase += 2 * M_PI * 440.0 * std::pow(2.0, (s->note - 69) / 12.0) / s->sr;
+      }
       out[0][i] = v;
       out[1][i] = v;
+    } else {
+      out[0][i] = (float)(in[0][i] * s->gain);
+      out[1][i] = (float)(in[1][i] * s->gain);
     }
-  } else {
-    float** in = proc->audio_inputs[0].data32;
-    for (uint32_t c = 0; c < 2; c++)
-      for (uint32_t i = 0; i < n; i++) out[c][i] = (float)(in[c][i] * s->gain);
   }
+  for (; ei < ne; ei++) applyEvent(s, proc->in_events->get(proc->in_events, ei));
   return CLAP_PROCESS_CONTINUE;
 }
 const void* pExt(const clap_plugin_t* p, const char* id) {

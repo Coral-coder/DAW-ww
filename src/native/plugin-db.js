@@ -98,7 +98,7 @@ export async function scanPlugins({ db = emptyDb(), folders, io, force = false, 
       let r;
       try { r = await io.describe(format, path); } catch (e) { r = { ok: false, error: e?.message || String(e) }; }
       const ok = !!r?.ok;
-      if (ok) next.plugins.push(...(r.plugins || []).filter(isPluginDesc).map(cleanDesc));
+      if (ok) next.plugins.push(...(r.plugins || []).filter(isPluginDesc).map((p) => cleanDesc({ ...p, path: p.path || path })));
       else next.failed.push({ format, path, error: r?.error || 'scan failed', crashed: !!r?.crashed, timedOut: !!r?.timedOut });
       next.bundles[bk] = { mtime, ok };
     }

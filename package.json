@@ -86,6 +86,9 @@
           "daw3-plughost"
         ]
       }
+    ],
+    "asarUnpack": [
+      "src/native/**"
     ]
   }
 }
