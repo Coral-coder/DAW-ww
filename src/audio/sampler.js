@@ -1,6 +1,7 @@
 // Sampler: pitched (playbackRate) or sliced playback of a project sample with ADSR + filter.
 import { clamp } from '../core/util.js';
 import { BaseInstrument, Voice, envNote, getReversedBuffer, num } from './synth.js';
+import { exprStage } from './voice-expression.js';
 
 export class SamplerInstrument extends BaseInstrument {
   /** Live edits reach sounding voices: filter cutoff / resonance and tuning (pitched mode). */
@@ -107,7 +108,8 @@ export class SamplerInstrument extends BaseInstrument {
       pn.pan.value = num(extra.pan, 0, -1, 1);
       node.connect(pn); node = pn;
     }
-    node.connect(this.out.input);
+    v.detuneTargets = [src.detune]; v.filters = [f]; // MPE: per-note bend + timbre on the voice's own filter
+    v.xs = exprStage(ctx, v, node, this.out.input); // MPE pressure -> per-voice gain
     if (loop) src.start(t, segStart);
     else src.start(t, segStart, segLen);
     src.onended = () => v.cleanup();

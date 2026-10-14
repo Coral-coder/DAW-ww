@@ -46,9 +46,12 @@ export function installKeyboard(app) {
 
     const cmd = shortcuts.match(e, { view: ui.get('view') });
     if (!cmd) return;
+    if (e.repeat && !cmd.repeat) { e.preventDefault(); return; }
+    let r;
+    try { r = cmd.run(e); } catch (err) { console.error(`[command:${cmd.id}]`, err); }
+    // a view command with nothing to do (no selection…) lets the key through
+    if (r === false && cmd.scope !== 'global') return;
     e.preventDefault();
-    if (e.repeat && !cmd.repeat) return;
-    try { cmd.run(); } catch (err) { console.error(`[command:${cmd.id}]`, err); }
   });
 
   window.addEventListener('keyup', (e) => {

@@ -178,3 +178,16 @@ export function songLengthBeats(project) {
 export function patternsForTrack(project, trackId) {
   return Object.values(project.patterns).filter((p) => p.trackId === trackId);
 }
+
+// Params a generator / loader sets up that are not "sound edits" (kit / machine choice, sample slot, playback setup).
+const SETUP_PARAM_KEYS = new Set(['kit', 'machine', 'sampleId', 'humanize', 'roundRobin', 'pads', 'library', 'instrument']);
+/**
+ * Has the user edited this instrument away from its preset? The device panel marks its own edits
+ * (instrument.edited = true; a preset / revert clears it). Without a mark (older projects) only real sound params
+ * count — never the setup a generator writes (a freshly generated drum track is not "edited").
+ */
+export function instrumentEdited(ins) {
+  if (!ins) return false;
+  if (ins.edited != null) return !!ins.edited;
+  return Object.keys(ins.params || {}).some((k) => !SETUP_PARAM_KEYS.has(k));
+}

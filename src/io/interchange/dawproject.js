@@ -47,12 +47,16 @@ import { base64ToArrayBuffer, arrayBufferToBase64 } from '../samples.js';
 import { songTempoMap } from '../../time/tempo-map.js';
 import { applyTempoPoints, applyMeterPoints, tempoPoints, meterPoints } from '../../time/convert.js';
 import { isWarped, normalizeMarkers, beatAtSec } from '../../audio/warp/markers.js';
+import { compClips, normalizeComp } from '../../record/takes.js';
+import { mixerOf, createFolder, createVca, createGroup, ensureMixer } from '../../core/mixer-model.js';
 
 export const DAWPROJECT_EXTENSION = '.dawproject';
 export const DAWPROJECT_VERSION = '1.0';
 export const APP_NAME = 'daW³';
 export const APP_VERSION = '1.0';
 const STATE_FORMAT = 'daw3-device';
+const MIXER_FILE = 'daw3/mixer.json'; // VCAs / groups / folder flags (no DAWproject 1.0 equivalent) — daW³ restores them
+const MIXER_FORMAT = 'daw3-mixer';
 const RENDERED_PREFIX = 'daw3:rendered-from:';
 
 const r6 = (v) => Math.round(v * 1e6) / 1e6;
@@ -260,8 +264,10 @@ export function buildDawproject(project, opts = {}) {
   const busChannelIds = new Map(project.buses.map((b) => [b.id, nextId()]));
   const masterChannelId = nextId();
 
-  const channel = (owner, { role, devices = [], volume, pan, mute, solo, sends, channelId, volumeMax = 2 }) => el('Channel', {
-    id: channelId || nextId(), role, audioChannels: 2, destination: role === 'master' ? undefined : masterChannelId, solo: solo ? 'true' : 'false',
+  // main output: the master, or a bus channel (track.output — folder sums / group buses)
+  const destOf = (o) => (o?.output && busChannelIds.has(o.output) ? busChannelIds.get(o.output) : masterChannelId);
+  const channel = (owner, { role, devices = [], volume, pan, mute, solo, sends, channelId, volumeMax = 2, destination }) => el('Channel', {
+    id: channelId || nextId(), role, audioChannels: 2, destination: role === 'master' ? undefined : destination || masterChannelId, solo: solo ? 'true' : 'false',
   },
   devices.length ? el('Devices', {}, devices) : null,
   boolParam('Mute', owner, 'mute', 'Mute', !!mute),
@@ -276,6 +282,19 @@ export function buildDawproject(project, opts = {}) {
   const lanesByOwner = []; // [{ owner, trackXmlId, clips: [], automation: [] , name }]
   if (project.tracks.some((t) => t.patch?.enabled)) report.warnings.push('Plugboard routings were flattened to serial insert chains.');
 
+  // folders (core/mixer-model.js) -> folder tracks (contentType "tracks") holding their members; a folder with a
+  // summing bus gets that bus as its "submix" channel (members' main outs point at it)
+  const mx = mixerOf(project);
+  const folderById = new Map(mx.folders.map((f) => [f.id, f]));
+  const folderBusIds = new Set(mx.folders.map((f) => f.busId).filter((id) => id && project.buses.some((b) => b.id === id)));
+  const folderNodes = new Map(); // folderId -> { node placeholder index, kids: [] }
+  const topLevel = []; // Track elements / folder placeholders in order
+  const place = (t, node) => {
+    const f = t.folderId && folderById.get(t.folderId);
+    if (!f) { topLevel.push(node); return; }
+    if (!folderNodes.has(f.id)) { const entry = { folder: f, kids: [], xmlId: nextId() }; folderNodes.set(f.id, entry); topLevel.push(entry); }
+    folderNodes.get(f.id).kids.push(node);
+  };
   for (const t of project.tracks) {
     const owner = `track:${t.id}`;
     const devices = [];
@@ -284,16 +303,16 @@ export function buildDawproject(project, opts = {}) {
     for (const d of t.foreignDevices || []) devices.push(foreignDevice(d));
     const xmlId = nextId();
     trackXmlIds.set(owner, xmlId);
-    structure.push(el('Track', { id: xmlId, name: t.name, color: t.color, contentType: t.type === 'audio' ? 'audio' : 'notes', loaded: 'true' },
-      channel(owner, { role: 'regular', devices, volume: t.volume, pan: t.pan, mute: t.mute, solo: t.solo, sends: t.sends })));
+    place(t, el('Track', { id: xmlId, name: t.name, color: t.color, contentType: t.type === 'audio' ? 'audio' : 'notes', loaded: 'true' },
+      channel(owner, { role: 'regular', devices, volume: t.volume, pan: t.pan, mute: t.mute, solo: t.solo, sends: t.sends, destination: destOf(t) })));
     lanesByOwner.push({ owner, track: t, trackXmlId: xmlId, name: t.name, automation: t.automation });
     report.exported.push(`Track "${t.name}" (${t.type})`);
     const rend = renders[t.id];
     if (rend && (t.type === 'instrument' || t.type === 'code')) {
       const rOwner = `render:${t.id}`;
       const rId = nextId();
-      structure.push(el('Track', { id: rId, name: `${t.name} (audio)`, color: t.color, contentType: 'audio', loaded: 'true', comment: `${RENDERED_PREFIX}${xmlId}` },
-        channel(rOwner, { role: 'regular', volume: t.volume, pan: t.pan, mute: t.mute, solo: t.solo, sends: t.sends })));
+      place(t, el('Track', { id: rId, name: `${t.name} (audio)`, color: t.color, contentType: 'audio', loaded: 'true', comment: `${RENDERED_PREFIX}${xmlId}` },
+        channel(rOwner, { role: 'regular', volume: t.volume, pan: t.pan, mute: t.mute, solo: t.solo, sends: t.sends, destination: destOf(t) })));
       const path = `audio/${audioName(`${safeName(t.name, 'track')} (rendered)`, 'wav')}`;
       files.push({ path, data: rend.data, compress: false });
       const info = { duration: rend.duration, channels: rend.channels || 2, sampleRate: rend.sampleRate || 44100 };
@@ -304,11 +323,28 @@ export function buildDawproject(project, opts = {}) {
       report.exported.push(`Track "${t.name} (audio)" — rendered instrument audio`);
     }
   }
+  // folder tracks (with their summing bus as the submix channel)
+  for (const entry of folderNodes.values()) {
+    const f = entry.folder;
+    const b = folderBusIds.has(f.busId) ? project.buses.find((x) => x.id === f.busId) : null;
+    const owner = b ? `bus:${b.id}` : null;
+    if (b) {
+      trackXmlIds.set(owner, entry.xmlId);
+      lanesByOwner.push({ owner, trackXmlId: entry.xmlId, name: b.name, automation: b.automation });
+    }
+    entry.node = el('Track', { id: entry.xmlId, name: f.name, color: f.color || undefined, contentType: 'tracks', loaded: 'true', comment: `daw3:folder:${f.id}` },
+      b ? channel(owner, { role: 'submix', channelId: busChannelIds.get(b.id), devices: (b.fx || []).map((fx) => effectDevice(fx, owner, b.automation)), volume: b.volume, pan: b.pan, mute: b.mute, destination: destOf(b) }) : null,
+      entry.kids);
+    report.exported.push(`Folder "${f.name}" (${entry.kids.length} track${entry.kids.length === 1 ? '' : 's'}${b ? ', summing bus as group channel' : ''})`);
+  }
+  structure.push(...topLevel.map((n) => n.node || n));
   for (const b of project.buses) {
+    if (folderBusIds.has(b.id)) continue; // written as its folder's group channel
     const owner = `bus:${b.id}`;
     const xmlId = nextId();
+    trackXmlIds.set(owner, xmlId);
     structure.push(el('Track', { id: xmlId, name: b.name, contentType: 'audio', loaded: 'true' },
-      channel(owner, { role: 'effect', channelId: busChannelIds.get(b.id), devices: (b.fx || []).map((fx) => effectDevice(fx, owner, b.automation)), volume: b.volume, pan: b.pan, mute: b.mute })));
+      channel(owner, { role: 'effect', channelId: busChannelIds.get(b.id), devices: (b.fx || []).map((fx) => effectDevice(fx, owner, b.automation)), volume: b.volume, pan: b.pan, mute: b.mute, destination: destOf(b) })));
     lanesByOwner.push({ owner, trackXmlId: xmlId, name: b.name, automation: b.automation });
   }
   {
@@ -339,7 +375,7 @@ export function buildDawproject(project, opts = {}) {
   }
   const clipLength = Math.max(songBeats, ...clips.map((c) => c.start + c.length), bpb);
 
-  const noteClip = (c) => {
+  const noteClip = (c, extra = {}) => {
     const pat = project.patterns[c.patternId];
     if (!pat) return null;
     const len = pat.length > 0 ? pat.length : bpb;
@@ -356,24 +392,24 @@ export function buildDawproject(project, opts = {}) {
       }
     }
     notes.sort((a, b) => a.t - b.t || a.n.pitch - b.n.pitch);
-    return el('Clip', { time: r6(c.start), duration: r6(c.length), contentTimeUnit: 'beats', playStart: r6(playStart), loopStart: 0, loopEnd: r6(len), name: c.name || pat.name },
+    return el('Clip', { time: r6(c.start), duration: r6(c.length), contentTimeUnit: 'beats', playStart: r6(playStart), loopStart: 0, loopEnd: r6(len), name: c.name || pat.name, ...extra },
       el('Notes', { id: nextId() }, notes.map(({ t, n }) => el('Note', {
         time: r6(t), duration: r6(Math.max(1e-4, n.dur)), channel: 0, key: clamp(Math.round(n.pitch), 0, 127),
         vel: r6(clamp((n.vel ?? 0.8) * gain, 0, 1)), rel: r6(clamp(n.vel ?? 0.8, 0, 1)),
       }))));
   };
 
-  const audioClipEl = ({ start, length, offset = 0, fadeIn = 0, fadeOut = 0, name, warp }, file) => {
+  const audioClipEl = ({ start, length, offset = 0, fadeIn = 0, fadeOut = 0, name, warp }, file, extra = {}) => {
     const dur = file.info.duration || (offset + length) * spb;
     if (isWarped({ warp }) && warp.markers?.length) {
       // warp markers: content beats -> seconds (extrapolated to cover the file)
       const ms = warp.markers.length > 1 ? warp.markers : [...warp.markers, { beat: beatAtSec(warp, dur), sec: dur }];
-      return el('Clip', { time: r6(start), duration: r6(length), contentTimeUnit: 'beats', playStart: r6(offset), fadeTimeUnit: 'beats', fadeInTime: r6(fadeIn), fadeOutTime: r6(fadeOut), name },
+      return el('Clip', { time: r6(start), duration: r6(length), contentTimeUnit: 'beats', playStart: r6(offset), fadeTimeUnit: 'beats', fadeInTime: r6(fadeIn), fadeOutTime: r6(fadeOut), name, ...extra },
         el('Warps', { id: nextId(), timeUnit: 'beats', contentTimeUnit: 'seconds' },
           el('Audio', { id: nextId(), channels: file.info.channels || 2, sampleRate: Math.round(file.info.sampleRate || 44100), duration: r6(dur) }, el('File', { path: file.path })),
           ms.map((m) => el('Warp', { time: r6(m.beat), contentTime: r6(m.sec) }))));
     }
-    return el('Clip', { time: r6(start), duration: r6(length), contentTimeUnit: 'beats', playStart: r6(offset), fadeTimeUnit: 'beats', fadeInTime: r6(fadeIn), fadeOutTime: r6(fadeOut), name },
+    return el('Clip', { time: r6(start), duration: r6(length), contentTimeUnit: 'beats', playStart: r6(offset), fadeTimeUnit: 'beats', fadeInTime: r6(fadeIn), fadeOutTime: r6(fadeOut), name, ...extra },
       el('Warps', { id: nextId(), timeUnit: 'beats', contentTimeUnit: 'seconds' },
         el('Audio', { id: nextId(), channels: file.info.channels || 2, sampleRate: Math.round(file.info.sampleRate || 44100), duration: r6(dur) }, el('File', { path: file.path })),
         el('Warp', { time: 0, contentTime: 0 }),
@@ -410,8 +446,39 @@ export function buildDawproject(project, opts = {}) {
     return el('Points', { id: nextId(), unit: r.kind === 'real' ? r.unit : undefined }, el('Target', { parameter: r.id }), pts);
   };
 
+  // one clip / take (audio or notes) -> <Clip>; extra = attributes (enable, comment)
+  const anyClipEl = (t, c, extra) => {
+    if (c.sampleId) {
+      const f = sampleFile(c.sampleId);
+      if (!f) { report.warnings.push(`Track "${t.name}": audio take / clip at beat ${c.start} has no sample — skipped.`); return null; }
+      return audioClipEl({ start: c.start, length: c.length, offset: c.offset || 0, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0, name: c.name || project.samples[c.sampleId]?.name }, f, extra);
+    }
+    return c.patternId && t.type === 'instrument' ? noteClip(c, extra) : null;
+  };
+  /**
+   * Take lanes (src/record/takes.js): the comp is written as the active clips of the track lane (with its crossfades;
+   * comment daw3:comp:<takeId>:<segStart>:<segEnd>), every take lane as a nested <Lanes> of disabled (muted) clips
+   * (comment daw3:take:{json}) — other DAWs see the comp playing and the takes as muted lanes; daW³ rebuilds
+   * takeLanes / comp on import.
+   */
+  const takeLaneEls = (t) => {
+    if (!t.takeLanes?.some((l) => l.takes?.length)) return { comp: [], lanes: [] };
+    const comp = compClips(project, t).map((c) => anyClipEl(t, c, { comment: `daw3:comp:${c.takeId}:${r6(c.compStart)}:${r6(c.compEnd)}` })).filter(Boolean);
+    let n = 0;
+    const lanes = t.takeLanes.filter((l) => l.takes?.length).map((l, i) => el('Lanes', { id: nextId(), name: l.name || `Takes ${i + 1}`, comment: `daw3:takes:${l.id}` },
+      el('Clips', { id: nextId() }, l.takes.map((tk) => {
+        const meta = { id: tk.id, ...(tk.pass != null ? { pass: tk.pass } : {}), ...(tk.srcLength != null ? { srcLength: tk.srcLength } : {}), ...(tk.gain != null && tk.gain !== 1 ? { gain: tk.gain } : {}) };
+        const e = anyClipEl(t, { ...tk, name: tk.name }, { enable: 'false', comment: `daw3:take:${JSON.stringify(meta)}` });
+        if (e) n++;
+        return e;
+      }))));
+    report.exported.push(`Track "${t.name}": comp (${comp.length} segment${comp.length === 1 ? '' : 's'}) + ${n} take${n === 1 ? '' : 's'} in ${lanes.length} muted take lane${lanes.length === 1 ? '' : 's'}`);
+    return { comp, lanes };
+  };
+
   const trackLanes = lanesByOwner.map((o) => {
     const clipEls = [];
+    let takeLanes = [];
     if (o.track) {
       const t = o.track;
       if (t.type === 'code') { const c = codeClip(t); if (c) clipEls.push(c); }
@@ -426,11 +493,14 @@ export function buildDawproject(project, opts = {}) {
           if (ce) clipEls.push(ce);
         }
       }
+      const tl = takeLaneEls(t);
+      clipEls.push(...tl.comp);
+      takeLanes = tl.lanes;
     } else if (o.rendered) {
       clipEls.push(audioClipEl({ start: 0, length: r6(songTempoMap(project).beatAt(o.rendered.info.duration)), name: o.name }, o.rendered));
     }
     const pts = (o.automation || []).map((l) => pointsEl(l, o.owner, o.name)).filter(Boolean);
-    return el('Lanes', { id: nextId(), track: o.trackXmlId }, el('Clips', { id: nextId() }, clipEls), pts);
+    return el('Lanes', { id: nextId(), track: o.trackXmlId }, el('Clips', { id: nextId() }, clipEls), takeLanes, pts);
   });
 
   const markers = [...(project.markers || [])].filter((m) => Number.isFinite(m.beat)).sort((a, b) => a.beat - b.beat);
@@ -445,6 +515,24 @@ export function buildDawproject(project, opts = {}) {
       tsPts.map((p) => el('TimeSignaturePoint', { time: r6(p.beat), numerator: p.num, denominator: p.den }))) : null);
 
   if ((project.scenes || []).some((s) => Object.keys(s.slots || {}).length)) report.unmapped.push('Scenes (clip launcher) are not exported.');
+
+  // VCAs, mixer groups and folder flags: DAWproject 1.0 has no elements for them — a side file daW³ reads back
+  // (members referenced by Track ids of this file); other DAWs see folders as group tracks and the member faders
+  const xmlOf = (id) => trackXmlIds.get(`track:${id}`) || trackXmlIds.get(`bus:${id}`) || null;
+  if (mx.vcas.length || mx.groups.length || mx.folders.length || (mx.soloMode && mx.soloMode !== 'sip')) {
+    const data = {
+      format: MIXER_FORMAT, version: 1, soloMode: mx.soloMode || 'sip',
+      vcas: mx.vcas.map((v) => ({ name: v.name, color: v.color || null, volume: v.volume ?? 1, mute: !!v.mute, members: (v.members || []).map(xmlOf).filter(Boolean), automation: v.automation || [] })),
+      groups: mx.groups.map((g) => ({ name: g.name, color: g.color || null, mode: g.mode, enabled: g.enabled !== false, link: g.link, members: (g.members || []).map(xmlOf).filter(Boolean) })),
+      folders: mx.folders.filter((f) => folderNodes.has(f.id)).map((f) => ({ track: folderNodes.get(f.id).xmlId, name: f.name, collapsed: !!f.collapsed, color: f.color || null })),
+    };
+    files.push({ path: MIXER_FILE, data: JSON.stringify(data, null, 1), compress: true });
+    for (const v of mx.vcas) {
+      const auto = (v.automation || []).some((l) => l.points?.length);
+      report.unmapped.push(`VCA "${v.name}" (${(v.members || []).length} member${(v.members || []).length === 1 ? '' : 's'}${auto ? ', level automation' : ''}): DAWproject 1.0 has no VCAs — stored in ${MIXER_FILE} (daW³ restores it); other DAWs play the member faders without it`);
+    }
+    if (mx.groups.length) report.unmapped.push(`${mx.groups.length} mixer link group(s): no DAWproject equivalent — stored in ${MIXER_FILE} for daW³`);
+  }
 
   const root = el('Project', { version: DAWPROJECT_VERSION },
     el('Application', { name: APP_NAME, version: APP_VERSION }),
@@ -807,7 +895,9 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
   }
 
   const groupNames = new Map(); // channel id -> group name
-  const visitTrack = (tEl, groupName) => {
+  const pendingDest = []; // { owner, dest } main outputs into buses (folder sums / group channels)
+  const folderXml = new Map(); // folder Track xml id -> daW³ folder
+  const visitTrack = (tEl, groupName, depth = 0) => {
     const ch = child(tEl, 'Channel');
     const ctypes = String(tEl.attrs.contentType || '').split(/\s+/).filter(Boolean);
     const role = ch?.attrs.role || 'regular';
@@ -827,14 +917,39 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
       return;
     }
     if (subTracks.length || ctypes.includes('tracks')) {
-      if (ch) {
-        channelOwner.set(ch.attrs.id, { kind: 'group', name });
-        groupNames.set(ch.attrs.id, name);
-        const devs = children(child(ch, 'Devices'));
-        const vol = child(ch, 'Volume');
-        if (devs.length || (vol && Math.abs(realVal(vol, 1) - 1) > 0.01)) report.unmapped.push(`Group "${name}": group channel (volume / ${devs.length} device(s)) flattened — its tracks go straight to the master`);
+      if (depth > 0) {
+        // nested groups: daW³ folders are one level deep — inner group tracks join the outer folder
+        if (ch) {
+          channelOwner.set(ch.attrs.id, { kind: 'group', name });
+          groupNames.set(ch.attrs.id, name);
+          const devs = children(child(ch, 'Devices'));
+          const vol = child(ch, 'Volume');
+          if (devs.length || (vol && Math.abs(realVal(vol, 1) - 1) > 0.01)) report.unmapped.push(`Group "${name}": nested group channel (volume / ${devs.length} device(s)) flattened — its tracks go to the outer folder`);
+        }
+        for (const st of subTracks) visitTrack(st, groupName || name, depth + 1);
+        return;
       }
-      for (const st of subTracks) visitTrack(st, name);
+      // group / folder track -> a daW³ folder; its group (submix) channel -> the folder's summing bus
+      let bus = null;
+      if (ch && ch.attrs.role !== 'master') {
+        bus = createBus(name, []);
+        project.buses.push(bus);
+        channelOwner.set(ch.attrs.id, { kind: 'bus', ref: bus });
+        readMixer(ch, bus, false);
+        trackByXmlId.set(tEl.attrs.id, bus);
+        if (ch.attrs.destination) pendingDest.push({ owner: bus, dest: ch.attrs.destination });
+      }
+      const first = project.tracks.length;
+      for (const st of subTracks) visitTrack(st, name, depth + 1);
+      const ids = project.tracks.slice(first).map((t) => t.id);
+      if (ids.length) {
+        const f = createFolder(project, name, ids, { color: /^#[0-9a-f]{6}$/i.test(tEl.attrs.color || '') ? tEl.attrs.color : null });
+        folderXml.set(tEl.attrs.id, f);
+        if (bus) { bus.folderId = f.id; f.busId = bus.id; }
+        report.mapped.push(`Group "${name}" → folder (${ids.length} track${ids.length === 1 ? '' : 's'}${bus ? ' + summing bus' : ''})`);
+      } else if (bus) {
+        report.warnings.push(`Group "${name}" has no tracks — kept as a bus.`);
+      }
       return;
     }
     if (String(tEl.attrs.comment || '').startsWith(RENDERED_PREFIX) && opts.skipRendered !== false) {
@@ -856,7 +971,8 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
       channelOwner.set(ch.attrs.id, { kind: 'track', ref: track });
       readMixer(ch, track, true, () => notesByTrackXml.get(tEl.attrs.id) || []);
       const dest = ch.attrs.destination;
-      if (dest && groupNames.has(dest)) report.warnings.push(`Track "${name}" was routed into group "${groupNames.get(dest)}" — now routed to the master.`);
+      if (dest && groupNames.has(dest)) report.warnings.push(`Track "${name}" was routed into group "${groupNames.get(dest)}" — now routed to its folder.`);
+      else if (dest) pendingDest.push({ owner: track, dest });
     }
     if (track.type === 'instrument' && !track.instrument?.type) track.instrument = { type: 'synth', preset: null, params: {} };
     if (track.type === 'instrument' && !track._restored && !track._mappedInstrument) {
@@ -881,6 +997,37 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
         readMixer(n, bus, false);
       } else report.unmapped.push(`Channel "${n.attrs.name || n.attrs.id}" without a track ignored`);
     }
+  }
+  // main outputs into buses (folder summing buses, buses used as groups)
+  for (const { owner, dest } of pendingDest) {
+    let d = channelOwner.get(dest);
+    if (d?.kind === 'group') d = null;
+    if (d?.kind === 'bus' && d.ref !== owner) owner.output = d.ref.id;
+  }
+  // inner (nested) group channels: their tracks go to the outer folder's bus
+  for (const t of project.tracks) {
+    const f = t.folderId && mixerOf(project).folders.find((x) => x.id === t.folderId);
+    if (f?.busId && !t.output) t.output = f.busId;
+  }
+  // VCAs / mixer groups / folder flags written by daW³ (no DAWproject equivalent)
+  const mixerTxt = zipText(files, MIXER_FILE);
+  if (mixerTxt) {
+    try {
+      const mj = JSON.parse(mixerTxt);
+      if (mj?.format === MIXER_FORMAT) {
+        const idOf = (xml) => trackByXmlId.get(xml)?.id || null;
+        const m = ensureMixer(project);
+        if (mj.soloMode) m.soloMode = mj.soloMode;
+        for (const v of mj.vcas || []) {
+          const vca = createVca(project, v.name, (v.members || []).map(idOf).filter(Boolean), { color: v.color || null, volume: v.volume ?? 1 });
+          vca.mute = !!v.mute;
+          vca.automation = (v.automation || []).filter((l) => l.target === 'volume').map((l) => ({ ...createAutomationLane('volume', sortPoints(l.points || [])), enabled: l.enabled !== false }));
+        }
+        for (const g of mj.groups || []) createGroup(project, g.name, (g.members || []).map(idOf).filter(Boolean), { color: g.color || null, mode: g.mode, enabled: g.enabled, link: g.link });
+        for (const f of mj.folders || []) { const fd = folderXml.get(f.track); if (fd) { fd.collapsed = !!f.collapsed; if (f.color) fd.color = f.color; } }
+        if ((mj.vcas || []).length || (mj.groups || []).length) report.mapped.push(`Mixer: ${(mj.vcas || []).length} VCA(s), ${(mj.groups || []).length} group(s) restored from ${MIXER_FILE}`);
+      }
+    } catch (e) { report.warnings.push(`${MIXER_FILE}: unreadable (${e.message}) — VCAs / groups skipped.`); }
   }
   for (const { track, send } of pendingSends) {
     const dest = channelOwner.get(send.attrs.destination);
@@ -953,7 +1100,8 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
   const lanesAutomation = [];
 
   const processClip = (clipEl, ctx) => {
-    if (boolAttr(clipEl, 'enable', true) === false) { disabledClips++; return; }
+    if (boolAttr(clipEl, 'enable', true) === false && !ctx.takes) { disabledClips++; return; }
+    const sink = ctx.sink || project.clips; // take lanes / comp clips are collected, the rest goes to the arrangement
     const unit = ctx.unit;
     const t0 = ctx.base + toBeats(numAttr(clipEl, 'time', 0), unit);
     const contentUnit = clipEl.attrs.contentTimeUnit || unit;
@@ -1002,7 +1150,7 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
       }
       if (!(len > 0)) return;
       const patternId = addPattern(track, patNotes, len, clipEl.attrs.name);
-      project.clips.push(createClip(track.id, { patternId, start: r6(start), length: r6(end - start), offset: r6(offset), name: clipEl.attrs.name || null }));
+      sink.push(createClip(track.id, { patternId, start: r6(start), length: r6(end - start), offset: r6(offset), name: clipEl.attrs.name || null }));
       return;
     }
     // audio
@@ -1013,7 +1161,7 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
     if (boolAttr(file, 'external', false) && !files.has(file.attrs.path)) { report.warnings.push(`Track "${track.name}": external audio "${file.attrs.path}" is not inside the archive — clip skipped.`); return; }
     const sampleId = sampleFromPath(file.attrs.path, null, { duration: numAttr(audio, 'duration', null) });
     if (!sampleId) { report.warnings.push(`Track "${track.name}": audio file "${file.attrs.path}" missing from the archive — clip skipped.`); return; }
-    const target = track.type === 'audio' ? track : audioCompanion(track);
+    const target = track.type === 'audio' || ctx.takes ? track : audioCompanion(track);
     let offSec, warp = null;
     if (content.name === 'Warps') {
       const w = warpMap(content, contentUnit);
@@ -1038,7 +1186,44 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
     }
     if (fi > 0) clip.fadeIn = r6(fi);
     if (fo > 0) clip.fadeOut = r6(fo);
-    project.clips.push(clip);
+    sink.push(clip);
+  };
+
+  // ---- take lanes + comps (see buildDawproject takeLaneEls)
+  const compCandidates = []; // { track, takeId, start, end, clips }
+  const takeCount = new Map(); // track -> takes imported
+  const TAKE_RE = /^daw3:take:(.*)$/s;
+  /** A nested <Lanes> holding takes: daW³'s own (comment daw3:takes:…) or any lane whose clips are all disabled (muted). */
+  const isTakeLanes = (lanesEl, track) => {
+    if (!track || track.type === 'code' || lanesEl.attrs.track) return false;
+    if (String(lanesEl.attrs.comment || '').startsWith('daw3:takes:')) return true;
+    const clipEls = children(lanesEl, 'Clips').flatMap((cs) => children(cs, 'Clip'));
+    return clipEls.length > 0 && clipEls.every((c) => boolAttr(c, 'enable', true) === false) && !children(lanesEl, 'Lanes').length;
+  };
+  const importTakeLane = (lanesEl, ctx) => {
+    const track = ctx.track;
+    const takes = [];
+    for (const cs of children(lanesEl, 'Clips')) {
+      for (const clipEl of children(cs, 'Clip')) {
+        const got = [];
+        processClip(clipEl, { ...ctx, takes: true, sink: got });
+        let meta = {};
+        const m = TAKE_RE.exec(String(clipEl.attrs.comment || ''));
+        if (m) { try { meta = JSON.parse(m[1]) || {}; } catch { meta = {}; } }
+        got.forEach((c, i) => {
+          takes.push({
+            id: (i === 0 && meta.id) || uid('take'), name: c.name || clipEl.attrs.name || `Take ${takes.length + 1}`,
+            ...(c.sampleId ? { sampleId: c.sampleId } : { patternId: c.patternId }),
+            start: c.start, length: c.length, offset: c.offset || 0,
+            ...(meta.gain != null ? { gain: meta.gain } : {}), ...(meta.srcLength != null ? { srcLength: meta.srcLength } : {}), ...(meta.pass != null ? { pass: meta.pass } : {}),
+          });
+        });
+      }
+    }
+    if (!takes.length) return;
+    const own = /^daw3:takes:(\S+)$/.exec(String(lanesEl.attrs.comment || ''));
+    track.takeLanes = [...(track.takeLanes || []), { id: own ? own[1] : uid('tl'), ...(lanesEl.attrs.name ? { name: lanesEl.attrs.name } : {}), takes }];
+    takeCount.set(track, (takeCount.get(track) || 0) + takes.length);
   };
 
   const processLanes = (node, ctx) => {
@@ -1046,8 +1231,18 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
       const track = c.attrs.track ? (trackByXmlId.has(c.attrs.track) ? trackByXmlId.get(c.attrs.track) : undefined) : ctx.track;
       if (c.attrs.track && track === null) continue; // skipped (rendered companion)
       const sub = { ...ctx, track: track === undefined ? ctx.track : track, unit: c.attrs.timeUnit || ctx.unit };
-      if (c.name === 'Lanes') processLanes(c, sub);
-      else if (c.name === 'Clips') for (const clip of children(c, 'Clip')) processClip(clip, sub);
+      if (c.name === 'Lanes' && isTakeLanes(c, sub.track)) importTakeLane(c, sub);
+      else if (c.name === 'Lanes') processLanes(c, sub);
+      else if (c.name === 'Clips') {
+        for (const clip of children(c, 'Clip')) {
+          const cm = /^daw3:comp:(.+):(-?[\d.e+-]+):(-?[\d.e+-]+)$/.exec(String(clip.attrs.comment || ''));
+          if (cm && sub.track) {
+            const got = [];
+            processClip(clip, { ...sub, sink: got });
+            compCandidates.push({ track: sub.track, takeId: cm[1], start: +cm[2], end: +cm[3], clips: got });
+          } else processClip(clip, sub);
+        }
+      }
       else if (c.name === 'Points') lanesAutomation.push({ el: c, unit: sub.unit });
       else if (c.name === 'Notes' && sub.track?.type === 'instrument') {
         const notes = readNotes(c, sub.unit);
@@ -1067,6 +1262,16 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
     const lanes = child(arrangement, 'Lanes');
     if (lanes) {
       processLanes({ children: [lanes] }, { track: null, unit: lanes.attrs.timeUnit || 'beats', base: 0, lo: -Infinity, hi: Infinity });
+    }
+    // comp clips: comp segments when their take came back, else ordinary clips (an editor dropped the take lanes)
+    for (const cc of compCandidates) {
+      const has = (cc.track.takeLanes || []).some((l) => l.takes.some((tk) => tk.id === cc.takeId));
+      if (has) (cc.track.comp ||= []).push({ takeId: cc.takeId, start: cc.start, end: cc.end });
+      else project.clips.push(...cc.clips);
+    }
+    for (const [track, n] of takeCount) {
+      if (track.comp?.length) normalizeComp(track);
+      report.mapped.push(`Track "${track.name}": ${n} take${n === 1 ? '' : 's'} in ${track.takeLanes.length} take lane${track.takeLanes.length === 1 ? '' : 's'}${track.comp?.length ? `, comp of ${track.comp.length} segment${track.comp.length === 1 ? '' : 's'}` : ' (muted lanes — swipe to comp)'}`);
     }
     const mk = child(arrangement, 'Markers');
     for (const m of children(mk, 'Marker')) project.markers.push({ id: uid('mk'), beat: r6(toBeats(numAttr(m, 'time', 0), mk.attrs.timeUnit || lanes?.attrs.timeUnit || 'beats')), name: m.attrs.name || 'Marker' });

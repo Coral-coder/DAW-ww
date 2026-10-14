@@ -11,9 +11,19 @@ export const EXPORT_FORMATS = [
   { id: 'wav16', label: 'WAV 16-bit', ext: 'wav', bitDepth: 16 },
   { id: 'wav24', label: 'WAV 24-bit', ext: 'wav', bitDepth: 24 },
   { id: 'wav32f', label: 'WAV 32-bit float', ext: 'wav', bitDepth: 32 },
-  { id: 'aac', label: 'AAC (.m4a/ADTS)', ext: 'aac', codec: 'mp4a.40.2', lossy: true },
-  { id: 'mp3', label: 'MP3', ext: 'mp3', codec: 'mp3', lossy: true },
+  // lossy: MP3 through the vendored LAME port (every browser), AAC / Opus through WebCodecs AudioEncoder (feature-detected)
+  { id: 'mp3', label: 'MP3', ext: 'mp3', lossy: true, mime: 'audio/mpeg', bitrates: [128, 160, 192, 224, 256, 320], modes: ['cbr', 'vbr'] },
+  { id: 'aac', label: 'AAC (.m4a)', ext: 'm4a', codec: 'mp4a.40.2', webcodecs: true, lossy: true, mime: 'audio/mp4', bitrates: [128, 160, 192, 256, 320], modes: ['cbr', 'vbr'] },
+  { id: 'opus', label: 'Opus (.ogg)', ext: 'ogg', codec: 'opus', webcodecs: true, lossy: true, mime: 'audio/ogg', bitrates: [96, 128, 160, 192, 256], modes: ['vbr', 'cbr'] },
 ];
+export const BITRATE_MODES = { cbr: 'Constant (CBR)', vbr: 'Variable (VBR)' };
+
+/** Sample rate a lossy format is encoded at for a render rate (MP3: 32/44.1/48 kHz; AAC ≤ 48 kHz; Opus 48 kHz). */
+export function encodeRate(format, sr) {
+  if (format === 'opus') return 48000;
+  if (format === 'mp3' || format === 'aac') return [32000, 44100, 48000].includes(sr) ? sr : sr % 44100 === 0 ? 44100 : 48000;
+  return sr;
+}
 export const EXPORT_SAMPLE_RATES = [44100, 48000, 88200, 96000];
 export const DITHER_OPTIONS = [
   { id: 'none', label: 'Off', dither: 'none', noiseShaping: 'none' },
@@ -28,6 +38,7 @@ export const EXPORT_DEFAULTS = Object.freeze({
   format: 'wav24', sampleRate: 48000, dither: 'tpdf', normalize: 'off', target: -14, ceiling: -1, preset: 'spotify',
   range: 'song', tail: 'auto', tailMax: 10, stems: 'none', stemTap: 'post', stemMaster: false, mixdown: true,
   nameTemplate: DEFAULT_NAME_TEMPLATE, stemTemplate: DEFAULT_STEM_TEMPLATE, title: '', artist: '', isrc: '', comment: '',
+  bitrate: 320, bitrateMode: 'cbr', album: '',
 });
 
 /**
@@ -36,7 +47,7 @@ export const EXPORT_DEFAULTS = Object.freeze({
  * -> { startBeat, endBeat, mode, label }
  */
 export function resolveRange(project, { range = 'song', selection = null, custom = null, mode = null } = {}) {
-  const m = mode || (project.clips?.length ? 'song' : project.mode || 'pattern');
+  const m = mode || (project.clips?.length || project.tracks?.some((t) => t.comp?.length && t.takeLanes?.length) ? 'song' : project.mode || 'pattern');
   const bpb = beatsPerBar(project);
   let start = 0, end = m === 'song' ? songLengthBeats(project) : defaultEndBeat(project, m), label = 'Song';
   if (range === 'loop' && project.loop && project.loop.end > project.loop.start) { start = project.loop.start; end = project.loop.end; label = 'Loop'; }
@@ -218,6 +229,12 @@ export function reportRows(m, extra = {}) {
     ['Duration', fmtDur(m.duration || 0)],
     ...(Number.isFinite(extra.gainDb) ? [['Normalise gain', `${extra.gainDb >= 0 ? '+' : ''}${extra.gainDb.toFixed(2)} dB`]] : []),
     ...(extra.limitedDb ? [['Limiter (max GR)', `${extra.limitedDb.toFixed(2)} dB`]] : []),
+    // lossy files: what the encoded file measures when decoded back (codecs move loudness / true peak slightly)
+    ...(extra.encoded ? [
+      ['Encoded file', `${f1(extra.encoded.integrated)} LUFS · ${f1(extra.encoded.truePeakDb)} dBTP`],
+      ['Encoded duration', fmtDur(extra.encoded.duration || 0)],
+      ...(extra.encoded.codec ? [['Codec', extra.encoded.codec]] : []),
+    ] : extra.encodedError ? [['Encoded file', `not measured (${extra.encodedError})`]] : []),
   ];
 }
 

@@ -3,7 +3,7 @@
 // an export report (LUFS, true peak, LRA, duration) after the render. The work is done by src/audio/export.js.
 import { h, clear } from './dom.js';
 import { modal, button, toast } from './components.js';
-import { EXPORT_FORMATS, EXPORT_SAMPLE_RATES, DITHER_OPTIONS, EXPORT_DEFAULTS, resolveRange, clipSpan, formatFileName, stemTargets, rangeSeconds } from '../io/export-plan.js';
+import { EXPORT_FORMATS, EXPORT_SAMPLE_RATES, DITHER_OPTIONS, EXPORT_DEFAULTS, BITRATE_MODES, resolveRange, clipSpan, formatFileName, stemTargets, rangeSeconds, encodeRate } from '../io/export-plan.js';
 import { LOUDNESS_PRESETS } from '../audio/dsp/loudness.js';
 import { downloadBlob } from '../io/project-file.js';
 import { groupSelection } from '../core/mixer-model.js';
@@ -13,7 +13,7 @@ const load = () => { try { return { ...EXPORT_DEFAULTS, ...JSON.parse(localStora
 const save = (o) => { try { const { selection, selectedIds, ...rest } = o; localStorage.setItem(LS, JSON.stringify(rest)); } catch { /* */ } };
 
 function sel(options, value, onChange, title) {
-  const el = h('select', { title }, options.map((o) => h('option', { value: String(o.value), disabled: !!o.disabled }, o.label)));
+  const el = h('select', { title }, options.map((o) => h('option', { value: String(o.value), disabled: !!o.disabled, title: o.title || null }, o.label)));
   el.value = String(value);
   el.addEventListener('change', () => onChange(el.value));
   return el;
@@ -42,8 +42,10 @@ export async function openExportDialog(app, { stems = false } = {}) {
   const o = load();
   if (stems && o.stems === 'none') o.stems = 'all';
   const p = store.get();
-  const lossy = await import('../audio/export.js').then((m) => m.lossyFormats()).catch(() => []);
-  if (EXPORT_FORMATS.find((f) => f.id === o.format)?.lossy && !lossy.includes(o.format)) o.format = 'wav24';
+  const support = await import('../audio/export.js').then((m) => m.formatSupport()).catch(() => ({}));
+  const usable = (id) => support[id]?.ok !== false && !!EXPORT_FORMATS.find((f) => f.id === id);
+  if (!usable(o.format)) o.format = 'wav24';
+  let cover = null; // {mime, data, name} — this dialog session only (not stored)
   const selClips = ui.get('selectedClipIds') || [];
   const selection = clipSpan(p, selClips);
   const selTrack = ui.get('selectedTrackId');
@@ -58,13 +60,21 @@ export async function openExportDialog(app, { stems = false } = {}) {
   function refresh() {
     clear(body);
     const fmt = EXPORT_FORMATS.find((f) => f.id === o.format) || EXPORT_FORMATS[1];
-    const formats = EXPORT_FORMATS.filter((f) => !f.lossy || lossy.includes(f.id)).map((f) => ({ value: f.id, label: f.label }));
+    // formats this browser can't write stay listed but disabled, the reason in the option's tooltip
+    const formats = EXPORT_FORMATS.map((f) => ({ value: f.id, label: usable(f.id) ? f.label : `${f.label} — unavailable`, disabled: !usable(f.id), title: support[f.id]?.reason || (f.id === 'mp3' ? 'MP3 via LAME (pure JavaScript, works in every browser)' : '') }));
+    const unavailable = EXPORT_FORMATS.filter((f) => !usable(f.id));
+    const kbps = fmt.lossy ? (fmt.bitrates.includes(Number(o.bitrate)) ? Number(o.bitrate) : fmt.bitrates[fmt.bitrates.length - 1]) : 0;
+    const er = fmt.lossy ? encodeRate(fmt.id, Number(o.sampleRate)) : 0;
     const presetOpts = [...LOUDNESS_PRESETS.map((x) => ({ value: x.id, label: x.label })), { value: 'custom', label: 'Custom…' }];
     const r = resolveRange(p, { range: o.range, selection, custom: o.custom });
     const targets = o.stems !== 'none' ? stemTargets(p, { which: o.stems, selectedIds }) : [];
     body.append(
       h('div.xp-section', h('h3', 'Format'),
-        row('Format', sel(formats, o.format, (v) => set('format', v), 'File format (lossy formats appear when this browser can encode them)')),
+        row('Format', sel(formats, o.format, (v) => set('format', v), 'File format — MP3 works everywhere; AAC / Opus need a WebCodecs encoder in this browser')),
+        fmt.lossy ? row('Bitrate', sel(fmt.bitrates.map((b) => ({ value: b, label: `${b} kbps` })), kbps, (v) => set('bitrate', +v), 'Bitrate (VBR: the average)'),
+          sel(fmt.modes.map((m) => ({ value: m, label: fmt.id === 'mp3' && m === 'vbr' ? 'Variable (VBR, average bitrate)' : BITRATE_MODES[m] })), fmt.modes.includes(o.bitrateMode) ? o.bitrateMode : fmt.modes[0], (v) => set('bitrateMode', v), 'Constant or variable bitrate')) : null,
+        fmt.lossy && er !== Number(o.sampleRate) ? h('div.xp-hint', `${fmt.label} is encoded at ${(er / 1000).toFixed(1).replace('.0', '')} kHz (rendered at that rate).`) : null,
+        unavailable.length ? h('div.xp-hint', { title: unavailable.map((f) => support[f.id]?.reason).filter(Boolean).join('\n') }, `Not available in this browser: ${unavailable.map((f) => f.label).join(', ')} (hover for why)`) : null,
         !fmt.lossy && fmt.bitDepth !== 32 ? row('Dither', sel(DITHER_OPTIONS.map((d) => ({ value: d.id, label: d.label })), o.dither, (v) => set('dither', v), 'Dither / noise shaping for the integer formats')) : null,
         row('Sample rate', sel(EXPORT_SAMPLE_RATES.map((s) => ({ value: s, label: `${(s / 1000).toFixed(1).replace('.0', '')} kHz` })), o.sampleRate, (v) => set('sampleRate', +v), 'Rendered offline at this rate')),
       ),
@@ -95,7 +105,9 @@ export async function openExportDialog(app, { stems = false } = {}) {
       h('div.xp-section', h('h3', 'Metadata & names'),
         row('Title', text(o.title, (v) => { o.title = v; save(o); updSummary(); }, p.name)),
         row('Artist', text(o.artist, (v) => { o.artist = v; save(o); updSummary(); })),
+        row('Album', text(o.album, (v) => { o.album = v; save(o); })),
         row('ISRC', text(o.isrc, (v) => { o.isrc = v; save(o); }, 'CC-XXX-YY-NNNNN', 160)),
+        fmt.lossy ? row('Cover', coverInput()) : null,
         row('File name', text(o.nameTemplate, (v) => { o.nameTemplate = v; save(o); updSummary(); }, '{project}')),
         o.stems !== 'none' ? row('Stem names', text(o.stemTemplate, (v) => { o.stemTemplate = v; save(o); updSummary(); }, '{project} - {n} {stem}')) : null,
         h('div.xp-hint', 'Tokens: {project} {title} {artist} {stem} {n} {bpm} {key} {date} {time} {sr} {bits} {lufs} {range}'),
@@ -117,6 +129,24 @@ export async function openExportDialog(app, { stems = false } = {}) {
     ].filter(Boolean));
   }
 
+  function coverInput() {
+    const inp = h('input', { type: 'file', accept: 'image/jpeg,image/png', style: { maxWidth: '200px' }, title: 'Cover art (JPEG / PNG) embedded in MP3 (ID3 APIC), m4a (covr) and Opus files' });
+    inp.addEventListener('change', async () => {
+      const f = inp.files?.[0];
+      cover = f ? { mime: f.type || 'image/jpeg', data: new Uint8Array(await f.arrayBuffer()), name: f.name } : null;
+      refresh();
+    });
+    return h('span', inp, cover ? h('span.muted', ` ${cover.name} (${Math.round(cover.data.length / 1024)} KB) `, button('✕', () => { cover = null; refresh(); }, { cls: 'small' })) : null);
+  }
+
+  // decode an encoded file back (the report measures what listeners get)
+  const decodeBack = async (bytes) => {
+    const Ctx = globalThis.OfflineAudioContext || globalThis.webkitOfflineAudioContext;
+    const ctx = new Ctx(2, 1, 48000);
+    const buf = await ctx.decodeAudioData(new Uint8Array(bytes).slice().buffer);
+    return buf;
+  };
+
   let busy = false;
   const go = async () => {
     if (busy) return false;
@@ -129,11 +159,12 @@ export async function openExportDialog(app, { stems = false } = {}) {
     try {
       const { runExport } = await import('../audio/export.js');
       const { renderOffline } = await import('../audio/render.js');
-      const opts = { ...o, selection, selectedIds, target: o.normalize === 'peak' ? (o.target > -0.01 ? -1 : o.target) : o.target };
+      const opts = { ...o, selection, selectedIds, cover, target: o.normalize === 'peak' ? (o.target > -0.01 ? -1 : o.target) : o.target };
       let noticed = false;
       const res = await runExport({
         project: store.get(),
         opts,
+        decode: decodeBack,
         render: (proj, ro) => renderOffline(proj, { ...ro, sampleCache: engine.buffers, onError: (e) => console.warn('[export]', e), onNotice: (msg) => { if (!noticed) toast(msg, { level: 'warn', timeout: 9000 }); noticed = true; } }),
         onProgress: (f, msg) => { bar.firstChild.style.width = `${Math.round(f * 100)}%`; status.textContent = msg; },
       });

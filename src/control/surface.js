@@ -9,8 +9,14 @@
 //   touch(id, target, on)                          fader touch -> automation TOUCH mode
 //   sends(id) -> [{ busId, name, value 0..1 }], setSend(id, busId, value)
 //   params(id) -> [{ label, norm, set(norm) }]       instrument / device parameters (V-pot "plugin" mode)
-//   transport() -> { playing, recording, loop, click, autoArm }
+//   transport() -> { playing, recording, loop, click, autoArm, autoMode: 'off'|'read'|'touch'|'latch'|'write' }
 //   command(name)  'play'|'stop'|'record'|'rewind'|'forward'|'loop'|'click'|'undo'|'save'|'autoArm'|'marker'
+//                  |'prevMarker'|'nextMarker'
+//   setAutoMode(mode)                              automation buttons: 'off'|'read'|'touch'|'latch'|'write'
+//
+// Flip (MCU): faders and V-pots swap — the fader moves the V-pot's parameter (pan / send / plugin param, motor
+// follows it) and the V-pot rides the volume. Marker: press = add a marker at the playhead; hold Marker + ◀ / ▶
+// (or the jog wheel) = previous / next marker.
 //   jog(delta), position() -> { bar, beat, sixteenth, tick }, meter(id) -> 0..1
 import { createProtocol } from './surface-protocol.js';
 
@@ -41,6 +47,8 @@ export class SurfaceController {
     this.paramPage = 0;
     this.touched = new Set(); // strip indexes held by the hand
     this.shift = false;
+    this.flip = false; // MCU Flip: faders <-> V-pots
+    this.markerHeld = false; this.markerNav = false;
     this.cache = new Map(); // feedback key -> serialized bytes
   }
 
@@ -63,6 +71,7 @@ export class SurfaceController {
     switch (ev.type) {
       case 'fader':
         if (ev.strip === 8) { this.host.setVolume('master', faderToGain(ev.value)); return; }
+        if (this.flip && ev.strip < 8) { this._setVpotValue(ev.strip, ev.value, s); return; }
         if (s) this.host.setVolume(s.id, faderToGain(ev.value));
         return;
       case 'touch': {
@@ -73,13 +82,44 @@ export class SurfaceController {
         return;
       }
       case 'vpot': return this._vpot(ev.strip, ev.delta, s);
-      case 'jog': this.host.jog?.(ev.delta); return;
+      case 'jog':
+        if (this.markerHeld) { this.markerNav = true; this.host.command?.(ev.delta < 0 ? 'prevMarker' : 'nextMarker'); return; }
+        this.host.jog?.(ev.delta); return;
       case 'button': return this._button(ev, s);
       default: return;
     }
   }
 
+  /** The V-pot's current parameter as 0..1 (pan / send / plugin param) — what a flipped fader shows. */
+  _vpotValue(strip, s) {
+    if (this.mode === 'plugin') {
+      const sel = this.host.strips().find((x) => x.selected);
+      const p = sel && this.host.params?.(sel.id)?.[this.paramPage * 8 + strip];
+      return p ? p.norm : null;
+    }
+    if (!s) return null;
+    if (this.mode === 'send') return this.host.sends?.(s.id)?.[this.sendIndex]?.value ?? null;
+    return ((s.pan || 0) + 1) / 2;
+  }
+  /** Flipped fader -> the V-pot's parameter (absolute 0..1). */
+  _setVpotValue(strip, v, s) {
+    v = Math.max(0, Math.min(1, v));
+    if (this.mode === 'plugin') {
+      const sel = this.host.strips().find((x) => x.selected);
+      const p = sel && this.host.params?.(sel.id)?.[this.paramPage * 8 + strip];
+      if (p) p.set(v);
+      return;
+    }
+    if (!s) return;
+    if (this.mode === 'send') { const snd = this.host.sends?.(s.id)?.[this.sendIndex]; if (snd) this.host.setSend(s.id, snd.busId, +v.toFixed(3)); return; }
+    this.host.setPan(s.id, +(v * 2 - 1).toFixed(3));
+  }
+
   _vpot(strip, delta, s) {
+    if (this.flip) { // flipped: the V-pot rides the volume (fader travel steps)
+      if (s) this.host.setVolume(s.id, faderToGain(Math.max(0, Math.min(1, gainToFader(s.volume ?? 0.8) + delta / 100))));
+      return;
+    }
     if (this.mode === 'plugin') {
       const sel = this.host.strips().find((x) => x.selected);
       const p = sel && this.host.params?.(sel.id)?.[this.paramPage * 8 + strip];
@@ -97,6 +137,14 @@ export class SurfaceController {
 
   _button(ev, s) {
     if (ev.name === 'shift') { this.shift = ev.on; return; }
+    if (ev.name === 'marker') {
+      // press + release without navigating = add a marker; hold + ◀ / ▶ / jog = previous / next marker
+      if (ev.on) { this.markerHeld = true; this.markerNav = false; this._out('led:marker', this.proto.led('marker', null, 1)); return; }
+      if (this.markerHeld && !this.markerNav) this.host.command?.('marker');
+      this.markerHeld = false;
+      this._out('led:marker', this.proto.led('marker', null, 0));
+      return;
+    }
     if (!ev.on) return;
     const total = this.host.strips().length;
     const maxBank = Math.max(0, total - 8 - this.unitOffset);
@@ -127,13 +175,24 @@ export class SurfaceController {
         this.host.command?.(ev.name); return;
       case 'cycle': this.host.command?.('loop'); return;
       case 'click': this.host.command?.('click'); return;
-      case 'write': case 'latch': case 'touch': this.host.command?.('autoArm'); return;
-      case 'left': this.host.jog?.(-4 * 4); return; // a bar back (in sixteenths)
-      case 'right': this.host.jog?.(4 * 4); return;
+      case 'flip': this.flip = !this.flip; this.touched.clear(); return this._bankChanged();
+      case 'readOff': { // Read / Off: read -> off, anything else -> read
+        const m = this.host.transport?.()?.autoMode;
+        return this._autoMode(m === 'read' ? 'off' : 'read');
+      }
+      case 'write': case 'latch': case 'touch': return this._autoMode(ev.name);
+      case 'trim': return; // no trim automation in daW³
+      case 'left': if (this.markerHeld) { this.markerNav = true; this.host.command?.('prevMarker'); return; } this.host.jog?.(-4 * 4); return; // a bar back (in sixteenths)
+      case 'right': if (this.markerHeld) { this.markerNav = true; this.host.command?.('nextMarker'); return; } this.host.jog?.(4 * 4); return;
       default: return;
     }
   }
 
+  _autoMode(mode) {
+    if (this.host.setAutoMode) this.host.setAutoMode(mode);
+    else if (mode !== 'read' && mode !== 'off') this.host.command?.('autoArm');
+    this.refresh();
+  }
   _bankChanged() { this.cache.clear(); this.refresh(); }
   _invalidate(key) { this.cache.delete(key); }
 
@@ -152,7 +211,8 @@ export class SurfaceController {
     const sel = this.host.strips().find((x) => x.selected);
     const params = this.mode === 'plugin' && sel ? this.host.params?.(sel.id) || [] : [];
     strips.forEach((s, i) => {
-      if (!this.touched.has(i)) this._out(`fader:${i}`, p.fader(i, s ? gainToFader(s.volume ?? 0.8) : 0));
+      const fv = this.flip ? this._vpotValue(i, s) ?? 0 : s ? gainToFader(s.volume ?? 0.8) : 0;
+      if (!this.touched.has(i)) this._out(`fader:${i}`, p.fader(i, fv));
       this._out(`led:mute:${i}`, p.led('mute', i, s?.mute ? 1 : 0));
       this._out(`led:solo:${i}`, p.led('solo', i, s?.solo ? 1 : 0));
       this._out(`led:rec:${i}`, p.led('rec', i, s?.arm ? 1 : 0));
@@ -169,7 +229,8 @@ export class SurfaceController {
         ring = (pan + 1) / 2; ringMode = 1; label = short(s.name);
         value = Math.abs(pan) < 0.01 ? '<C>' : `${pan < 0 ? 'L' : 'R'}${Math.round(Math.abs(pan) * 100)}`;
       }
-      this._out(`ring:${i}`, s || params.length ? p.ring(i, ring, ringMode, this.mode === 'pan' && s && Math.abs(s.pan || 0) < 0.01) : p.ring(i, 0, 0));
+      if (this.flip) { ring = s ? gainToFader(s.volume ?? 0.8) : 0; ringMode = 2; } // flipped: the ring shows the volume
+      this._out(`ring:${i}`, s || params.length ? p.ring(i, ring, ringMode, !this.flip && this.mode === 'pan' && s && Math.abs(s.pan || 0) < 0.01) : p.ring(i, 0, 0));
       this._out(`lcd:0:${i}`, p.scribble(i, 0, label));
       this._out(`lcd:1:${i}`, p.scribble(i, 1, value));
     });
@@ -184,6 +245,10 @@ export class SurfaceController {
       this._out('led:assignPan', p.led('assignPan', null, this.mode === 'pan' ? 1 : 0));
       this._out('led:assignSend', p.led('assignSend', null, this.mode === 'send' ? 1 : 0));
       this._out('led:assignPlugin', p.led('assignPlugin', null, this.mode === 'plugin' ? 1 : 0));
+      const am = tr.autoMode || (tr.autoArm ? 'touch' : 'read');
+      this._out('led:flip', p.led('flip', null, this.flip ? 1 : 0));
+      this._out('led:readOff', p.led('readOff', null, am === 'read' ? 1 : am === 'off' ? 2 : 0)); // off = blinking
+      for (const m of ['touch', 'latch', 'write']) this._out(`led:${m}`, p.led(m, null, am === m ? 1 : 0));
       this._out('assign', p.assignment(this.mode === 'pan' ? 'PN' : this.mode === 'send' ? `S${this.sendIndex + 1}` : `P${this.paramPage + 1}`));
       this._out('time', p.timecode(this.timeText()));
     }

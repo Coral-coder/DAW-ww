@@ -1,6 +1,6 @@
-// Preferences dialog: MIDI devices · Mappings · Control surfaces · Sync · Shortcuts.
+// Preferences dialog: MIDI devices · Mappings · Control surfaces · Sync · Shortcuts · Hardware check.
 import { h, icon } from '../ui/dom.js';
-import { modal, tabs, toast, fileInput, select, contextMenu } from '../ui/components.js';
+import { modal, tabs, toast, fileInput, select, contextMenu, promptText } from '../ui/components.js';
 import { downloadBlob } from '../io/project-file.js';
 import { VELOCITY_CURVES, sourceLabel, RELATIVE_MODES } from './midi.js';
 import { exportMappings, importMappings } from './mapping.js';
@@ -8,6 +8,7 @@ import { GRID_LAYOUTS } from './grid.js';
 import { templateOwner } from './targets.js';
 import { eventToChord, formatChord, fuzzyScore } from './shortcuts.js';
 import { uid } from '../core/util.js';
+import { hardwareCheckTab } from '../ui/hardware-check.js';
 
 const chk = (value, onChange, title) => {
   const el = h('input', { type: 'checkbox', title });
@@ -42,6 +43,7 @@ export function openPrefs(app, tab = 'midi') {
     { id: 'surfaces', label: 'Control surfaces', icon: 'grid', render: mk('surfaces', () => surfacesTab(app, () => refresh('surfaces'))) },
     { id: 'sync', label: 'Sync', icon: 'loop', render: mk('sync', () => syncTab(app, () => refresh('sync'))) },
     { id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard', render: mk('shortcuts', () => shortcutsTab(app, () => refresh('shortcuts'))) },
+    { id: 'hardware', label: 'Hardware check', icon: 'search', render: mk('hardware', () => hardwareCheckTab(app, () => refresh('hardware'))) },
   ], tab);
   const m = modal({ title: 'Preferences', body: h('div.ctl-prefs', t), width: 900, cls: 'ctl-prefs-modal', onClose: () => unsub?.() });
   unsub = c.onChange(() => { for (const id of ['midi', 'mappings', 'surfaces']) { if (!roots[id]?.contains(document.activeElement)) refresh(id); } });
@@ -141,6 +143,11 @@ function mappingsTab(app, rerender) {
       }, { title: 'Copy these mappings into the global template (tracks become "track 1, 2…")' }),
       M.project.length ? btn('Delete all', () => { M.project.length = 0; M.emit('change', { scope: 'project' }); }, { ic: 'trash' }) : null),
     h('h4', `Controller template — all projects (${M.template.length})`),
+    // named banks: e.g. "Mixer", "Synth edit", "Live" — switch from here, the palette or a mapped controller button
+    h('div.ctl-row', h('span', 'Bank: '),
+      sel(c.banks.names().map((n) => ({ value: n, label: n })), c.banks.active, (v) => { c.selectTemplateBank(v); rerender(); }, 'Active controller template bank (map "Next / Previous controller template bank" to buttons to switch from the controller)'),
+      btn('Save as bank…', async () => { const n = await promptText('Save the controller template as bank', c.banks.active === 'Default' ? 'Mixer' : c.banks.active); if (n && c.saveTemplateBankAs(n)) rerender(); }, { ic: 'save', title: 'Keep the current template under a name; switch banks to swap whole controller layouts' }),
+      c.banks.names().length > 1 ? btn('Delete bank', () => { c.deleteTemplateBank(c.banks.active); rerender(); }, { ic: 'trash' }) : null),
     help('Template mappings apply in every project unless a project mapping uses the same control. "Selected track" mappings follow whichever track you select.'),
     table(M.template),
     h('div.ctl-row',
@@ -232,7 +239,7 @@ function syncTab(app, rerender) {
     help('Tempo is estimated from the tick timing with a least-squares fit over the last 3 beats (robust to USB jitter) and smoothed; real tempo changes are picked up within about half a beat.'),
     h('h4', 'MIDI time code (MTC) out'),
     h('div.ctl-row', sel([{ value: '', label: '— off —' }, ...outs.map((o) => ({ value: o.name, label: o.name }))], S.mtcOut || '', (v) => { S.mtcOut = v || null; commit(); }, 'Send MTC quarter frames'),
-      sel([{ value: '24', label: '24 fps' }, { value: '25', label: '25 fps' }, { value: '30', label: '30 fps (non-drop)' }], String(S.mtcFps || 25), (v) => { S.mtcFps = +v; commit(); })),
+      sel([{ value: '24', label: '24 fps' }, { value: '25', label: '25 fps' }, { value: '29.97', label: '29.97 fps drop-frame' }, { value: '30', label: '30 fps (non-drop)' }], String(S.mtcFps || 25), (v) => { S.mtcFps = v === '29.97' ? '29.97' : +v; commit(); })),
     ...linkBlock,
   ];
 }
@@ -255,7 +262,7 @@ function shortcutsTab(app, rerender) {
     let cat = null;
     const rows = [];
     for (const cmd of cmds) {
-      if (cmd.category !== cat) { cat = cmd.category; rows.push(h('tr.ctl-cat', h('td', { colspan: 3 }, cat))); }
+      if (cmd.category !== cat) { cat = cmd.category; rows.push(h('tr.ctl-cat', h('td', { colspan: 3 }, cat, cmd.scope && cmd.scope !== 'global' ? h('span.muted', ' — only in this view (the same keys can do something else in other views)') : null))); }
       const chips = map.keysFor(cmd.id).map((k) => {
         const x = h('button.ctl-chip-x', { type: 'button', title: 'Remove this shortcut' }, '×');
         x.addEventListener('click', () => { map.unbind(cmd.id, k); map.save(); rerender(); });

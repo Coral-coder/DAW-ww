@@ -6,6 +6,7 @@ import { DRUM_PADS, beatsPerBar, patternsForTrack } from '../../core/model.js';
 import { uid, clamp, createRng } from '../../core/util.js';
 import * as T from '../../theory/index.js';
 import { isTyping } from '../keyboard.js';
+import { openGrooveDialog } from '../groove-dialog.js';
 
 // Generators are optional for this view (arpeggiate); load lazily so a missing module can't break it.
 let gen = null;
@@ -633,6 +634,7 @@ export function createPianoView(app) {
       const c = T.detectChord(g.map((n) => n.pitch));
       if (!c) continue;
       const key = keyInfo();
+      if (T.chordName && T.keyPrefersFlats) c.name = T.chordName(c, { preferFlats: T.keyPrefersFlats(key.root, key.scale) });
       const roman = T.chordToRoman ? T.chordToRoman(c, key.root) : c.name;
       if (out.length && out[out.length - 1].roman === roman) continue;
       out.push({ roman, chord: c, start: k, end: Math.max(...g.map((n) => n.start + n.dur)) });
@@ -655,7 +657,7 @@ export function createPianoView(app) {
     for (const s of suggestions) {
       const ch = s.chord || T.romanToChord(s.roman, k.root, k.scale);
       if (!ch) continue;
-      const b = h('button.piano-chip', { type: 'button', title: `${s.reason || ''}\nClick to insert ${ch.name || ''} after the last chord` }, h('b', s.roman), ' ', T.chordName ? T.chordName(ch) : (ch.name || ''));
+      const b = h('button.piano-chip', { type: 'button', title: `${s.reason || ''}\nClick to insert ${ch.name || ''} after the last chord` }, h('b', s.roman), ' ', T.chordName ? T.chordName(ch, { preferFlats: T.keyPrefersFlats(k.root, k.scale) }) : (ch.name || ''));
       b.addEventListener('click', () => insertChord(ch.root, ch.type, { at: after }));
       chips.append(b);
     }
@@ -795,7 +797,7 @@ export function createPianoView(app) {
     const scales = Object.entries(T.SCALES);
     return [
       { header: 'Project key' },
-      { label: `Root: ${T.pitchClassName(k.root, 'common')}`, submenu: Array.from({ length: 12 }, (_, i) => ({ label: T.pitchClassName(i, 'common'), icon: i === k.root ? 'chevronRight' : null, onClick: () => store.transact('Key', (p) => { p.key.root = i; }) })) },
+      { label: `Root: ${T.keyRootName(k.root, k.scale)}`, submenu: Array.from({ length: 12 }, (_, i) => ({ label: T.keyRootName(i, k.scale), icon: i === k.root ? 'chevronRight' : null, onClick: () => store.transact('Key', (p) => { p.key.root = i; }) })) },
       { label: `Scale: ${T.SCALES[k.scale]?.name || k.scale}`, submenu: scales.slice(0, 40).map(([id, s]) => ({ label: s.name, icon: id === k.scale ? 'chevronRight' : null, onClick: () => store.transact('Scale', (p) => { p.key.scale = id; }) })) },
       '-',
       { label: 'Detect key from this pattern', icon: 'sparkles', onClick: detectKeyFromPattern, disabled: !cur.pat?.notes.length || typeof T.detectKey !== 'function' },
@@ -855,6 +857,7 @@ export function createPianoView(app) {
         { label: 'Starts 50%', onClick: () => quantize(0.5) },
         { label: 'Starts + ends 100%', onClick: () => quantize(1, true) },
       ] },
+      { label: 'Apply groove…', icon: 'magnet', title: 'Move notes toward a groove template (MPC swing presets or grooves extracted from audio / patterns)', disabled: !cur.pat, onClick: () => openGrooveDialog(app, { patternId: cur.pat.id, noteIds: selected.size ? new Set(selected) : null }) },
       { label: 'Humanize', icon: 'sparkles', submenu: [
         { label: 'Subtle (timing + velocity)', onClick: () => humanize(0.012, 0.06) },
         { label: 'Medium', onClick: () => humanize(0.025, 0.12) },
@@ -1633,22 +1636,35 @@ export function createPianoView(app) {
     if (!visible || !cur.pat || isTyping(e) || e.defaultPrevented) return;
     if (document.querySelector('.modal-backdrop')) return;
     if (e.key === 'Escape' && document.querySelector('.ctx-menu')) return; // let the open menu close first
-    const mod = e.ctrlKey || e.metaKey;
-    const k = e.key;
-    let handled = true;
-    if ((k === 'Delete' || k === 'Backspace') && !mod) { if (selected.size) deleteSel(); else handled = false; }
-    else if (mod && (k === 'a' || k === 'A')) selectAll();
-    else if (mod && (k === 'c' || k === 'C') && !e.shiftKey) { if (!copySel()) handled = false; }
-    else if (mod && (k === 'x' || k === 'X')) { if (copySel()) deleteSel(); else handled = false; }
-    else if (mod && (k === 'v' || k === 'V')) { if (clipboard) paste(); else handled = false; }
-    else if (mod && (k === 'd' || k === 'D')) { if (selected.size) duplicateRight(); else handled = false; }
-    else if (k === 'Escape' && !mod) { if (selected.size) { selected.clear(); drawAll(); } else handled = false; }
-    else if (!mod && (k === 'ArrowLeft' || k === 'ArrowRight') && selected.size) nudge((k === 'ArrowLeft' ? -1 : 1) * (e.altKey ? 1 / 32 : gridStep()), 0);
-    else if (!mod && (k === 'ArrowUp' || k === 'ArrowDown') && selected.size) nudge(0, k === 'ArrowUp' ? 1 : -1, e.shiftKey);
-    else if (!mod && !e.altKey && (k === 'q' || k === 'Q') && !app.keyboardPiano?.enabled) quantize(1);
-    else handled = false;
-    if (handled) { e.preventDefault(); e.stopImmediatePropagation(); drawAll(); }
+    // rebindable view-scoped commands (src/control/view-commands.js — Preferences → Shortcuts)
+    const cmd = app.shortcuts?.matchScope(e, 'piano');
+    if (!cmd) return;
+    if (e.repeat && !cmd.repeat) { e.preventDefault(); return; }
+    const r = pianoActions[cmd.action]?.(e);
+    if (r === false) return;
+    e.preventDefault(); e.stopImmediatePropagation(); drawAll();
   }, true);
+  const sel0 = (fn) => (e) => { if (!cur.pat || !selected.size) return false; fn(e); return true; };
+  const pianoActions = {
+    delete: sel0(() => deleteSel()),
+    selectAll: () => { if (!cur.pat) return false; selectAll(); return true; },
+    copy: () => (cur.pat && copySel() ? true : false),
+    cut: () => { if (!cur.pat || !copySel()) return false; deleteSel(); return true; },
+    paste: () => { if (!cur.pat || !clipboard) return false; paste(); return true; },
+    duplicate: sel0(() => duplicateRight()),
+    deselect: sel0(() => { selected.clear(); drawAll(); }),
+    nudgeLeft: sel0(() => nudge(-gridStep(), 0)),
+    nudgeRight: sel0(() => nudge(gridStep(), 0)),
+    nudgeLeftFine: sel0(() => nudge(-1 / 32, 0)),
+    nudgeRightFine: sel0(() => nudge(1 / 32, 0)),
+    up: sel0(() => nudge(0, 1, false)),
+    down: sel0(() => nudge(0, -1, false)),
+    octaveUp: sel0(() => nudge(0, 1, true)),
+    octaveDown: sel0(() => nudge(0, -1, true)),
+    quantize: () => { if (!cur.pat || app.keyboardPiano?.enabled) return false; quantize(1); return true; },
+    groove: () => { if (!cur.pat) return false; openGrooveDialog(app, { patternId: cur.pat.id, noteIds: selected.size ? new Set(selected) : null }); return true; },
+  };
+  app.viewActions = { ...(app.viewActions || {}), piano: pianoActions };
 
   // ---------------------------------------------------------------- render cycle
   function showEmpty(kind) {

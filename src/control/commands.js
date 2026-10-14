@@ -3,6 +3,7 @@
 // (Ctrl/Cmd+K) lists it together with every main-menu / Create-menu entry.
 import { CommandRegistry, ShortcutMap } from './shortcuts.js';
 import { VIEWS } from '../ui/app.js';
+import { viewCommandEntries } from './view-commands.js';
 
 const STORE_KEY = 'daw3-shortcuts';
 export const isMacPlatform = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
@@ -68,12 +69,17 @@ export function buildCommands(app) {
     { id: 'palette.open', label: 'Command palette', category: 'General', keys: ['mod+k'], run: () => ctl()?.openPalette() },
     { id: 'help.show', label: 'Help & shortcuts', category: 'General', keys: ['shift+/'], run: () => actions.showHelp() },
     { id: 'prefs.open', label: 'Preferences…', category: 'General', keys: ['mod+,'], run: () => ctl()?.openPrefs() },
+    { id: 'hardware.check', label: 'Hardware check (MIDI, control surface, audio I/O, Link) — copy a report', category: 'General', keys: [], run: () => ctl()?.openPrefs('hardware') },
     { id: 'prefs.shortcuts', label: 'Keyboard shortcuts…', category: 'General', keys: [], run: () => ctl()?.openPrefs('shortcuts') },
     { id: 'midi.learn', label: 'MIDI learn mode (map hardware to any control)', category: 'MIDI', keys: ['mod+shift+m'], run: () => ctl()?.toggleLearnMode() },
     { id: 'midi.devices', label: 'MIDI devices…', category: 'MIDI', keys: [], run: () => ctl()?.openPrefs('midi') },
     { id: 'midi.mappings', label: 'MIDI mappings…', category: 'MIDI', keys: [], run: () => ctl()?.openPrefs('mappings') },
     { id: 'midi.surfaces', label: 'Control surfaces (Mackie / HUI / pad grids)…', category: 'MIDI', keys: [], run: () => ctl()?.openPrefs('surfaces') },
+    { id: 'midi.bankNext', label: 'Next controller template bank', category: 'MIDI', keys: [], run: () => ctl()?.selectTemplateBank(1) },
+    { id: 'midi.bankPrev', label: 'Previous controller template bank', category: 'MIDI', keys: [], run: () => ctl()?.selectTemplateBank(-1) },
     { id: 'midi.sync', label: 'Sync: MIDI clock, MTC, Ableton Link…', category: 'MIDI', keys: [], run: () => ctl()?.openPrefs('sync') },
+    // view-specific keys (piano roll, arrange, step rack, mixer): same map, scoped to their view
+    ...viewCommandEntries(app),
   ];
   return new CommandRegistry().registerAll(list);
 }

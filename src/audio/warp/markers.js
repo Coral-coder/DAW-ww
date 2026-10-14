@@ -7,7 +7,7 @@
 //                               // seconds; sorted, strictly increasing in both. Between markers the mapping is
 //                               // linear; outside it extrapolates the nearest segment (or `bpm` with one marker).
 //   bpm,                        // source tempo (detected / set); used with < 2 markers
-//   transpose,                  // semitones (beats / tones / complex; repitch = speed only)
+//   transpose,                  // semitones (beats / tones / complex: pitch only; repitch: rate × 2^(st/12) on top of the tempo ratio — tape)
 //   formants,                   // tones / complex: keep formants while transposing (LPC envelope)
 //   quality,                    // 'draft' | 'normal' | 'high' (grain size / search effort)
 // }
@@ -128,6 +128,18 @@ export function curveTimeAt(points, s) {
 }
 
 /** Piecewise-constant playback rates reproducing the curve exactly at every breakpoint: [{t, rate}]. */
+/** Re-Pitch transpose factor: 2^(st/12) (1 for 0 / invalid). */
+export const repitchFactor = (st) => Math.pow(2, (Number(st) || 0) / 12);
+
+/**
+ * Re-Pitch playback rates with transpose: the tempo ratio (curveRates) × 2^(st/12) — like speeding up tape, the
+ * source advances P× faster from the clip's first source point (s0 + P·(s(t) − s0)), so pitch AND speed rise.
+ */
+export function repitchRates(points, transpose = 0) {
+  const P = repitchFactor(transpose);
+  return curveRates(points).map((r) => ({ t: r.t, rate: r.rate * P }));
+}
+
 export function curveRates(points) {
   const out = [];
   for (let i = 0; i + 1 < points.length; i++) {

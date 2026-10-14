@@ -1,6 +1,7 @@
 // 4-operator FM synth (DX-style). Operators are sine oscillators; modulators drive the
 // carrier's frequency input with deviation = index * modulatorFreq (true FM ≈ PM for sines).
 import { clamp, midiToFreq } from '../core/util.js';
+import { exprStage } from './voice-expression.js';
 import { BaseInstrument, Voice, envNote, num } from './synth.js';
 
 /**
@@ -218,7 +219,8 @@ export class FMInstrument extends BaseInstrument {
       pn.pan.value = num(extra.pan, 0, -1, 1);
       node.connect(pn); node = pn;
     }
-    node.connect(this.out.input);
+    v.detuneTargets = detuneTargets; // MPE per-note bend (BaseInstrument.noteExpression)
+    v.xs = exprStage(ctx, v, node, this.out.input); // MPE pressure / timbre stage
     v.startAll(t);
     if (tOff != null) v.stopAt(tOff + (maxRel || 0.3) + 0.03);
     return v;

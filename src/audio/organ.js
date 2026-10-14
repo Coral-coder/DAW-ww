@@ -2,6 +2,7 @@
 // key click, scanner vibrato/chorus and a rotary-speaker simulation (instrument-level).
 import { clamp, midiToFreq } from '../core/util.js';
 import { BaseInstrument, Voice, envNote, getNoiseBuffer, getPeriodicWave, isOffline, num } from './synth.js';
+import { exprStage } from './voice-expression.js';
 
 // harmonic numbers relative to the 16' sub-octave (wave fundamental = f/2)
 const DRAWBAR_HARMONICS = [1, 3, 2, 4, 6, 8, 10, 12, 16];
@@ -178,7 +179,8 @@ export class OrganInstrument extends BaseInstrument {
       cg.gain.setTargetAtTime(0, t + 0.0008, 0.0025);
       ns.connect(bp); bp.connect(cg); cg.connect(this.fx.bus);
     }
-    amp.connect(this.fx.bus);
+    v.detuneTargets = v.sources.filter((s) => s.detune).map((s) => s.detune); // MPE per-note bend (oscillators)
+    v.xs = exprStage(ctx, v, amp, this.fx.bus); // MPE pressure / timbre stage
     v.startAll(t);
     if (tOff != null) v.stopAt(v.ampSt.tOff + v.ampSt.r + 0.03);
     return v;

@@ -4,7 +4,9 @@
 // update the existing controls in place, so knob drags stay smooth.
 import { h, icon, startDrag, fitCanvas, clear } from '../dom.js';
 import { knob, select, toggle, button, iconButton, paramPanel, contextMenu, promptText, confirmDialog, formatValue, markAuto } from '../components.js';
-import { createEffect, DRUM_PADS } from '../../core/model.js';
+import { createEffect, DRUM_PADS, instrumentEdited } from '../../core/model.js';
+import { priorityOverflow } from '../overflow.js';
+const prio = (e, n) => { e.dataset.prio = String(n); return e; };
 import { clamp, deepClone } from '../../core/util.js';
 import { EFFECT_DEFS, EFFECT_CATEGORIES, INSTRUMENT_DEFS, PRESETS, DRUM_KITS, resolveEffectParams } from '../../audio/index.js';
 import { isPatchActive, patchFxOrder } from '../../core/patch.js';
@@ -187,7 +189,8 @@ export function createDevicePanel(app) {
   function applyHeight() {
     const open = ui.get('deviceOpen');
     el.classList.toggle('closed', !open);
-    el.style.height = open ? clamp(ui.get('deviceHeight') || 260, 120, Math.max(120, window.innerHeight * 0.7)) + 'px' : '';
+    // nothing selected: just the header row (the big placeholder took ~260 px, e.g. on the Setlist view)
+    el.style.height = open && !el.classList.contains('dv-none') ? clamp(ui.get('deviceHeight') || 260, 120, Math.max(120, window.innerHeight * 0.7)) + 'px' : '';
   }
   window.addEventListener('resize', () => { if (ui.get('deviceOpen') && el.getBoundingClientRect().height > window.innerHeight * 0.7) applyHeight(); });
 
@@ -273,6 +276,7 @@ export function createDevicePanel(app) {
     header = buildHeader(ctx);
     headerHost.appendChild(header.el);
     header.update(ctx);
+    if (el.classList.contains('dv-none') !== !tgt) { el.classList.toggle('dv-none', !tgt); applyHeight(); }
     if (!tgt) {
       chain.appendChild(h('div.dv-empty',
         icon('sliders', 26),
@@ -372,7 +376,9 @@ export function createDevicePanel(app) {
     const collapseBtn = iconButton(open ? 'chevronDown' : 'chevronRight', () => ui.set({ deviceOpen: !ui.get('deviceOpen') }), open ? 'Collapse the device panel' : 'Expand the device panel', 'dv-collapse');
     const parts = [collapseBtn];
     if (!tgt) {
-      parts.push(h('span.dv-title.muted', 'Devices'), h('span.dv-hint', 'No track selected'));
+      const n = store.get().tracks.length;
+      parts.push(h('span.dv-title.muted', 'Devices'), h('span.dv-hint', n ? 'No track selected — click a track name to edit its instrument and effects here' : 'No tracks yet'),
+        n ? null : button('Add track', (e) => contextMenu(e, actions.addTrackMenuItems()), { icon: 'plus', cls: 'small' }));
       return { el: h('div.dv-header-row', parts), update() {} };
     }
     const nameEl = h('span.dv-title', { title: tgt.kind === 'track' ? `${tgt.name} — double-click to rename` : tgt.name }, tgt.name);
@@ -385,7 +391,7 @@ export function createDevicePanel(app) {
     else if (tgt.track.type === 'code') badge = 'Code track';
     else if (tgt.track.type === 'audio') badge = 'Audio track';
     else badge = instDefs(ins.type)?.name || ins.type;
-    parts.push(h('span.dv-badge', { title: 'Device type' }, badge));
+    parts.push(h('span.dv-badge', { title: 'Device type', dataset: { prio: 6 } }, badge));
     if (tgt.kind !== 'track') {
       const back = button('Back to track', () => ui.set({ deviceTarget: null }), { icon: 'chevronRight', cls: 'small', title: 'Show the selected track’s devices again' });
       parts.push(back);
@@ -419,17 +425,17 @@ export function createDevicePanel(app) {
         applyPreset(tgt, ins, nv);
       };
       modDot = h('button.dv-mod', { type: 'button', title: 'Edited — your changes override the preset. Click to revert to the preset.' }, '● edited');
-      modDot.addEventListener('click', () => editIns(tgt, 'Revert to preset', (i) => { i.params = i.type === 'drums' ? { kit: i.params.kit || i.preset, ...(i.params.machine ? { machine: i.params.machine } : {}) } : i.type === 'drumsampler' ? { machine: i.params.machine } : i.type === 'sampler' && i.params.sampleId ? { sampleId: i.params.sampleId } : {}; }));
+      modDot.addEventListener('click', () => editIns(tgt, 'Revert to preset', (i) => { delete i.edited; i.params = i.type === 'drums' ? { kit: i.params.kit || i.preset, ...(i.params.machine ? { machine: i.params.machine } : {}) } : i.type === 'drumsampler' ? { machine: i.params.machine } : i.type === 'sampler' && i.params.sampleId ? { sampleId: i.params.sampleId } : {}; }));
       parts.push(
         h('div.dv-preset-group',
           iconButton('chevronRight', () => step(-1), 'Previous preset', 'dv-prev'),
           presetSel,
           iconButton('chevronRight', () => step(1), 'Next preset', 'dv-next')),
         modDot,
-        iconButton('dice', (e) => randomize(tgt, ins, e.shiftKey ? 0.9 : 0.4), 'Randomize — mutate the main parameters within musical ranges (Shift-click: wilder). Ctrl+Z undoes.'),
-        iconButton('save', () => saveUserPreset(tgt), 'Save these settings as a user preset (stored in this browser)'),
+        prio(iconButton('dice', (e) => randomize(tgt, ins, e.shiftKey ? 0.9 : 0.4), 'Randomize — mutate the main parameters within musical ranges (Shift-click: wilder). Ctrl+Z undoes.'), 5),
+        prio(iconButton('save', () => saveUserPreset(tgt), 'Save these settings as a user preset (stored in this browser)'), 4),
         iconButton('menu', (e) => contextMenu(e, instrumentMenu(tgt, ins)), 'More: init, swap instrument, manage user presets'),
-        button('Load plugin…', () => openPluginDialog({ tab: 'catalog', type: 'instrument', trackId: tgt.id }), { icon: 'plug', cls: 'small', title: 'Replace this instrument with a SoundFont, Faust or Web Audio Module plugin' }),
+        prio(button('Load plugin…', () => openPluginDialog({ tab: 'catalog', type: 'instrument', trackId: tgt.id }), { icon: 'plug', cls: 'small', title: 'Replace this instrument with a SoundFont, Faust or Web Audio Module plugin' }), 9),
       );
     }
     parts.push(h('div.spacer'));
@@ -437,8 +443,8 @@ export function createDevicePanel(app) {
       const t = tgt.track;
       if (t.type === 'instrument') {
         parts.push(
-          button('Piano roll', () => { actions.selectTrack(t.id); app.showView('piano'); }, { icon: 'piano', cls: 'small', title: 'Edit this track’s notes in the piano roll (4)' }),
-          button('Step rack', () => { actions.selectTrack(t.id); app.showView('rack'); }, { icon: 'grid', cls: 'small', title: 'Program this track in the step sequencer (3)' }),
+          prio(button('Piano roll', () => { actions.selectTrack(t.id); app.showView('piano'); }, { icon: 'piano', cls: 'small', title: 'Edit this track’s notes in the piano roll (4)' }), 7),
+          prio(button('Step rack', () => { actions.selectTrack(t.id); app.showView('rack'); }, { icon: 'grid', cls: 'small', title: 'Program this track in the step sequencer (3)' }), 8),
         );
       } else if (t.type === 'code') {
         parts.push(button('Code editor', () => { actions.selectTrack(t.id); app.showView('code'); }, { icon: 'code', cls: 'small', title: 'Open the live-code editor (6)' }));
@@ -449,12 +455,13 @@ export function createDevicePanel(app) {
     }
     parts.push(button('Effect', (e) => showEffectMenu(e, (type, params) => addEffect(tgt, type, params)), { icon: 'plus', cls: 'small', title: 'Add an insert effect to the end of the chain' }));
     const el = h('div.dv-header-row', parts);
+    priorityOverflow(el, { title: 'More device actions (hidden to fit)' }); // priority+ instead of a scrollbar
     return {
       el,
       update(c) {
         if (!c.ins || !presetSel) return;
         const tr = c.tgt.track;
-        const edited = tr.instrument.params && Object.keys(tr.instrument.params).some((k) => (k !== 'pads' && k !== 'kit' && k !== 'sampleId') || (k === 'pads' && Object.keys(tr.instrument.params.pads || {}).length));
+        const edited = instrumentEdited(tr.instrument); // only after the user's own edits (not generator setup)
         modDot.classList.toggle('hidden', !edited || (!tr.instrument.preset && !lastUserPreset.get(tr.id)));
         nameEl.textContent = c.tgt.name;
       },
@@ -504,7 +511,7 @@ export function createDevicePanel(app) {
         const keep = instDefs(ins.type)?.plugin ? Object.fromEntries(['name', 'code', 'url', 'library', 'instrument', 'state'].filter((k) => t.instrument.params?.[k] !== undefined).map((k) => [k, t.instrument.params[k]])) : {};
         t.instrument = ins.type === 'drums' ? { type: 'drums', preset: kit, params: { kit } } : { type: ins.type, preset: null, params: keep };
       }) },
-      { label: 'Revert to preset (clear my edits)', disabled: !ins.preset, onClick: () => editIns(tgt, 'Revert to preset', (i) => { i.params = i.type === 'drums' ? { kit: i.params.kit || i.preset, ...(i.params.machine ? { machine: i.params.machine } : {}) } : i.type === 'drumsampler' ? { machine: i.params.machine } : i.type === 'sampler' && i.params.sampleId ? { sampleId: i.params.sampleId } : {}; }) },
+      { label: 'Revert to preset (clear my edits)', disabled: !ins.preset, onClick: () => editIns(tgt, 'Revert to preset', (i) => { delete i.edited; i.params = i.type === 'drums' ? { kit: i.params.kit || i.preset, ...(i.params.machine ? { machine: i.params.machine } : {}) } : i.type === 'drumsampler' ? { machine: i.params.machine } : i.type === 'sampler' && i.params.sampleId ? { sampleId: i.params.sampleId } : {}; }) },
       { label: 'Randomize (subtle)', icon: 'dice', onClick: () => randomize(tgt, ins, 0.25) },
       { label: 'Randomize (wild)', icon: 'dice', onClick: () => randomize(tgt, ins, 0.9) },
       '-',
@@ -569,7 +576,7 @@ export function createDevicePanel(app) {
       }
     }
     if (ins.type === 'synth' && (cur.osc1Level ?? 0.8) + (out.osc2Level ?? cur.osc2Level ?? 0) < 0.3) out.osc1Level = 0.8;
-    editIns(tgt, 'Randomize sound', (i) => { Object.assign(i.params, out); });
+    editIns(tgt, 'Randomize sound', (i) => { Object.assign(i.params, out); i.edited = true; });
     app.setStatus?.('Randomized sound — Ctrl+Z to undo, Shift-click the dice for wilder results.');
   }
 
@@ -620,7 +627,7 @@ export function createDevicePanel(app) {
     }
     const updaters = [];
     const label = (k) => def.params.find((d) => d.key === k)?.label || k;
-    const onParam = (k, v) => editIns(tgt, `${def.name}: ${label(k)}`, (i) => { i.params[k] = v; }, { coalesce: true });
+    const onParam = (k, v) => editIns(tgt, `${def.name}: ${label(k)}`, (i) => { i.params[k] = v; i.edited = true; }, { coalesce: true });
 
     let skip = [];
     if (ins.type === 'drums') skip = ['kit'];
@@ -633,7 +640,7 @@ export function createDevicePanel(app) {
     if (ins.type === 'organ') updaters.push(drawbarEditor(shell.body, def, onParam));
     if (ins.type === 'drums' || ins.type === 'drumsampler') updaters.push(drumEditor(shell.body, tgt));
     if (ins.type === 'sampler') updaters.push(samplerEditor(shell.body, tgt, onParam));
-    if (def.plugin) updaters.push(pluginInstrumentEditor(app, shell.body, tgt, ins, { resolved, edit: (lbl, fn, o) => editIns(tgt, lbl, (i) => fn(i.params), o) }));
+    if (def.plugin) updaters.push(pluginInstrumentEditor(app, shell.body, tgt, ins, { resolved, edit: (lbl, fn, o) => editIns(tgt, lbl, (i) => { fn(i.params); i.edited = true; }, o) }));
 
     const pb = paramsBlock(panelDefs(def.params, skip), resolved, ins.type, onParam, { owner: tgt.id, prefix: 'inst:' });
     shell.body.appendChild(h('div.dv-params', pb.el));
@@ -814,6 +821,7 @@ export function createDevicePanel(app) {
       if (!i.params.pads) i.params.pads = deepClone(lastResolved?.pads || {});
       if (!i.params.pads[padKey]) i.params.pads[padKey] = {};
       fn(i.params.pads[padKey]);
+      i.edited = true;
     }, opts);
     const assignSample = (padKey, sampleId) => {
       const s = store.get().samples[sampleId];

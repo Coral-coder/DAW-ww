@@ -4,7 +4,7 @@
 // Logic: src/live/setlist-engine.js (pure) + src/live/setlist-runner.js (store / engine glue).
 import { h, icon, fitCanvas } from '../dom.js';
 import { button, toggle, select, numberField, knob, fader, contextMenu, confirmDialog, markAuto } from '../components.js';
-import { SCALES, pitchClassName } from '../../theory/index.js';
+import { SCALES, keyRootName } from '../../theory/index.js';
 import { GENRES } from '../../gen/genres.js';
 import { PRESETS, DRUM_KITS } from '../../audio/index.js';
 import { SetlistRunner } from '../../live/setlist-runner.js';
@@ -35,7 +35,7 @@ export function createSetlistView(app) {
 
   // ------------------------------------------------------------------ toolbar
   const genreSel = select({ options: Object.entries(GENRES).map(([id, g]) => ({ value: id, label: g.name, group: g.family || 'Other' })), value: startOpts.genre, title: 'Genre of the set (applies to a new set)', onChange: (v) => { startOpts.genre = v; startOpts.bpm = null; bpmField.setValue(GENRES[v]?.defaultBpm || 120); } });
-  const rootSel = select({ options: Array.from({ length: 12 }, (_, i) => ({ value: i, label: pitchClassName(i) })), value: startOpts.root, title: 'Key root — while a set plays, picking a key moves there at the next phrase', onChange: (v) => { startOpts.root = Number(v); if (runner.active) { runner.setKey({ root: Number(v), scale: runner.state.pendingKey?.scale || runner.state.key.scale }); } } });
+  const rootSel = select({ options: Array.from({ length: 12 }, (_, i) => ({ value: i, label: keyRootName(i, startOpts.scale || 'minor') })), value: startOpts.root, title: 'Key root — while a set plays, picking a key moves there at the next phrase', onChange: (v) => { startOpts.root = Number(v); if (runner.active) { runner.setKey({ root: Number(v), scale: runner.state.pendingKey?.scale || runner.state.key.scale }); } } });
   const scaleOpts = ['minor', 'major', 'dorian', 'phrygian', 'mixolydian', 'harmonic-minor', 'lydian'].filter((s) => SCALES[s]).map((s) => ({ value: s, label: SCALES[s].name }));
   const scaleSel = select({ options: scaleOpts, value: scaleOpts.some((o) => o.value === startOpts.scale) ? startOpts.scale : 'minor', title: 'Scale — while a set plays, changes at the next phrase', onChange: (v) => { startOpts.scale = v; if (runner.active) runner.setKey({ root: runner.state.pendingKey?.root ?? runner.state.key.root, scale: v }); } });
   const bpmField = numberField({ value: GENRES[startOpts.genre]?.defaultBpm || 124, min: 60, max: 200, step: 1, width: 48, title: 'Tempo (BPM) — live', onChange: (v, { final }) => { startOpts.bpm = v; if (runner.active && final) store.transact('Tempo', (p) => { p.bpm = v; }, { coalesce: true }); } });

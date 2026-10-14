@@ -143,8 +143,8 @@ export class Instrument {
    * per-voice support fall back to channel pitch bend for the bend. */
   noteExpression(pitch, x, time) {
     try {
-      if (this.engine.noteExpression) this.engine.noteExpression(pitch, x, time);
-      else if (x && Number.isFinite(x.bend)) this.engine.pitchBend?.(x.bend / Math.max(1, this.engine.params?.bendRange || 2), time);
+      const ok = this.engine.noteExpression ? this.engine.noteExpression(pitch, x, time) : false;
+      if (ok === false && x && Number.isFinite(x.bend)) this.engine.pitchBend?.(x.bend / Math.max(1, this.engine.params?.bendRange || 2), time);
     } catch (e) { warn(e); }
   }
   /** Number of currently allocated voices (for meters/debug). */

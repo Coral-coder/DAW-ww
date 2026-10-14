@@ -270,7 +270,7 @@ export function compClips(project, track) {
       id: `comp:${track.id}:${i}`, trackId: track.id, type: audio ? 'audio' : 'pattern',
       sampleId: take.sampleId || null, patternId: take.patternId || null,
       start: start, length: end - start, offset: audio && tm ? offsetAtBeat(tm, take, start) : take.offset + (start - take.start),
-      gain: take.gain ?? 1, name: take.name, comp: true, takeId: take.id,
+      gain: take.gain ?? 1, name: take.name, comp: true, takeId: take.id, compStart: s.start, compEnd: s.end,
     };
     if (audio) {
       const fi = lead[i] + (i > 0 ? tail[i - 1] : 0);
