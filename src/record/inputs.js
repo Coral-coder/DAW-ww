@@ -105,11 +105,30 @@ export function loadCaptureWorklet(ctx) {
   return workletLoaded.get(ctx);
 }
 
+const SCRIPT_N = 1024;
+const PILOT_LEN = 65536; // frames per pilot ramp cycle
+const PILOT_DIV = 131072; // pilot sample i = (i + 1) / PILOT_DIV: never 0 while running, exact in float32
+const pilotBuffers = new WeakMap();
+
+/**
+ * Absolute context frame of a ScriptProcessor input block from the pilot channel (see createCaptureTap): `v` = the
+ * block's first pilot sample, `f0` = frame the pilot started at, `estimate` = rough frame (from playbackTime) that
+ * only has to be within ±PILOT_LEN/2. null without a pilot (not started yet). Pure.
+ */
+export function pilotFrame(v, f0, estimate) {
+  if (!(v > 0)) return null;
+  const idx = Math.round(v * PILOT_DIV) - 1;
+  const k = Math.round((estimate - f0 - idx) / PILOT_LEN);
+  return f0 + idx + k * PILOT_LEN;
+}
+
 /**
  * Capture tap: an input node + the same message protocol as capture-processor.js (peaks / chunk / stopped), from the
- * AudioWorklet or — where AudioWorklet is unavailable or stalls — a ScriptProcessorNode. The ScriptProcessor delivers
- * its input two buffers before e.playbackTime (measured in Chromium: ±1 render quantum); the loopback calibration
- * measures through the same path, so a calibrated device is exact either way.
+ * AudioWorklet (sample-exact: chunk frames are the render quantum's currentFrame) or — where AudioWorklet is
+ * unavailable or stalls — a ScriptProcessorNode. A ScriptProcessor's input is not at a fixed distance from
+ * e.playbackTime (Chromium 140: 2·N + 128…256 frames, varying block to block), so the fallback carries a pilot: an
+ * extra input channel with a looping frame-index ramp started at a known frame; each block's absolute frame is read
+ * from it (pilotFrame) — chunks are exact and contiguous, like the worklet's. tap.close() releases the fallback.
  */
 export async function createCaptureTap(ctx, channels, onMessage) {
   if (await loadCaptureWorklet(ctx)) {
@@ -121,10 +140,32 @@ export async function createCaptureTap(ctx, channels, onMessage) {
     node.port.onmessage = (e) => onMessage(e.data);
     return { node, kind: 'worklet', start: () => node.port.postMessage({ cmd: 'start' }), stop: () => node.port.postMessage({ cmd: 'stop' }) };
   }
-  const N = 1024;
-  const node = ctx.createScriptProcessor(N, channels, 1);
+  const N = SCRIPT_N, sr = ctx.sampleRate;
+  // input (what callers connect to) -> split -> merge [channels…, pilot] -> ScriptProcessor -> silent sink
+  const input = ctx.createGain();
+  input.channelCount = channels; input.channelCountMode = 'explicit'; input.channelInterpretation = 'discrete';
+  const split = ctx.createChannelSplitter(channels);
+  const merge = ctx.createChannelMerger(channels + 1);
+  input.connect(split);
+  for (let c = 0; c < channels; c++) split.connect(merge, c, c);
+  let pb = pilotBuffers.get(ctx);
+  if (!pb) {
+    pb = ctx.createBuffer(1, PILOT_LEN, sr);
+    const d = pb.getChannelData(0);
+    for (let i = 0; i < PILOT_LEN; i++) d[i] = (i + 1) / PILOT_DIV;
+    pilotBuffers.set(ctx, pb);
+  }
+  const pilot = ctx.createBufferSource();
+  pilot.buffer = pb; pilot.loop = true;
+  const f0 = Math.ceil((ctx.currentTime + 0.05) * sr);
+  pilot.start(f0 / sr);
+  pilot.connect(merge, 0, channels);
+  const node = ctx.createScriptProcessor(N, channels + 1, 1);
   node.channelCountMode = 'explicit';
   node.channelInterpretation = 'discrete';
+  merge.connect(node);
+  const mute = ctx.createGain(); mute.gain.value = 0;
+  node.connect(mute); mute.connect(ctx.destination);
   let rec = false;
   const peaks = new Float32Array(channels);
   node.onaudioprocess = (e) => {
@@ -138,9 +179,27 @@ export async function createCaptureTap(ctx, channels, onMessage) {
       if (rec) data.push(d.slice());
     }
     onMessage({ type: 'peaks', peaks: Array.from(peaks) });
-    if (rec) onMessage({ type: 'chunk', frame: Math.round(e.playbackTime * ctx.sampleRate) - 2 * N, data });
+    if (!rec) return;
+    // the block may skip render quanta (main thread late): read the pilot per quantum, one chunk per contiguous run
+    const pc = ib.getChannelData(channels);
+    let estimate = Math.round(e.playbackTime * sr) - 2 * N - 128;
+    let run = -1, runFrame = 0;
+    const emit = (end) => { if (run >= 0) onMessage({ type: 'chunk', frame: runFrame, data: run === 0 && end === N ? data : data.map((d) => d.slice(run, end)) }); };
+    for (let q = 0; q < N; q += 128) {
+      const f = pilotFrame(pc[q], f0, estimate + q);
+      if (f == null) { emit(q); run = -1; continue; }
+      if (run >= 0 && f === runFrame + (q - run)) continue;
+      emit(q);
+      run = q; runFrame = f; estimate = f - q;
+    }
+    emit(N);
   };
-  return { node, kind: 'script', start: () => { rec = true; }, stop: () => { rec = false; onMessage({ type: 'stopped' }); } };
+  return {
+    node: input, kind: 'script',
+    start: () => { rec = true; },
+    stop: () => { rec = false; onMessage({ type: 'stopped' }); },
+    close: () => { for (const n of [pilot, merge, split, node, mute]) { try { n.disconnect(); } catch { /* */ } } try { pilot.stop(); } catch { /* */ } node.onaudioprocess = null; },
+  };
 }
 
 export class InputManager extends Emitter {
@@ -232,6 +291,7 @@ export class InputManager extends Emitter {
     for (const [tid, r] of this.routes) if (r.sourceId === id) this._unroute(tid);
     try { s.h.node.disconnect(); } catch { /* */ }
     try { s.cap.disconnect(); s.sink.disconnect(); } catch { /* */ }
+    try { s.tap?.close?.(); } catch { /* */ }
     try { s.h.close(); } catch { /* */ }
   }
 
