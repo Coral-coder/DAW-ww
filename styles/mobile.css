@@ -1,6 +1,7 @@
 /* daW³ Pocket — phone-first layout (src/mobile). Loaded only by the Pocket shell. Uses the theme tokens of main.css. */
 html.pocket, html.pocket body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior: none; -webkit-text-size-adjust: 100%; touch-action: manipulation; }
 html.pocket body { font-size: 15px; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; }
+html.pocket [hidden] { display: none !important; } /* author display rules (.pk-page { display: flex }) must not beat [hidden] */
 html.pocket { --pk-gap: 12px; --pk-r: 14px; --pk-touch: 48px; --ctl: var(--accent); }
 
 #app.pk { display: flex; flex-direction: column; height: 100vh; height: 100dvh; width: 100vw; background: var(--bg); }
@@ -315,3 +316,88 @@ html.pocket input, html.pocket textarea, html.pocket select { font-size: 16px; }
   .pk-tp { width: 40px; height: 40px; }
   .pk-key-name { font-size: 13px; }
 }
+
+/* ---------- transport fits 7 buttons on small phones ---------- */
+@media (max-width: 420px) {
+  .pk-tp { width: 40px; height: 40px; }
+  .pk-tp.sm { width: 32px; height: 40px; }
+  .pk-transport { gap: 4px; }
+  .pk-bpm, .pk-modebtn { padding: 0 7px; font-size: 11px; }
+}
+.pk-btn.small { min-height: 38px; padding: 0 12px; font-size: 14px; border-radius: 10px; }
+.pk-chip.warn { border-color: var(--rec); color: var(--rec); }
+
+/* ---------- drag reorder ---------- */
+.pk-grip { flex: none; width: 34px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-3); font-size: 20px; touch-action: none; cursor: grab; user-select: none; }
+.pk-reordering > * { transition: transform .12s ease; }
+.pk-reordering > .pk-dragging { transition: none; position: relative; z-index: 5; box-shadow: 0 10px 30px rgba(0,0,0,.35); opacity: .95; }
+
+/* ---------- Song (arrange) page ---------- */
+.pk-arr-body { padding-left: 0; padding-right: 0; gap: 6px; overflow: hidden; padding-bottom: 0; }
+.pk-arr-tools { flex: none; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 0 max(12px, env(safe-area-inset-left)); touch-action: pan-x; }
+.pk-arr-tools::-webkit-scrollbar { display: none; }
+.pk-arr-tools .pk-chips { flex-wrap: nowrap; }
+.pk-arr-tools > .pk-chip { min-height: 36px; font-size: 13px; padding: 0 10px; }
+.pk-arr-wrap { flex: 1; min-height: 160px; position: relative; }
+.pk-arr-cv { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
+.pk-arr-sel { flex: none; display: flex; align-items: center; gap: 4px; padding: 4px max(10px, env(safe-area-inset-right)) 4px max(10px, env(safe-area-inset-left)); background: var(--bg-2); border-top: 1px solid var(--line); }
+.pk-arr-sel[hidden] { display: none; }
+.pk-arr-sel-name { flex: 1; min-width: 0; font-size: 12px; font-weight: 600; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-left: 4px solid var(--tc, var(--accent)); padding-left: 6px; }
+.pk-arr-sel .pk-ib { min-width: 40px; height: 40px; padding: 0 8px; }
+.pk-arr-auto { flex: none; border-top: 1px solid var(--line); background: var(--bg-2); padding: 6px 0 calc(env(safe-area-inset-bottom) * 0 + 6px); }
+.pk-arr-auto[hidden] { display: none; }
+.pk-arr-empty:empty { display: none; }
+.pk-arr-empty { padding: 0 12px 12px; }
+
+/* ---------- automation lane ---------- */
+.pk-auto { display: flex; flex-direction: column; gap: 6px; }
+.pk-auto-bar { display: flex; align-items: center; gap: 8px; padding: 0 12px; }
+.pk-auto-target { min-height: 38px !important; font-size: 14px !important; }
+.pk-auto-val { flex: none; font: 600 13px var(--mono); color: var(--text-2); min-width: 54px; text-align: right; }
+.pk-auto-tools { display: flex; gap: 6px; padding: 0 12px; overflow-x: auto; scrollbar-width: none; touch-action: pan-x; }
+.pk-auto-tools .pk-chips { flex-wrap: nowrap; }
+.pk-auto-tools .pk-chip { min-height: 34px; font-size: 13px; padding: 0 10px; }
+.pk-auto-cvwrap { position: relative; }
+.pk-auto-cv { display: block; width: 100%; height: 110px; touch-action: none; }
+.pk-auto-hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; color: var(--text-3); font-size: 13px; }
+.pk-auto-hint[hidden] { display: none; }
+.pk-auto-sheet .pk-auto-cv { height: 200px; border-radius: 12px; }
+.pk-auto-sheet .pk-auto-bar, .pk-auto-sheet .pk-auto-tools { padding: 0; }
+.pk-btn.pk-auto-lane { border-color: var(--accent-2); color: var(--accent-2); }
+
+/* ---------- code page ---------- */
+.pk-code-body { gap: 8px; }
+.pk-code { margin: 0; padding: 12px; border-radius: 12px; background: var(--bg-2); border: 1px solid var(--line); font: 13px/1.5 var(--mono); white-space: pre; overflow: auto; -webkit-overflow-scrolling: touch; touch-action: pan-x pan-y; user-select: text; -webkit-user-select: text; min-height: 200px; }
+.pk-code[hidden], .pk-code-edit[hidden] { display: none; }
+.pk-code-edit { flex: 1; min-height: 46vh; width: 100%; box-sizing: border-box; padding: 12px; border-radius: 12px; border: 1px solid var(--accent); background: var(--bg-2); color: var(--text); font: 16px/1.5 var(--mono); /* 16px: iOS doesn't zoom */ resize: none; white-space: pre; overflow: auto; tab-size: 2; }
+.pk-code-err { padding: 8px 12px; border-radius: 10px; background: color-mix(in srgb, var(--rec) 18%, transparent); color: var(--text); font: 12px/1.4 var(--mono); white-space: pre-wrap; }
+.pk-code-err[hidden] { display: none; }
+.pk-snips { flex: none; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 6px max(10px, env(safe-area-inset-left)); background: var(--bg-2); border-top: 1px solid var(--line); touch-action: pan-x; }
+.pk-snips::-webkit-scrollbar { display: none; }
+.pk-snips[hidden] { display: none; }
+.pk-snip { flex: none; min-height: 40px; min-width: 44px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--bg-3); color: var(--accent-2); font: 600 14px var(--mono); }
+.pk-snip:active { transform: scale(.95); }
+
+/* ---------- drum pads ---------- */
+.pk-pad-name.edited, .pk-padbtn.edited { box-shadow: inset 0 -3px 0 var(--accent-2); color: var(--text); }
+.pk-padgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.pk-padbtn { min-height: 52px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--bg-3); color: var(--text-2); font-weight: 600; font-size: 12px; padding: 0 4px; }
+.pk-padbtn:active { transform: scale(.95); background: var(--accent); color: #fff; }
+
+/* ---------- hum progress ---------- */
+.pk-progress { height: 10px; border-radius: 5px; background: var(--bg-3); overflow: hidden; margin: 6px 12px; }
+.pk-progress-fill { height: 100%; width: 0; background: var(--accent-2); transition: width .12s linear; }
+
+/* ---------- onboarding ---------- */
+.pk-ob { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(0,0,0,.55); animation: pk-fade .2s; }
+.pk-ob.closing { opacity: 0; transition: opacity .2s; }
+@keyframes pk-fade { from { opacity: 0; } }
+.pk-ob-panel { width: 100%; max-width: 380px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 20px; padding: 22px 18px 16px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.4); }
+.pk-ob-card { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; min-height: 170px; touch-action: pan-y; }
+.pk-ob-card h3 { margin: 0; font-size: 20px; }
+.pk-ob-card p { margin: 0; color: var(--text-2); line-height: 1.45; }
+.pk-ob-icon { width: 64px; height: 64px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--bg-3); color: var(--accent-2); }
+.pk-ob-dots { display: flex; justify-content: center; gap: 6px; }
+.pk-ob-dots span { width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); }
+.pk-ob-dots span.on { background: var(--accent-2); }
+.pk-ob .pk-row > .pk-btn { flex: 1; }

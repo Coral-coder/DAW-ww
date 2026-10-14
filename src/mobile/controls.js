@@ -171,10 +171,14 @@ export function openParamPopup(app, target, { onChange } = {}) {
       app.toast(on ? 'Automation recording armed: press Play, then move this control — your moves are written into the song.' : 'Automation recording off');
       syncAuto();
     }, { ic: 'record', cls: 'pk-auto' });
-    const syncAuto = () => { autoBtn.classList.toggle('on', !!app.ui.get('autoArm')); autoBtn.lastChild.textContent = app.ui.get('autoArm') ? 'Automate: ON' : 'Automate'; };
+    const syncAuto = () => { autoBtn.classList.toggle('on', !!app.ui.get('autoArm')); autoBtn.lastChild.textContent = app.ui.get('autoArm') ? 'Record moves: ON' : 'Record moves'; };
     autoBtn.append(h('span'));
     syncAuto();
-    foot.appendChild(autoBtn);
+    // "Automate this": open (or create) this control's automation lane and draw it with a finger
+    const laneBtn = bigButton('Automate this', () => {
+      import('./auto-lane.js').then((m) => m.openAutomationSheet(app, target.auto.owner, target.auto.target));
+    }, { ic: 'sliders', cls: 'pk-auto-lane' });
+    foot.append(laneBtn, autoBtn);
   }
   if (target.lock) {
     const lockBtn = bigButton('', () => { target.lock.set(!target.lock.get()); syncLock(); }, { cls: 'pk-lock' });
@@ -208,6 +212,7 @@ export function openParamPopup(app, target, { onChange } = {}) {
 function controlMenu(app, target, after) {
   const { def } = target;
   const items = [{ label: 'Open control…', icon: 'sliders', onClick: () => openParamPopup(app, target, { onChange: after }) }];
+  if (target.auto) items.push({ label: 'Automate this…', icon: 'wave', onClick: () => import('./auto-lane.js').then((m) => m.openAutomationSheet(app, target.auto.owner, target.auto.target)) });
   items.push({ label: `Reset (${fmt(def, defaultOf(def))})`, icon: 'undo', onClick: () => { target.set(defaultOf(def), { final: true }); after?.(); } });
   for (const p of presetsFor(def)) items.push({ label: p.label, onClick: () => { target.set(p.value, { final: true }); after?.(); } });
   actionSheet(target.label || def.label, items);

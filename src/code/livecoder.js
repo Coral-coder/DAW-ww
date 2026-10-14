@@ -706,6 +706,16 @@ function parseArrangeEntries(text) {
   const t = norm(text || '');
   const m = /^arrange\((.*)\)$/.exec(t);
   if (!m) return t ? [{ bars: null, items: stackItems(t) }] : null;
+  // arrange(...) must be the whole expression — `arrange(...).room(.4)` is not a plain list of sections
+  let depth = 0, q = null, close = -1;
+  for (let i = 7; i < t.length; i++) {
+    const c = t[i];
+    if (q) { if (c === '\\') i++; else if (c === q) q = null; continue; }
+    if (c === '"' || c === "'" || c === '`') q = c;
+    else if (c === '(') depth++;
+    else if (c === ')' && --depth === 0) { close = i; break; }
+  }
+  if (close !== t.length - 1) return null;
   return splitArgs(m[1]).map((a) => {
     const inner = a.replace(/^\[/, '').replace(/\]$/, '');
     const [n, ...rest] = splitArgs(inner);
@@ -782,7 +792,14 @@ export function applyLiveCode(project, code, opts = {}) {
     memo.set(name, d);
     return d;
   };
-  const ea = parseArrangeEntries(A.arrange) || [], eb = parseArrangeEntries(B.arrange) || [];
+  const ea = parseArrangeEntries(A.arrange) || [];
+  let eb = parseArrangeEntries(B.arrange) || [];
+  if (ea.length && !eb.length) {
+    // the arrange() can't be read any more (e.g. an effect chained onto it): keep the song's form instead of
+    // re-rendering every part into one section
+    rep.warnings.push('Changes around arrange() (like an effect chained onto it) aren\'t applied to the project — put effects on a part instead, e.g. lead.room(.4).');
+    eb = ea;
+  }
   const barsChanged = ea.length !== eb.length || ea.some((e, i) => e.bars !== eb[i].bars);
   const usage = (entries, name) => entries.map((e) => e.items.filter((x) => headIdent(x) === name).join('|')).join(';');
   const roleNames = Object.keys(orig.roles);

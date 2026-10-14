@@ -26,7 +26,7 @@ export function pageShell(title, ...right) {
 }
 
 export function iconBtn(ic, onClick, label = '', cls = '') {
-  const b = h(`button.pk-ib${cls ? '.' + cls : ''}`, { type: 'button', 'aria-label': label, title: label }, icon(ic, 20), label && cls.includes('labeled') ? h('span', label) : null);
+  const b = h(`button.pk-ib${cls ? '.' + cls.trim().split(/\s+/).join('.') : ''}`, { type: 'button', 'aria-label': label, title: label }, icon(ic, 20), label && cls.includes('labeled') ? h('span', label) : null);
   b.addEventListener('click', (e) => { haptic(5); onClick(e); });
   return b;
 }

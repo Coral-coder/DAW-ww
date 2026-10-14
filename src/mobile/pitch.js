@@ -120,11 +120,22 @@ export function trackPitch(samples, sampleRate, opts = {}) {
   const geometry = yinGeometry(sampleRate, opts);
   const hop = Math.max(1, Math.round(sampleRate * (opts.hopSec ?? 0.01)));
   const out = [];
-  for (let off = 0; off + geometry.frameLength <= samples.length; off += hop) {
+  const last = samples.length - geometry.frameLength;
+  const every = Math.max(1, opts.progressEvery || Math.ceil((Math.floor(Math.max(0, last) / hop) + 1) / 40)); // ~40 progress reports
+  for (let off = 0, k = 0; off <= last; off += hop, k++) {
     const r = yin(samples, sampleRate, { ...opts, geometry, offset: off });
     out.push({ time: (off + geometry.W / 2) / sampleRate, ...r });
+    if (opts.onProgress && k % every === every - 1) opts.onProgress(Math.min(1, off / Math.max(1, last)));
   }
   return out;
+}
+
+/** The whole take analysis (pitch track + note segmentation): samples -> raw notes in seconds. */
+export function analyzeTake(samples, sampleRate, { onProgress = null, pitch = {}, segment = {} } = {}) {
+  const frames = trackPitch(samples, sampleRate, { ...pitch, onProgress });
+  const notes = segmentNotes(frames, segment);
+  onProgress?.(1);
+  return notes;
 }
 
 // ------------------------------------------------------------------------------------------------ segmentation

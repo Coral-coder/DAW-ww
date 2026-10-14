@@ -6,13 +6,16 @@ import { h, icon } from '../ui/dom.js';
 import { beatsPerBar } from '../core/model.js';
 import { PAGES, SUBPAGES, parseRoute, routeHash, tabOf, neighbour, swipeDecision, isSwipeBlocked } from './router.js';
 import { switchLayout } from './mode.js';
-import { actionSheet, haptic, closeTopSheet } from './touch.js';
+import { actionSheet, haptic, closeTopSheet, onLongPress } from './touch.js';
+import { showOnboarding } from './onboarding.js';
 import { openParamPopup, valueTarget } from './controls.js';
 import { installPocketNative, nativeMenuItems } from './native.js';
 
 const PAGE_MODULES = {
   home: () => import('./pages/home.js').then((m) => m.createHomePage),
   tracks: () => import('./pages/tracks.js').then((m) => m.createTracksPage),
+  arrange: () => import('./pages/arrange.js').then((m) => m.createArrangePage),
+  code: () => import('./pages/code.js').then((m) => m.createCodePage),
   track: () => import('./pages/track.js').then((m) => m.createTrackPage),
   notes: () => import('./pages/notes.js').then((m) => m.createNotesPage),
   play: () => import('./pages/play.js').then((m) => m.createPlayPage),
@@ -59,8 +62,9 @@ export async function createPocketApp(rootEl) {
   const bpmBtn = h('button.pk-bpm', { type: 'button', title: 'Tempo' }, '120');
   const modeBtn = h('button.pk-modebtn', { type: 'button', title: 'Pattern loop / whole song' }, 'LOOP');
   const undoBtn = h('button.pk-tp.sm', { type: 'button', 'aria-label': 'Undo' }, icon('undo', 18));
+  const redoBtn = h('button.pk-tp.sm', { type: 'button', 'aria-label': 'Redo' }, icon('redo', 18));
   const menuBtn = h('button.pk-tp.sm', { type: 'button', 'aria-label': 'Menu' }, icon('menu', 20));
-  const transport = h('header.pk-transport', playBtn, stopBtn, recBtn, h('div.pk-tp-mid', posEl, h('div.pk-tp-sub', bpmBtn, modeBtn)), undoBtn, menuBtn);
+  const transport = h('header.pk-transport', playBtn, stopBtn, recBtn, h('div.pk-tp-mid', posEl, h('div.pk-tp-sub', bpmBtn, modeBtn)), undoBtn, redoBtn, menuBtn);
 
   playBtn.addEventListener('click', () => { haptic(8); actions.togglePlay(); });
   stopBtn.addEventListener('click', () => { haptic(8); if (app.setlist?.running) app.setlist.stop(); actions.stop(); });
@@ -68,6 +72,13 @@ export async function createPocketApp(rootEl) {
   bpmBtn.addEventListener('click', () => openParamPopup(app, valueTarget(TEMPO_DEF, () => store.get().bpm, (v) => store.transact('Tempo', (p) => { p.bpm = Math.round(v); }, { coalesce: true }))));
   modeBtn.addEventListener('click', () => { haptic(6); actions.setMode(store.get().mode === 'song' ? 'pattern' : 'song'); });
   undoBtn.addEventListener('click', () => { haptic(6); actions.undo(); });
+  redoBtn.addEventListener('click', () => { haptic(6); actions.redo(); });
+  onLongPress(undoBtn, () => undoMenu());
+  // undo history as a sheet (long-press ↶): jump back several steps at once
+  function undoMenu() {
+    const steps = (store.undoStack || []).slice(-12).reverse();
+    actionSheet('Undo', steps.length ? steps.map((st, i) => ({ label: `${i ? `${i + 1} steps: ` : ''}${st.label}`, icon: 'undo', onClick: () => { for (let k = 0; k <= i; k++) actions.undo(); } })) : [{ label: 'Nothing to undo', disabled: true }]);
+  }
   menuBtn.addEventListener('click', () => mainMenu());
 
   function recordMenu() {
@@ -101,9 +112,12 @@ export async function createPocketApp(rootEl) {
       { label: `Metronome: ${p.metronome ? 'on' : 'off'}`, icon: 'metronome', onClick: () => store.transact('Metronome', (pp) => { pp.metronome = !pp.metronome; }, { undo: false }) },
       { label: `Loop / song: ${p.mode === 'song' ? 'whole song' : 'loop patterns'}`, icon: 'loop', onClick: () => actions.setMode(p.mode === 'song' ? 'pattern' : 'song') },
       { label: `Theme: ${ui.get('theme') === 'dark' ? 'switch to light' : 'switch to dark'}`, icon: 'sun', onClick: () => ui.set({ theme: ui.get('theme') === 'dark' ? 'light' : 'dark' }) },
+      { label: 'Song timeline', icon: 'scenes', onClick: () => go({ page: 'arrange' }) },
+      { label: 'Strudel code', icon: 'code', onClick: () => go({ page: 'code' }) },
       { label: 'Desktop layout', icon: 'grid', onClick: () => switchLayout('desktop') },
       ...nativeMenuItems(app, nav), // iOS app: Files import; MIDI keyboards
       '-',
+      { label: 'Show the tips again', icon: 'bulb', onClick: () => showOnboarding({ force: true }) },
       { label: 'Help', icon: 'help', onClick: () => actions.showHelp() },
       { label: 'About / source code', icon: 'code', onClick: () => actions.showAbout() },
     ]);
@@ -127,7 +141,7 @@ export async function createPocketApp(rootEl) {
 
   async function mount(id) {
     if (pages[id]) return pages[id];
-    const host = h('section.pk-page', { dataset: { page: id } });
+    const host = h('section.pk-page', { dataset: { page: id }, hidden: true }); // shown by show() (a late mount must not cover the current page)
     pagesEl.appendChild(host);
     pages[id] = { host, view: null };
     try {
@@ -174,35 +188,43 @@ export async function createPocketApp(rootEl) {
   window.addEventListener('popstate', () => { closeTopSheet(); show(parseRoute(location.hash), -1); });
 
   // ------------------------------------------------------------------ swipe between pages
+  // Touch: touch events (they keep coming after the browser claims the gesture and sends pointercancel);
+  // mouse / pen: pointer events.
   let sw = null;
-  pagesEl.addEventListener('pointerdown', (e) => {
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    if (isSwipeBlocked(e.target)) return;
-    sw = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId, horiz: null };
-  });
-  pagesEl.addEventListener('pointermove', (e) => {
-    if (!sw || e.pointerId !== sw.id) return;
-    const dx = e.clientX - sw.x, dy = e.clientY - sw.y;
+  const swStart = (x, y, target, id) => {
+    if (isSwipeBlocked(target)) return;
+    sw = { x, y, t: performance.now(), id, horiz: null, lx: x, ly: y };
+  };
+  const swMove = (x, y, id) => {
+    if (!sw || id !== sw.id) return;
+    sw.lx = x; sw.ly = y;
+    const dx = x - sw.x, dy = y - sw.y;
     if (sw.horiz === null && (Math.abs(dx) > 12 || Math.abs(dy) > 12)) sw.horiz = Math.abs(dx) > Math.abs(dy) * 1.6;
     if (sw.horiz) {
       const host = pages[route?.page]?.host;
       const edge = !neighbour(route.page, dx < 0 ? 1 : -1);
       if (host) host.style.transform = `translateX(${edge ? dx * 0.2 : dx * 0.6}px)`;
     }
-  });
-  const swipeEnd = (e) => {
-    if (!sw || e.pointerId !== sw.id) return;
+  };
+  const swEnd = (x, y, id, cancelled = false) => {
+    if (!sw || id !== sw.id) return;
     const s = sw;
     sw = null;
     const host = pages[route?.page]?.host;
     if (host) host.style.transform = '';
-    if (!s.horiz || e.type === 'pointercancel') return;
-    const dir = swipeDecision({ dx: e.clientX - s.x, dy: e.clientY - s.y, dt: performance.now() - s.t, width: pagesEl.clientWidth });
+    if (!s.horiz || cancelled) return;
+    const dir = swipeDecision({ dx: (x ?? s.lx) - s.x, dy: (y ?? s.ly) - s.y, dt: performance.now() - s.t, width: pagesEl.clientWidth });
     const to = dir && neighbour(route.page, dir);
     if (to) { haptic(6); go({ page: to }); }
   };
-  pagesEl.addEventListener('pointerup', swipeEnd);
-  pagesEl.addEventListener('pointercancel', swipeEnd);
+  pagesEl.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch' || (e.pointerType === 'mouse' && e.button !== 0)) return; swStart(e.clientX, e.clientY, e.target, `p${e.pointerId}`); });
+  pagesEl.addEventListener('pointermove', (e) => { if (e.pointerType !== 'touch') swMove(e.clientX, e.clientY, `p${e.pointerId}`); });
+  pagesEl.addEventListener('pointerup', (e) => { if (e.pointerType !== 'touch') swEnd(e.clientX, e.clientY, `p${e.pointerId}`); });
+  pagesEl.addEventListener('pointercancel', (e) => { if (e.pointerType !== 'touch') swEnd(null, null, `p${e.pointerId}`, true); });
+  pagesEl.addEventListener('touchstart', (e) => { if (e.touches.length !== 1) { sw = null; return; } const t = e.changedTouches[0]; swStart(t.clientX, t.clientY, e.target, `t${t.identifier}`); }, { passive: true });
+  pagesEl.addEventListener('touchmove', (e) => { for (const t of e.changedTouches) swMove(t.clientX, t.clientY, `t${t.identifier}`); }, { passive: true });
+  pagesEl.addEventListener('touchend', (e) => { for (const t of e.changedTouches) swEnd(t.clientX, t.clientY, `t${t.identifier}`); });
+  pagesEl.addEventListener('touchcancel', (e) => { for (const t of e.changedTouches) swEnd(null, null, `t${t.identifier}`, true); });
 
   // ------------------------------------------------------------------ transport updates
   const bpb = () => beatsPerBar(store.get());
@@ -221,10 +243,11 @@ export async function createPocketApp(rootEl) {
     playBtn.replaceChildren(icon(engine.isPlaying ? 'pause' : 'play', 24));
     playBtn.classList.toggle('on', engine.isPlaying);
     recBtn.classList.toggle('on', !!ui.get('recording'));
-    bpmBtn.textContent = `${Math.round(p.bpm)} BPM`;
+    bpmBtn.textContent = `♩${Math.round(p.bpm)}`;
     modeBtn.textContent = p.mode === 'song' ? 'SONG' : 'LOOP';
     modeBtn.classList.toggle('song', p.mode === 'song');
     undoBtn.disabled = !store.canUndo();
+    redoBtn.disabled = !store.canRedo();
     document.documentElement.dataset.theme = ui.get('theme');
   };
   engine.on?.('state', () => syncTransport());
@@ -241,6 +264,7 @@ export async function createPocketApp(rootEl) {
   if (!store.get().tracks.length && !location.hash) initial = { page: 'home' };
   go(initial, { replace: true });
   installPocketNative(app, nav); // iOS app (ios/): "Open in daW³" documents, after boot so they win over autosave
+  setTimeout(() => showOnboarding(), 400);
   void raf;
   return app;
 }

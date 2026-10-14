@@ -3,10 +3,15 @@ import { h, icon } from '../../ui/dom.js';
 import { INSTRUMENT_DEFS } from '../../audio/defs.js';
 import { resolveInstrumentDef } from '../../audio/presets.js';
 import { EFFECT_DEFS, EFFECT_CATEGORIES } from '../../audio/effect-defs.js';
-import { patternsForTrack, createEffect } from '../../core/model.js';
+import { patternsForTrack, createEffect, DRUM_PADS } from '../../core/model.js';
+import { openPadSheet } from '../pad-sheet.js';
+import { editedPads } from '../pad-logic.js';
 import { pageShell, soundName, iconBtn, soundBrowser, isDrums, emptyState } from './common.js';
 import { ctlTile, instTarget, fxTarget, mixTarget } from '../controls.js';
 import { actionSheet, onLongPress, haptic, bigButton, promptSheet } from '../touch.js';
+import { dragReorder, reorder } from '../reorder.js';
+import { openAutomationSheet, pickAutomationTarget } from '../auto-lane.js';
+import { laneLabel } from '../../ui/automation-targets.js';
 
 const TILE_TYPES = new Set(['number', 'enum', 'bool']);
 const MAIN_COUNT = 8;
@@ -32,7 +37,8 @@ export function createTrackPage(app, nav) {
     if (!t) return 'none';
     const p = store.get();
     return [t.id, t.type, t.instrument?.type, t.instrument?.preset, t.instrument?.params?.kit, (t.fx || []).map((f) => `${f.id}:${f.type}:${f.enabled !== false}`).join(','), p.buses.map((b) => b.id).join(','),
-      patternsForTrack(p, t.id).map((x) => x.id).join(','), t.activePatternId, showAll, [...open].join(','), t.arm].join('|');
+      patternsForTrack(p, t.id).map((x) => x.id).join(','), t.activePatternId, showAll, [...open].join(','), t.arm,
+      JSON.stringify(t.instrument?.params?.pads || {}), (t.automation || []).map((l) => `${l.id}:${l.target}:${l.points?.length}:${l.enabled}:${!!l.overridden}`).join(',')].join('|');
   }
 
   function render() {
@@ -57,11 +63,20 @@ export function createTrackPage(app, nav) {
       const shown = showAll ? defs : main.slice(0, MAIN_COUNT);
       const more = bigButton(showAll ? 'Fewer controls' : `All controls (${defs.length})`, () => { showAll = !showAll; render(); }, { ic: 'sliders', cls: 'ghost' });
       body.appendChild(h('div.pk-card', h('div.pk-label', 'Sound controls — drag sideways or tap'), tileGrid(shown.map((d) => instTarget(app, t.id, d))), defs.length > MAIN_COUNT ? more : null));
+      if (isDrums(t)) {
+        const edited = editedPads(t);
+        const pads = h('div.pk-padgrid', ...DRUM_PADS.slice(0, 12).map((pad) => {
+          const b = h(`button.pk-padbtn${edited.has(pad.key) ? '.edited' : ''}`, { type: 'button' }, pad.name);
+          b.addEventListener('click', () => { haptic(5); engine.previewNote(t.id, pad.pitch, 0.9, 0.5); openPadSheet(app, t.id, pad); });
+          return b;
+        }));
+        body.appendChild(h('div.pk-card', h('div.pk-label', 'Drum pads — tap for tune, decay, level…'), pads));
+      }
     } else if (t.type === 'audio') {
       const arm = bigButton(t.arm ? 'Armed for recording' : 'Arm for recording', () => actions.updateTrack(t.id, (tt) => { tt.arm = !tt.arm; }, 'Arm'), { ic: 'record', cls: t.arm ? 'rec on' : 'rec' });
       body.appendChild(h('div.pk-card', h('p.pk-p', 'Audio track: records your microphone. Arm it, then press ● in the transport ▸ Record audio.'), arm));
     } else {
-      body.appendChild(h('div.pk-card', h('p.pk-p', 'Code track — edit its code in the desktop layout (Menu ▸ Desktop layout).')));
+      body.appendChild(h('div.pk-card', h('p.pk-p', 'Code track: Strudel live code.'), bigButton('Edit code', () => nav.go({ page: 'code', id: t.id }), { ic: 'code', cls: 'primary' })));
     }
 
     // mixer
@@ -71,11 +86,28 @@ export function createTrackPage(app, nav) {
     // effects
     const fxWrap = h('div.pk-fxlist');
     (t.fx || []).forEach((f, i) => fxWrap.appendChild(fxCard(t, f, i)));
+    dragReorder(fxWrap, { onMove: (from, to) => actions.updateTrack(t.id, (tt) => { tt.fx = reorder(tt.fx, from, to); }, 'Reorder effects') });
     const addFx = bigButton('Add effect', () => actionSheet('Add effect', EFFECT_CATEGORIES.map((c) => {
       const list = Object.entries(EFFECT_DEFS).filter(([, d]) => d.category === c && !d.plugin);
       return list.length ? { label: c, submenu: list.map(([type, d]) => ({ label: d.name, onClick: () => { const fx = createEffect(type, {}); open.add(fx.id); actions.updateTrack(t.id, (tt) => { tt.fx.push(fx); }, `Add ${d.name}`); } })) } : null;
     }).filter(Boolean)), { ic: 'plus', cls: 'ghost' });
-    body.appendChild(h('div.pk-card', h('div.pk-label', 'Effects'), fxWrap, addFx));
+    body.appendChild(h('div.pk-card', h('div.pk-label', (t.fx || []).length > 1 ? 'Effects (drag ≡ to reorder)' : 'Effects'), fxWrap, addFx));
+
+    // automation lanes of this track
+    const lanes = (t.automation || []);
+    const laneRows = lanes.map((l) => {
+      const b = h('button.pk-row-btn', { type: 'button' }, h('span.pk-row-name', laneLabel(p, t.id, l.target)), h('span.pk-row-sub', `${l.points?.length || 0} points${l.overridden ? ' · overridden by hand' : l.enabled === false ? ' · off' : ''}`), icon('chevronRight', 18));
+      b.addEventListener('click', () => openAutomationSheet(app, t.id, l.target));
+      onLongPress(b, () => actionSheet(laneLabel(p, t.id, l.target), [
+        { label: 'Edit lane', icon: 'pencil', onClick: () => openAutomationSheet(app, t.id, l.target) },
+        l.overridden ? { label: 'Re-enable automation', icon: 'undo', onClick: () => store.transact('Re-enable automation', (pp) => { const ll = pp.tracks.find((x) => x.id === t.id)?.automation?.find((x) => x.id === l.id); if (ll) delete ll.overridden; }) } : null,
+        { label: l.enabled === false ? 'Turn lane on' : 'Turn lane off', icon: 'power', onClick: () => store.transact('Toggle automation lane', (pp) => { const ll = pp.tracks.find((x) => x.id === t.id)?.automation?.find((x) => x.id === l.id); if (ll) ll.enabled = ll.enabled === false; }) },
+        { label: 'Delete lane', icon: 'trash', onClick: () => store.transact('Delete automation lane', (pp) => { const tt = pp.tracks.find((x) => x.id === t.id); if (tt) tt.automation = tt.automation.filter((x) => x.id !== l.id); }) },
+      ].filter(Boolean)));
+      return b;
+    });
+    const addAuto = bigButton('Automate a control…', () => pickAutomationTarget(app, { ownerId: t.id, onPick: (o, tg) => openAutomationSheet(app, o, tg) }), { ic: 'wave', cls: 'ghost' });
+    body.appendChild(h('div.pk-card', h('div.pk-label', 'Automation (draw how controls move over the song)'), ...laneRows, addAuto));
 
     // patterns
     if (t.type === 'instrument') {
@@ -112,7 +144,8 @@ export function createTrackPage(app, nav) {
       { label: 'Move down', disabled: i === t.fx.length - 1, onClick: () => actions.updateTrack(t.id, (tt) => { const k = tt.fx.findIndex((x) => x.id === f.id); if (k >= 0 && k < tt.fx.length - 1) [tt.fx[k + 1], tt.fx[k]] = [tt.fx[k], tt.fx[k + 1]]; }, 'Reorder effects') },
       { label: 'Remove effect', icon: 'trash', onClick: () => actions.updateTrack(t.id, (tt) => { tt.fx = tt.fx.filter((x) => x.id !== f.id); }, `Remove ${def?.name || f.type}`) },
     ]));
-    const card = h(`div.pk-fx${f.enabled === false ? '.off' : ''}`, h('div.pk-fx-top', headBtn, onBtn));
+    const grip = h('span.pk-grip', { 'aria-label': 'Drag to reorder', 'data-noswipe': '' }, '≡');
+    const card = h(`div.pk-fx${f.enabled === false ? '.off' : ''}`, h('div.pk-fx-top', grip, headBtn, onBtn));
     if (isOpen && def) {
       const defs = def.params.filter((d) => TILE_TYPES.has(d.type));
       const main = defs.filter((d) => !d.advanced);
