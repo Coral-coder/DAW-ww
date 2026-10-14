@@ -11,7 +11,7 @@ import { isTyping } from '../keyboard.js';
 import * as strudel from '../../code/strudel.js';
 import { songToCode } from '../../code/song-code.js';
 import { songToLiveCode } from '../../code/livecoder.js';
-import { planSongApply, commitSongApply, songApplySummary, replaceProjectWithCode } from '../../code/song-apply.js';
+import { planSongApply, commitSongApply, songApplySummary } from '../../code/song-apply.js';
 import { PRESETS, DRUM_KITS } from '../../audio/index.js';
 
 const LS_AUTO = 'daw3-code-autoapply';
@@ -554,8 +554,9 @@ export function createCodeView(app) {
     });
   }
 
-  /** Replace the whole project with one code track playing `text` (one undo step), keeping buses & master. */
-  function replaceProjectWithCodeUI(text) {
+  /** Replace the whole project with the pasted code (one undo step), keeping buses & master — split into instrument
+   * tracks with effects (default), one code track per part, or one code track (actions.importStrudelCode). */
+  async function replaceProjectWithCodeUI(text) {
     const res = evaluate(text);
     if (res.error) {
       songErr = { error: res.error, line: errorLineOf(res.error, text) ?? locateErrorBlock(text) };
@@ -563,17 +564,14 @@ export function createCodeView(app) {
       app.setStatus?.(`Code error: ${res.error}`);
       return;
     }
-    let tracks = [];
-    store.transact('Replace project with code', (p) => { tracks = replaceProjectWithCode(p, text, res); });
-    const track = tracks[0];
+    const r = await actions.importStrudelCode(text, { name: 'Strudel', replace: true });
+    if (!r?.choice) { renderStatus(); return; }
     songDraft = null;
     songErr = null;
-    ui.set({ selectedTrackId: track.id, selectedPatternId: null });
     regenSong();
     if (isSong()) editor.setValue(song.code);
     renderStatus();
     renderList(codeTracks());
-    toast(`Replaced the project with the pasted code: ${tracks.length} track${tracks.length > 1 ? 's' : ''} (${tracks.map((t) => t.name).join(', ')}). Ctrl+Z to undo.`, { level: 'success', timeout: 6000 });
     if (!engine.isPlaying) actions.play?.();
   }
 
@@ -587,7 +585,7 @@ export function createCodeView(app) {
     }
     // Pasted a different song (none of this project's blocks are left)? Replace the project with it.
     const plan = planSongApply(store.get(), text, { song, songBase, songDraft, presets: PRESETS, kits: DRUM_KITS });
-    if (plan.kind === 'foreign') { replaceProjectWithCodeUI(text); return; }
+    if (plan.kind === 'foreign') { await replaceProjectWithCodeUI(text); return; }
     if (plan.kind === 'error') {
       songErr = { error: plan.error, line: errorLineOf(plan.error, text) ?? locateErrorBlock(text) };
       renderStatus();

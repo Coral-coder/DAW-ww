@@ -19,6 +19,8 @@ import { createMixerTools } from './mixer-tools.js';
 import { fileToSample, arrayBufferToBase64 } from '../io/samples.js';
 import { createRecorder } from '../record/session.js';
 import { readStrudelFile } from '../io/strudel-file.js';
+import { importStrudelSplit, splitCodeByLabels, summaryText } from '../code/import-split.js';
+import { splitTopLevel as splitStrudelTopLevel } from '../code/strudel.js';
 import { saveLocal, listLocal, loadLocal, deleteLocal, createAutosaver } from '../io/autosave.js';
 import { codeToPatterns, patternsToCode } from '../code/convert.js';
 
@@ -590,12 +592,105 @@ export function createActions(app) {
     if (!file) return;
     try {
       const { name, code } = await readStrudelFile(file);
-      const t = addTrack('code', { code, name: name || 'Strudel' });
-      ui.set({ view: 'code', selectedTrackId: t.id });
-      toast(`Imported "${name}". Play it live, or use "Render to tracks" to expand it into editable patterns.`, { level: 'success', timeout: 6000 });
+      // an empty project is replaced (tempo + arrangement from the code); otherwise the parts are added
+      const replace = !get().tracks.length;
+      await importStrudelCode(code, { name, replace });
     } catch (e) {
       toast('Strudel import failed: ' + e.message, { level: 'error' });
     }
+  }
+
+  /**
+   * How to bring Strudel code in: 'split' (one instrument track per sound, with effects — the default),
+   * 'labels' (one code track per $: block) or 'single' (one code track). Resolves null when cancelled.
+   */
+  function askStrudelImport(code, { replace = false } = {}) {
+    const labels = (() => { try { return splitStrudelTopLevel(code).filter((it) => it.kind === 'label').length; } catch { return 0; } })();
+    return new Promise((resolve) => {
+      let choice = 'split';
+      let answer = null;
+      const opt = (value, title, text) => h('label.import-choice', { style: { display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '8px 4px', cursor: 'pointer' } },
+        h('input', { type: 'radio', name: 'strudel-import', value, checked: value === choice, onchange: () => { choice = value; } }),
+        h('div', h('div', { style: { fontWeight: 600 } }, title), h('div.muted', { style: { fontSize: '12px' } }, text)));
+      modal({
+        title: 'Import Strudel code',
+        width: 520,
+        body: h('div.col',
+          opt('split', 'Split into tracks (one per instrument, with effects)', 'Drum kits, synths and samples each get their own track with notes in clips per section; filters, reverb / delay sends, drive and sidechain become mixer effects, moving values become automation.'),
+          opt('labels', 'Keep as code tracks (one per part)', labels > 1 ? `${labels} code tracks — one per $: block, playing the code live.` : 'The code has one part: a single code track, playing the code live.'),
+          opt('single', 'Single code track', 'The whole code in one live code track.'),
+          h('p.muted', { style: { fontSize: '12px' } }, replace ? 'Replaces the current project (Ctrl+Z restores it). The original code is kept as a muted code track.' : 'Adds the tracks to this project. The original code is kept as a muted code track.')),
+        actions: [
+          { label: 'Cancel' },
+          { label: 'Import', primary: true, onClick: () => { answer = choice; } },
+        ],
+        onClose: () => resolve(answer),
+      });
+    });
+  }
+
+  /** Summary of a split import: tracks with their instrument, effects and automation; what wasn't mapped. */
+  function showSplitSummary(s) {
+    const row = (t) => h('tr',
+      h('td', { style: { fontWeight: 600, paddingRight: '8px', verticalAlign: 'top' } }, t.name),
+      h('td', { style: { fontSize: '12px' } },
+        h('div', t.instrument),
+        t.effects.length || t.sends.length ? h('div.muted', [...t.effects, ...t.sends.map((x) => `send ${x}`)].join(' · ')) : null,
+        t.automation.length ? h('div.muted', `automation: ${t.automation.join(', ')}`) : null));
+    modal({
+      title: 'Strudel split into tracks',
+      width: 640,
+      body: h('div.col',
+        h('p', summaryText({ ...s, unmapped: [], notes: [] })),
+        h('div', { style: { maxHeight: '46vh', overflow: 'auto' } }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } }, s.tracks.map(row))),
+        s.unmapped.length ? h('p.muted', `Not mapped (no daW³ counterpart): ${s.unmapped.join(', ')}.`) : null,
+        s.passed?.length ? h('p.muted', `Passed to the Strudel sound as-is: ${s.passed.join(', ')}.`) : null,
+        ...(s.notes || []).map((n) => h('p.muted', n)),
+        h('p.muted', 'The original code is kept as a muted "Strudel (original)" track. Ctrl+Z undoes the whole import.')),
+      actions: [
+        { label: 'Undo import', onClick: () => { store.undo(); } },
+        { label: 'OK', primary: true },
+      ],
+    });
+  }
+
+  /**
+   * Imports Strudel code the way the user picks (see askStrudelImport). opts: { name, replace, choice } — `choice`
+   * skips the question. Resolves { choice, summary?, trackIds } (choice null = cancelled).
+   */
+  async function importStrudelCode(code, { name = 'Strudel', replace = false, choice = null, summary = true } = {}) {
+    choice = choice || await askStrudelImport(code, { replace });
+    if (!choice) return { choice: null };
+    if (choice === 'split') {
+      app.setStatus?.('Splitting the Strudel code into tracks…');
+      await new Promise((r) => setTimeout(r, 0)); // (let the status paint before the analysis runs)
+      const s = await importStrudelSplit(store, code, { replace });
+      if (!s.error) {
+        if (s.firstTrackId) selectTrack(s.firstTrackId);
+        ui.set({ view: 'arrange' });
+        toast(summary ? summaryText({ ...s, unmapped: [], notes: [] }) : summaryText(s), { level: 'success', timeout: 8000 });
+        if (summary) showSplitSummary(s);
+        return { choice, summary: s };
+      }
+      toast(`Could not split the code (${s.error}) — imported it as code tracks instead.`, { level: 'warn', timeout: 7000 });
+      choice = 'labels';
+    }
+    const parts = choice === 'labels' ? splitCodeByLabels(code, splitStrudelTopLevel) : [{ name, code, muted: false }];
+    const COLORS = ['#ffd43b', '#4dabf7', '#ff5f6d', '#38d9a9', '#9775fa', '#ffa94d', '#f783ac', '#3bc9db'];
+    const tracks = parts.map((x, i) => { const t = createTrack({ type: 'code', name: parts.length > 1 ? x.name : name, code: x.code, role: 'code', color: COLORS[i % COLORS.length] }); if (x.muted) t.mute = true; return t; });
+    store.transact(replace ? 'Replace project with code' : 'Import Strudel', (p) => {
+      if (replace) {
+        const fresh = createProject();
+        const keep = { buses: p.buses, master: p.master, samples: p.samples };
+        for (const k of Object.keys(p)) if (!(k in keep) && k !== 'id') delete p[k];
+        Object.assign(p, fresh, keep, { id: p.id, name: 'Strudel song', mode: 'pattern', tracks: [], patterns: {}, clips: [], markers: [] });
+        for (const sc of p.scenes || []) sc.slots = {};
+      }
+      p.tracks.push(...tracks);
+    });
+    ui.set({ view: 'code', selectedTrackId: tracks[0].id });
+    toast(`Imported "${name}" as ${tracks.length} code track${tracks.length > 1 ? 's' : ''}. Play it live, or use "Render to tracks" to expand it into editable patterns.`, { level: 'success', timeout: 6000 });
+    return { choice, trackIds: tracks.map((t) => t.id) };
   }
 
   /** Expand a code track into real instrument tracks + patterns (and clips). */
@@ -1235,7 +1330,7 @@ export function createActions(app) {
     showRecordSettings: () => import('./record-panel.js').then((m) => m.showRecordSettings(app)).catch((e) => toast('Recording settings: ' + e.message, { level: 'error' })),
     captureMidi: (trackId) => recorder.captureMidi(trackId), liveNoteOff, enableMidiInput, ensureAudio,
     setGenre, applyGenreDefaults, newProject, openProject, saveProject, renameProject, loadProjectObject,
-    exportWav, quickExportWav, exportMidiFile, exportCode, importMidiFile, interchange, importStrudel, renderCodeToTracks, importSamples, placeSample, sampleToSampler,
+    exportWav, quickExportWav, exportMidiFile, exportCode, importMidiFile, interchange, importStrudel, importStrudelCode, askStrudelImport, renderCodeToTracks, importSamples, placeSample, sampleToSampler,
     generatePart, generateSong, newProgression, currentProgression, applyAssistantAction, showExtendDialog, extendSongBy, removeSectionAt,
     mainMenuItems, generateMenuItems, showSongWizard, showHelp, showAbout, showWelcome, showLocalProjects,
     undo: () => { const l = store.undo(); if (l) app.setStatus?.(`Undo: ${l}`); },

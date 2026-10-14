@@ -6,7 +6,7 @@ import { highlightCode } from '../../ui/code-editor.js';
 import * as strudel from '../../code/strudel.js';
 import { songToCode } from '../../code/song-code.js';
 import { songToLiveCode } from '../../code/livecoder.js';
-import { planSongApply, commitSongApply, songApplySummary, replaceProjectWithCode } from '../../code/song-apply.js';
+import { planSongApply, commitSongApply, songApplySummary } from '../../code/song-apply.js';
 import { PRESETS, DRUM_KITS } from '../../audio/index.js';
 import { SNIPPETS, insertSnippet, codeEntries } from '../code-core.js';
 import { pageShell, iconBtn } from './common.js';
@@ -130,17 +130,14 @@ export function createCodePage(app, nav) {
     if (plan.kind === 'unchanged') { app.toast('The code already matches the song.'); if (!engine.isPlaying) actions.play?.(); return; }
     if (plan.kind === 'error') { errMsg = plan.error; render(); return; }
     if (plan.kind === 'foreign') {
-      if (!(await confirmSheet('Replace the song?', 'This code is a different song. Replace the project with it (one code track per $: block)? Undo brings the old song back.', 'Replace'))) return;
-      let res;
-      try { res = strudel.evaluate(text); } catch (e) { res = { error: String(e?.message || e) }; }
-      if (res?.error) { errMsg = res.error; render(); return; }
-      let tracks = [];
-      store.transact('Replace project with code', (p) => { tracks = replaceProjectWithCode(p, text, res); });
-      ui.set({ selectedTrackId: tracks[0]?.id || null, selectedPatternId: null });
+      // a different song: same importer as desktop — split into instrument tracks with effects (default),
+      // one code track per part, or one code track; the choice sheet doubles as the confirmation
+      const r = await actions.importStrudelCode(text, { name: 'Strudel', replace: true });
+      if (!r?.choice) return;
       draft = null; song = null; regen();
-      app.toast(`Replaced the project with the code: ${tracks.length} track(s).`, { level: 'success' });
       if (!engine.isPlaying) actions.play?.();
       setEditing(false);
+      if (r.choice === 'split') location.hash = '#/arrange';
       return;
     }
     let keep = false;
