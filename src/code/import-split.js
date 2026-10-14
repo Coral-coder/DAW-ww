@@ -584,15 +584,16 @@ export function splitStrudelToProject(project, code, opts = {}) {
   project.buses ||= [];
   const busCache = new Map();
   const taken = new Set();
-  const count = { reverb: 0, delay: 0 };
   const busFor = (type, params) => {
     const key = type + JSON.stringify(params);
     if (busCache.has(key)) return busCache.get(key);
-    const n = ++count[type];
     let bus = replace ? project.buses.find((b) => !taken.has(b.id) && b.fx?.some((f) => f.type === type)) : null;
     if (!bus) {
-      const label = type === 'reverb' ? 'Reverb' : 'Delay';
-      bus = createBus(replace ? (n > 1 ? `${label} ${n}` : label) : `${label} (Strudel)${n > 1 ? ` ${n}` : ''}`, [createEffect(type, {})]);
+      const label = type === 'reverb' ? `Reverb (${params.decay >= 8 ? 'large' : params.decay >= 4 ? 'medium' : 'room'})` : `Delay${params.division ? ` ${params.division}` : ''}`;
+      const taken2 = new Set(project.buses.map((b) => b.name));
+      let name = replace ? label : `${label} (Strudel)`;
+      for (let i = 2; taken2.has(name); i++) name = `${replace ? label : `${label} (Strudel)`} ${i}`;
+      bus = createBus(name, [createEffect(type, {})]);
       project.buses.push(bus);
     }
     taken.add(bus.id);
@@ -848,7 +849,7 @@ function presenceLane(haps, has) {
   return pts;
 }
 
-const fmtHz = (x) => (!isNum(x) ? '' : x >= 1000 ? `${r3(x / 1000)} kHz` : `${Math.round(x)} Hz`);
+const fmtHz = (x) => (!isNum(x) ? '' : x >= 1000 ? `${Number((x / 1000).toPrecision(3))} kHz` : `${Math.round(x)} Hz`);
 
 function describeInstrument(inst, t) {
   if (inst.type === 'drums') return `drums · ${inst.params.machine ? DRUM_MACHINES[inst.params.machine]?.name || inst.params.machine : `${inst.preset} kit`} · pads ${[...new Set(t.haps.map((h) => h.pad))].join(', ')}`;

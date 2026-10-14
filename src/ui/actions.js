@@ -662,11 +662,13 @@ export function createActions(app) {
     choice = choice || await askStrudelImport(code, { replace });
     if (!choice) return { choice: null };
     if (choice === 'split') {
+      app.setStatus?.('Splitting the Strudel code into tracks…');
+      await new Promise((r) => setTimeout(r, 0)); // (let the status paint before the analysis runs)
       const s = await importStrudelSplit(store, code, { replace });
       if (!s.error) {
         if (s.firstTrackId) selectTrack(s.firstTrackId);
         ui.set({ view: 'arrange' });
-        toast(summaryText(s), { level: 'success', timeout: 8000 });
+        toast(summary ? summaryText({ ...s, unmapped: [], notes: [] }) : summaryText(s), { level: 'success', timeout: 8000 });
         if (summary) showSplitSummary(s);
         return { choice, summary: s };
       }
