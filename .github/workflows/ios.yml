@@ -63,6 +63,9 @@ jobs:
           grep -q "\*\* ARCHIVE SUCCEEDED \*\*" build/archive.log
           mkdir -p build/ipa/Payload
           cp -R build/daW3.xcarchive/Products/Applications/daW3.app build/ipa/Payload/
+          # the web app must be inside the device build too
+          test -f build/ipa/Payload/daW3.app/web/index.html && test -f build/ipa/Payload/daW3.app/web/src/main.js && test -f build/ipa/Payload/daW3.app/daw3-native.js
+          du -sh build/ipa/Payload/daW3.app/web
           (cd build/ipa && zip -qry ../daW3-unsigned.ipa Payload)
           ditto -c -k --keepParent build/daW3.xcarchive build/daW3-unsigned.xcarchive.zip
           ls -la build/*.ipa build/*.zip
