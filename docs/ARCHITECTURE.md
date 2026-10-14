@@ -191,7 +191,15 @@ input). Browser: `inputs.js` (input sources + InputManager), `capture-processor.
 * **Capture** — the `daw3-capture` AudioWorklet stamps every block with its context frame (sample-accurate); where
   AudioWorklet is missing or stalls (2.5 s), a ScriptProcessor tap (input = 2 buffers before `playbackTime`, ±1 quantum).
 * **Alignment / latency** — captured frame F is heard-time beat `anchor.beat + (F/sr − roundTrip − anchor.time)·bpm/60`
-  (anchor = the scheduler's first anchor, heard time; constant tempo during a take). `roundTrip` = the measured loopback
+  (anchor = the scheduler's first anchor, heard time). **Tempo / meter maps**: the anchor carries the scheduler's
+  `TempoMap` and the cycle range, and `timing.js` (`beatAtTime` / `timeAtBeat` / `songBeat`) integrates the *unwrapped*
+  timeline through the map (each loop pass = `span(loop.start, loop.end)` s); `planAudioTakes` places the passes
+  (take length = `beatAt(startSec + dur) − startBeat`, offset = sample seconds / `spbAt(take.start)` — the unwarped-clip
+  convention of `warp/player.js`), `countInPlan` / `recordPlan({map})` count real bars of the meter map (a 7/8 count-in
+  bar = 7 eighths, 2+2+3 accents, at its own tempo; bars before beat 0 use the first meter), `compClips` /
+  `mixClipsToPcm({map})` / `envelopePoints(…, map)` / audition / reverse / normalize go through `takes.srcSecAt`, capture
+  MIDI times free playing via the map. A constant map (no `tempoMap`, no meter changes) keeps the original linear
+  arithmetic bit-for-bit. `roundTrip` = the measured loopback
   latency of the device (Recording settings ▸ Measure: pings out, onset detection in, `detectPing`) or the browser
   estimate (base + output + track latency), + a manual offset (ms) — stored per device in localStorage
   `daw3-rec-latency`. The ping goes through the same capture path, so a calibrated device is exact either way.

@@ -23,6 +23,8 @@ export function unwarpedInSeconds(ev, map) {
   const clip = { ...c, offset: (c.offset || 0) * map.spbAt(cs), length: map.span(cs, ce) };
   if (c.fadeIn > 0) clip.fadeIn = map.span(cs, cs + c.fadeIn);
   if (c.fadeOut > 0) clip.fadeOut = map.span(ce - c.fadeOut, ce);
+  // clip gain envelope points are beats from the clip start -> seconds, like the fades
+  if (c.gainEnv?.length) clip.gainEnv = c.gainEnv.map((p) => ({ ...p, beat: map.span(cs, cs + p.beat) }));
   return { ...ev, clip, offset: map.span(cs, ev.beat), dur: map.span(ev.beat, ev.beat + ev.dur) };
 }
 

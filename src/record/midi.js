@@ -154,8 +154,10 @@ export class CaptureBuffer {
    * The last phrase as a clip: { start, length, notes } or null. A gap of more than `gapSec` of silence starts a new
    * phrase (only the latest phrase is captured). Positions: song beats when every note of the phrase carries one
    * (played over a running transport), else from `atBeat` at `bpm`. start / length snap to bars (bpb).
+   * map (optional TempoMap, src/time/tempo-map.js): free timing goes through the tempo map from `atBeat` and start /
+   * length snap to the meter map's bars (used when the project has tempo or meter changes).
    */
-  capture({ trackId = null, bpm = 120, bpb = 4, atBeat = 0, gapSec = 6, grid = 0, now = null } = {}) {
+  capture({ trackId = null, bpm = 120, bpb = 4, atBeat = 0, gapSec = 6, grid = 0, now = null, map = null } = {}) {
     const all = this.notes(trackId, now);
     if (!all.length) return null;
     let i = all.length - 1;
@@ -165,10 +167,21 @@ export class CaptureBuffer {
     const phrase = all.slice(i);
     const spb = 60 / bpm;
     const onBeats = phrase.every((e) => e.b0 != null && e.b1 != null && e.b1 >= e.b0);
-    const pos = onBeats ? phrase.map((e) => ({ s: e.b0, e: e.b1 })) : phrase.map((e) => ({ s: atBeat + (e.t0 - phrase[0].t0) / spb, e: atBeat + (e.t1 - phrase[0].t0) / spb }));
+    const tm = map && (!map.isConstant || map.meters.length > 1) ? map : null;
+    const sA = tm ? tm.secAt(atBeat) : 0;
+    const at = tm ? (t) => tm.beatAt(sA + (t - phrase[0].t0)) : (t) => atBeat + (t - phrase[0].t0) / spb;
+    const pos = onBeats ? phrase.map((e) => ({ s: e.b0, e: e.b1 })) : phrase.map((e) => ({ s: at(e.t0), e: at(e.t1) }));
     const s0 = Math.min(...pos.map((p) => p.s)), s1 = Math.max(...pos.map((p) => p.e));
-    const start = Math.max(0, Math.floor(s0 / bpb + EPS) * bpb);
-    const length = Math.max(bpb, Math.ceil((s1 - start) / bpb - EPS) * bpb);
+    let start, length;
+    if (tm) {
+      // whole bars of the meter map around the phrase
+      start = Math.max(0, tm.barAt(Math.max(0, s0) + EPS).start);
+      const endBar = tm.barAt(Math.max(start, s1) - EPS).bar;
+      length = Math.max(tm.barAt(start).length, tm.barStart(endBar + 1) - start);
+    } else {
+      start = Math.max(0, Math.floor(s0 / bpb + EPS) * bpb);
+      length = Math.max(bpb, Math.ceil((s1 - start) / bpb - EPS) * bpb);
+    }
     const notes = phrase.map((e, k) => {
       const q = quantizeNote(pos[k].s - start, pos[k].e - pos[k].s, grid);
       return { trackId: e.trackId, pitch: e.pitch, vel: e.vel, start: Math.max(0, q.start), dur: Math.max(0.01, q.dur) };
