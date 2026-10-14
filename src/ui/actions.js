@@ -20,6 +20,7 @@ import { fileToSample, arrayBufferToBase64 } from '../io/samples.js';
 import { createRecorder } from '../record/session.js';
 import { readStrudelFile } from '../io/strudel-file.js';
 import { importStrudelSplit, splitCodeByLabels, summaryText } from '../code/import-split.js';
+import { mergeProjectPrebake } from '../code/prebake.js';
 import { splitTopLevel as splitStrudelTopLevel, loadStrudel } from '../code/strudel.js';
 import { repairStrudel, diagnose, salvageParts } from '../code/repair.js';
 import { saveLocal, listLocal, loadLocal, deleteLocal, createAutosaver } from '../io/autosave.js';
@@ -694,6 +695,8 @@ export function createActions(app) {
     const original = code;
     let repairs = [], diag = null, salvage = null;
     if (await loadStrudel()) {
+      // functions neither Strudel nor the loaded prebakes define: offer a prebake (helper library) first
+      if (app.prebakeUi && !choice && (await app.prebakeUi.checkCode(code)) === 'cancel') return { choice: null };
       const key = get().key && get().tracks.length ? pitchClassName(get().key.root) : undefined;
       const rep = repairStrudel(code, { key });
       code = rep.code;
@@ -711,7 +714,7 @@ export function createActions(app) {
     if (choice === 'split') {
       app.setStatus?.('Splitting the Strudel code into tracks…');
       await new Promise((r) => setTimeout(r, 0)); // (let the status paint before the analysis runs)
-      const s = await importStrudelSplit(store, code, { replace, original, skipRepair: true, repairs });
+      const s = await importStrudelSplit(store, code, { replace, original, skipRepair: true, repairs, prebake: app.prebake?.refsFor(code) || [] });
       if (!s.error) {
         if (dropped) s.dropped = dropped;
         if (s.firstTrackId) selectTrack(s.firstTrackId);
@@ -736,6 +739,8 @@ export function createActions(app) {
       }
       p.tracks.push(...tracks);
       if (repairs.length) p.importedCode = { code, original, repairs };
+      const refs = app.prebake?.refsFor(code) || [];
+      if (refs.length) p.prebake = mergeProjectPrebake(p.prebake, refs);
     });
     ui.set({ view: 'code', selectedTrackId: tracks[0].id });
     toast(`Imported "${name}" as ${tracks.length} code track${tracks.length > 1 ? 's' : ''}${repairs.length ? ` — repaired ${repairs.length} thing${repairs.length === 1 ? '' : 's'} Strudel would reject` : ''}. Play it live, or use "Render to tracks" to expand it into editable patterns.`, { level: 'success', timeout: 6000 });

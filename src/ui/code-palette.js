@@ -45,7 +45,7 @@ export function createCodePalette(app, editor, opts = {}) {
   function groups() {
     const p = project();
     const samples = Object.values(p.samples || {}).map((s) => s.name).filter(Boolean).slice(0, 40);
-    return paletteGroups({ key: p.key, bpm: p.bpm, samples });
+    return paletteGroups({ key: p.key, bpm: p.bpm, samples, prebake: app.prebake?.docs() || [] });
   }
 
   function render() {
@@ -213,7 +213,7 @@ export function createCodePalette(app, editor, opts = {}) {
   function refresh() {
     if (!state.open) return;
     const p = project();
-    const k = `${p.key?.root}|${p.key?.scale}|${p.bpm}|${Object.keys(p.samples || {}).length}`;
+    const k = `${p.key?.root}|${p.key?.scale}|${p.bpm}|${Object.keys(p.samples || {}).length}|${(app.prebake?.docs() || []).map((d) => d.name).join(',')}`;
     if (k === groupsKey && listEl.childElementCount) return;
     groupsKey = k;
     render();
@@ -234,8 +234,9 @@ export function attachCodeTools(app, editor, { body, after } = {}) {
     let dsl = [];
     try { dsl = strudelDslNames(); } catch { dsl = []; }
     const samples = Object.values(p.samples || {}).map((s) => s.name).filter(Boolean);
-    const k = `${p.key?.root}|${p.key?.scale}|${samples.length}|${dsl.length}`;
-    if (!cat || k !== catKey) { cat = buildCatalog({ key: p.key, samples, dsl }); catKey = k; }
+    const pb = app.prebake?.docs() || [];
+    const k = `${p.key?.root}|${p.key?.scale}|${samples.length}|${dsl.length}|${pb.map((d) => d.name).join(',')}`;
+    if (!cat || k !== catKey) { cat = buildCatalog({ key: p.key, samples, dsl, prebake: pb }); catKey = k; }
     return cat;
   };
   const ac = attachAutocomplete(editor, { getCatalog, getOptions: () => ({ key: app.store.get().key }) });
@@ -243,5 +244,6 @@ export function attachCodeTools(app, editor, { body, after } = {}) {
   if (body) body.appendChild(palette.el);
   if (after) after.after(palette.button);
   app.subscribe?.((ch) => { if (ch.project) palette.refresh(); });
+  app.prebakeUi?.onChange(() => palette.refresh()); // prebake functions appear in the palette / autocomplete
   return { autocomplete: ac, palette };
 }

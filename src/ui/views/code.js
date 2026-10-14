@@ -6,6 +6,7 @@ import { h, icon, fitCanvas, cssVar, startDrag } from '../dom.js';
 import { iconButton, button, contextMenu, toggle, select, toast, promptText, modal } from '../components.js';
 import { createCodeEditor, splitBlocks } from '../code-editor.js';
 import { attachCodeTools } from '../code-palette.js';
+import { prebakeHint } from '../prebake-ui.js';
 import { beatsPerBar } from '../../core/model.js';
 import { isTyping } from '../keyboard.js';
 import * as strudel from '../../code/strudel.js';
@@ -252,10 +253,11 @@ export function createCodeView(app) {
       renderStatus(); renderList(codeTracks());
     },
   });
+  const prebakeBtn = app.prebakeUi ? app.prebakeUi.button() : null; // helper libraries evaluated before the code
   const tempoBtn = button('', () => adoptTempo(), { icon: 'metronome', title: 'This code sets its own tempo with setcps/setcpm — click to set the project BPM to match (1 cycle = 1 bar)', cls: 'code-tempo hidden' });
   const toolbar = h('div.view-toolbar.code-toolbar',
     playBtn, stopBtn, h('div.sep'), applyBtn, revertBtn, autoToggle, dirtyEl, h('div.sep'),
-    examplesBtn, refBtn, h('div.sep'), importBtn, exportBtn, h('div.sep'),
+    examplesBtn, refBtn, prebakeBtn, h('div.sep'), importBtn, exportBtn, h('div.sep'),
     renderWrap, soundSel, styleSel, tempoBtn);
 
   // ------------------------------------------------------------ DOM: track list
@@ -273,6 +275,15 @@ export function createCodeView(app) {
   const errBar = h('div.code-errbar.hidden');
   const staleBar = h('div.code-stalebar.hidden');
   const noteBar = h('div.code-notebar.hidden');
+  const pbBar = h('div.code-pbbar.hidden'); // "needs a prebake?" (undefined functions in the applied code)
+  const pbDismissed = new Set();
+  function updatePrebakeHint(res) {
+    const missing = res && !res.error ? (res.warnings || []).length : 0;
+    const node = missing && app.prebakeUi ? prebakeHint(app, { warnings: res.warnings.filter((w) => !pbDismissed.has(String(w))) }, { onDismiss: () => { for (const w of res.warnings) pbDismissed.add(String(w)); updatePrebakeHint(null); } }) : null;
+    pbBar.replaceChildren(...(node ? [node] : []));
+    pbBar.classList.toggle('hidden', !node);
+  }
+  app.prebakeUi?.onChange(() => { if (!pbBar.classList.contains('hidden')) updatePrebakeHint(null); }); // (re-checked on the next apply)
   const editor = createCodeEditor({
     placeholder: '// Type Strudel code, e.g.\n$: s("bd*4, ~ cp, hh*8")\n$: note("c2 eb2 g2 bb2").s("sawtooth").lpf(800)',
     onChange: onEditorChange,
@@ -300,7 +311,7 @@ export function createCodeView(app) {
     startDrag(e, (_dx, dy) => { const nh = Math.max(70, Math.min(600, h0 - dy)); vizEl.style.flexBasis = nh + 'px'; vizDirty = true; }, () => lsSet(LS_VIZ_H, vizEl.offsetHeight));
   });
 
-  const editorWrap = h('div.code-editor-wrap', errBar, staleBar, noteBar, editor.el, hint);
+  const editorWrap = h('div.code-editor-wrap', errBar, staleBar, noteBar, pbBar, editor.el, hint);
   const mainEl = h('div.code-main', editorWrap, vizEl);
 
   // ------------------------------------------------------------ DOM: reference drawer
@@ -522,6 +533,7 @@ export function createCodeView(app) {
     if (res.error) localErr.set(t.id, errLoc(res.error, code));
     else { localErr.delete(t.id); engineErr.delete(t.id); }
     if ((t.code || '') !== code) actions.updateTrack(t.id, (tt) => { tt.code = code; }, label, { coalesce });
+    if (!coalesce) { updatePrebakeHint(res); if (!res.error) app.prebakeUi?.rememberFor(code); }
     if (drafts.get(t.id) === code) drafts.delete(t.id);
     lastQueryKey = '';
     vizDirty = true;
@@ -659,6 +671,7 @@ export function createCodeView(app) {
       keep = a === 'keep';
     }
     const rep = commitSongApply(store, plan, text, { keep });
+    app.prebakeUi?.rememberFor(text); // the helper libraries the song uses travel with the project
     songDraft = null;
     songStale = false;
     regenSong();

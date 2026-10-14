@@ -9,6 +9,9 @@
 //   setSliderValue(id, v) / sliderValue(id)        live values of slider() widgets
 //   loadStrudelAudio()       -> Promise<module>    superdough + sound registries (browser only, see
 //                                                  src/audio/strudel-instrument.js)
+//   setPrebake(sources)      -> prebakeStatus()    user prebake code ([{id, name, code}]) evaluated in the Strudel
+//                                                  scope once per engine load / source change (see "prebake" below)
+//   prebakeStatus() / onPrebake(fn)                what the prebake defined, per-source errors (line, message)
 //
 // Evaluation mirrors Strudel's REPL (@strudel/core repl.mjs + transpiler): `$:` / `name:` labels become
 // `.p(name)` calls, double-quoted / backtick strings become located mini-notation, slider() becomes
@@ -114,6 +117,12 @@ function setup() {
     samples: (...args) => audioCall('samples', args),
     aliasBank: (...args) => audioCall('aliasBank', args),
     soundAlias: (...args) => audioCall('soundAlias', args),
+    // superdough settings a prebake typically makes (applied once the audio engine is there)
+    setGainCurve: (...args) => audioCall('setGainCurve', args),
+    setDefault: (...args) => audioCall('setDefault', args),
+    setDefaults: (...args) => audioCall('setDefaults', args),
+    setDefaultValue: (...args) => audioCall('setDefaultValue', args),
+    setDefaultValues: (...args) => audioCall('setDefaultValues', args),
     loadSoundfont: () => undefined,
     registerSynthSounds: () => undefined,
     registerZZFXSounds: () => undefined,
@@ -129,7 +138,9 @@ function setup() {
     midin: () => () => core.ref(() => 0),
     sysex: () => undefined,
   });
+  if (typeof window === 'undefined') scope.window = nodeGlobals; // (Node: prebake `window.x = …` lands here)
   rebuildScope();
+  if (pbSources.length) applyPrebake();
 }
 
 let offscreen = null;
@@ -171,7 +182,7 @@ function setCps(cps) {
 }
 
 function audioCall(name, args) {
-  args = args.map(unpure);
+  args = args.map((a) => (typeof a === 'function' ? a : unpure(a)));
   // daW³ instruments (CodeInstrument) resolve custom sample maps through our own loader
   if (name === 'samples') loadSamples(args[0], args[1]);
   if (audio) return runAudioCall(name, args);
@@ -180,7 +191,9 @@ function audioCall(name, args) {
 }
 function runAudioCall(name, args) {
   try {
-    const r = audio.superdough[name](...args);
+    const f = audio.superdough[name] || audio.webaudio?.[name];
+    if (typeof f !== 'function') return undefined;
+    const r = f(...args);
     if (r && typeof r.catch === 'function') r.catch((e) => console.warn(`[strudel] ${name}() failed:`, e?.message || e));
     return r;
   } catch (e) {
@@ -401,8 +414,11 @@ export function evaluateStrudel(source) {
   let ret;
   try {
     // a block (as Strudel's own eval does) so `const chorus = …` may shadow a Strudel name
-    const fn = new Function(...scopeNames, ...extraNames, `{\n${out}\n}`);
-    ret = fn(...scopeValues, ...extraValues);
+    // (names a prebake put on window resolve to their live values, as globals do on strudel.cc)
+    const fn = pbGlobalNames.size
+      ? new Function(...scopeNames, ...extraNames, '__pbWith', `with (__pbWith) {\n${out}\n}`)
+      : new Function(...scopeNames, ...extraNames, `{\n${out}\n}`);
+    ret = fn(...scopeValues, ...extraValues, pbWith);
   } catch (e) {
     result.error = errMsg(e);
   } finally {
@@ -466,6 +482,7 @@ export function loadStrudelAudio() {
       loadSoundfont: (...args) => mod.soundfonts.loadSoundfont?.(...args),
     });
     rebuildScope();
+    if (pbSources.length) { applyPrebake(); setStatus(status); } // (again: its code may use the audio package)
     prebake(mod);
     for (const [name, args] of pendingAudioCalls.splice(0)) runAudioCall(name, args);
     return mod;
@@ -494,3 +511,184 @@ function prebake(mod) {
 /** Resolves once the default sound packs are registered (or failed). */
 export const strudelSoundsReady = () => prebaked || Promise.resolve();
 export const strudelAudio = () => audio;
+
+// -------------------------------------------------------------------------------- prebake
+//
+// A prebake is Strudel code (a helper library: register('name', …), window.fn = …, Pattern.prototype.x = …)
+// that strudel.cc evaluates before the user's code. Here it runs ONCE per engine load and whenever the sources
+// change — not on every evaluation: what it defines (pattern methods, strudelScope entries, globals) is added to
+// the scope every evaluation sees. Each top-level statement runs on its own (try / catch), so a failing statement
+// (e.g. one that builds DOM in Node) is reported with its line and never blocks the rest or the user's code.
+// Re-applying first undoes everything the previous run defined.
+
+let pbSources = []; // [{id, name, code}]
+let pbStatus = { applied: false, sources: [], names: [], methods: [], functions: [] };
+let pbUndo = []; // [() => void] restores the state before the last run (reverse order)
+const pbScope = {}; // scope names the prebake defined -> value
+const pbListeners = new Set();
+let pbGlobalNames = new Set(); // names the prebake put on window (resolve live through pbWith)
+let pbBaseline = null; // own keys of the global object before the run (while running)
+const nodeGlobals = {}; // Node: stands in for `window`
+const pbGlobal = () => (typeof window !== 'undefined' ? window : nodeGlobals);
+const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+const pbWith = new Proxy(Object.create(null), {
+  has: (_t, k) => typeof k === 'string' && (pbGlobalNames.has(k) || (!!pbBaseline && hasOwn(pbGlobal(), k) && !pbBaseline.has(k))),
+  get: (_t, k) => (typeof k === 'string' ? pbGlobal()[k] : undefined),
+  set: (_t, k, v) => { pbGlobal()[k] = v; return true; },
+});
+
+/** Names a prebake source defines, read from its text (register / registerFunc / window.x = / Pattern.prototype.x =). */
+export function prebakeDefinedNames(code) {
+  const src = String(code ?? '');
+  const methods = new Set();
+  const functions = new Set();
+  const globals = new Set();
+  for (const m of src.matchAll(/\bregister(?:Func)?\s*\(\s*['"`]([A-Za-z_$][\w$]*)['"`]/g)) (/registerFunc/.test(m[0]) ? functions : methods).add(m[1]);
+  for (const m of src.matchAll(/\b(?:window|globalThis)\s*\.\s*([A-Za-z_$][\w$]*)\s*=(?!=)/g)) globals.add(m[1]);
+  for (const m of src.matchAll(/\bPattern\s*\.\s*prototype\s*\.\s*([A-Za-z_$][\w$]*)\s*=(?!=)/g)) methods.add(m[1]);
+  for (const m of src.matchAll(/^(?:function\s+([A-Za-z_$][\w$]*)|(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=)/gm)) functions.add(m[1] || m[2]);
+  return { methods: [...methods], functions: [...functions], globals: [...globals] };
+}
+
+export const prebakeStatus = () => pbStatus;
+export function onPrebake(fn) { pbListeners.add(fn); return () => pbListeners.delete(fn); }
+
+/**
+ * Sets the prebake sources ([{id, name, code}], in order) and evaluates them when the engine is loaded
+ * (else as soon as it is). Returns prebakeStatus().
+ */
+export function setPrebake(sources) {
+  const next = (sources || []).filter((x) => x && typeof x.code === 'string').map((x, i) => ({ id: String(x.id ?? i), name: String(x.name || x.id || `prebake ${i + 1}`), code: x.code }));
+  const same = next.length === pbSources.length && next.every((x, i) => x.id === pbSources[i].id && x.code === pbSources[i].code);
+  if (same && (pbStatus.applied || !S)) return pbStatus;
+  pbSources = next;
+  if (!S) return pbStatus;
+  applyPrebake();
+  setStatus(status); // everything evaluated so far depends on the scope -> listeners re-evaluate
+  return pbStatus;
+}
+
+function undoPrebake() {
+  for (const f of pbUndo.reverse()) { try { f(); } catch { /* ignore */ } }
+  pbUndo = [];
+  for (const k of Object.keys(pbScope)) delete pbScope[k];
+  pbGlobalNames = new Set();
+}
+
+function applyPrebake() {
+  undoPrebake();
+  const { core } = S;
+  const G = pbGlobal();
+  const proto = core.Pattern.prototype;
+  const sscope = core.strudelScope || {};
+  const parsed = pbSources.map((x) => prebakeDefinedNames(x.code));
+  const named = (k) => parsed.flatMap((p) => p[k]);
+  // snapshot what may be overwritten
+  const protoOwn = new Set(Object.getOwnPropertyNames(proto));
+  const protoOld = new Map(named('methods').filter((k) => protoOwn.has(k)).map((k) => [k, Object.getOwnPropertyDescriptor(proto, k)]));
+  const ssOwn = new Set(Object.keys(sscope));
+  const ssOld = new Map([...named('methods'), ...named('functions')].filter((k) => ssOwn.has(k)).map((k) => [k, sscope[k]]));
+  let gOwn;
+  try { gOwn = new Set(Object.getOwnPropertyNames(G)); } catch { gOwn = new Set(); }
+  const gOld = new Map(named('globals').filter((k) => gOwn.has(k)).map((k) => { try { return [k, G[k]]; } catch { return [k, undefined]; } }));
+
+  pbBaseline = gOwn;
+  const results = [];
+  try {
+    for (const src of pbSources) results.push(runPrebakeSource(src));
+  } finally {
+    pbBaseline = null;
+  }
+
+  // what the run defined
+  const newProto = Object.getOwnPropertyNames(proto).filter((k) => !protoOwn.has(k));
+  const changedProto = [...protoOld.keys()].filter((k) => Object.getOwnPropertyDescriptor(proto, k)?.value !== protoOld.get(k)?.value);
+  const newSs = Object.keys(sscope).filter((k) => !ssOwn.has(k) || (ssOld.has(k) && sscope[k] !== ssOld.get(k)));
+  let gNow = [];
+  try { gNow = Object.getOwnPropertyNames(G); } catch { /* ignore */ }
+  const newG = gNow.filter((k) => !gOwn.has(k));
+  const changedG = [...gOld.keys()].filter((k) => { try { return G[k] !== gOld.get(k); } catch { return false; } });
+  pbUndo.push(() => {
+    for (const k of newProto) delete proto[k];
+    for (const k of changedProto) Object.defineProperty(proto, k, protoOld.get(k));
+    for (const k of newSs) { if (ssOld.has(k)) sscope[k] = ssOld.get(k); else delete sscope[k]; }
+    for (const k of newG) { try { delete G[k]; } catch { /* ignore */ } }
+    for (const k of changedG) { try { G[k] = gOld.get(k); } catch { /* ignore */ } }
+  });
+  pbGlobalNames = new Set([...newG, ...changedG].filter((k) => VALID_NAME.test(k) && !RESERVED.has(k)));
+  for (const k of newSs) if (VALID_NAME.test(k) && !RESERVED.has(k)) pbScope[k] = sscope[k];
+  for (const k of pbGlobalNames) { try { pbScope[k] = G[k]; } catch { /* ignore */ } }
+  // (undo puts back exactly what these names were — the scope may have grown since, e.g. the audio package)
+  const prev = new Map(Object.keys(pbScope).map((k) => [k, hasOwn(scope, k) ? { v: scope[k] } : null]));
+  Object.assign(scope, pbScope);
+  pbUndo.push(() => {
+    for (const [k, p] of prev) { if (p) scope[k] = p.v; else delete scope[k]; }
+    rebuildScope();
+  });
+  rebuildScope();
+
+  const methods = [...new Set([...newProto, ...changedProto])].filter((k) => !k.startsWith('_')).sort();
+  const functions = Object.keys(pbScope).filter((k) => typeof pbScope[k] === 'function').sort();
+  pbStatus = {
+    applied: true,
+    sources: results,
+    names: [...new Set([...methods, ...Object.keys(pbScope)])].sort(),
+    methods, functions,
+  };
+  for (const fn of [...pbListeners]) { try { fn(pbStatus); } catch (e) { console.warn('[prebake]', e); } }
+}
+
+/** Runs one prebake source statement by statement. -> {id, name, ok, errors: [{line, message}], warnings} */
+function runPrebakeSource({ id, name, code }) {
+  const { core, transpiler } = S;
+  const out = { id, name, ok: true, errors: [], warnings: [] };
+  let src = String(code ?? '');
+  if (src.charCodeAt(0) === 0xfeff) src = ' ' + src.slice(1);
+  let ast;
+  try {
+    ast = S.acornParse(src, { ecmaVersion: 'latest', allowAwaitOutsideFunction: true, locations: true });
+  } catch (e) {
+    out.ok = false;
+    out.errors.push({ line: e.loc?.line ?? null, message: errMsg(e).replace(/\s*\(\d+:\d+\)$/, '') });
+    return out;
+  }
+  src = plainStrings(src, ast);
+  const funcs = [];
+  const rest = [];
+  for (const node of ast.body) {
+    const line = node.loc?.start?.line ?? null;
+    let t;
+    try {
+      t = transpiler.transpiler(`${src.slice(node.start, node.end)}\n;undefined\n`, { wrapAsync: false, addReturn: false, emitMiniLocations: false }).output;
+    } catch (e) {
+      out.errors.push({ line, message: errMsg(e) });
+      continue;
+    }
+    t = stripTopLevelAwait(t);
+    if (node.type === 'FunctionDeclaration') { funcs.push(t); continue; }
+    // (var, so a declaration stays visible to the statements after it)
+    if (node.type === 'VariableDeclaration' || node.type === 'ClassDeclaration') t = t.replace(/^\s*(const|let)\s/, 'var ').replace(/^\s*class\s+([A-Za-z_$][\w$]*)/, 'var $1 = class $1');
+    rest.push(`try {\n${t}\n} catch (__e) { __pbErr(__e, ${line}); }`);
+  }
+  // (names neither Strudel nor the prebake define are left alone: like on strudel.cc they fail when called —
+  // often they are parameters, locals or browser APIs the analysis can't see; after the audio engine loads the
+  // prebake runs again with its functions in scope)
+  const extraNames = [];
+  const extraValues = [];
+  const pbErr = (e, line) => out.errors.push({ line, message: errMsg(e) });
+  try {
+    // (the prebake's mini-notation strings carry no source locations: they would point into the user's code —
+    // highlighting, and the split importer's attribution of notes to the code's parts)
+    const plainMini = (...args) => S.mini.m(...args).withContext(({ locations, ...c }) => c);
+    const values = scopeNames.map((k, i) => (k === 'm' ? plainMini : scopeValues[i]));
+    const fn = new Function(...scopeNames, ...extraNames, '__pbErr', '__pbWith', `with (__pbWith) {\n${funcs.join('\n')}\n${rest.join('\n')}\n}`);
+    fn(...values, ...extraValues, pbErr, pbWith);
+  } catch (e) {
+    out.errors.push({ line: null, message: errMsg(e) });
+  }
+  out.ok = !out.errors.length;
+  return out;
+}
+
+/** The object a prebake's `window.x = …` writes to (window in a browser, a stand-in object in Node). */
+export const prebakeGlobals = () => pbGlobal();

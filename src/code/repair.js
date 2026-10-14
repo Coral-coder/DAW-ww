@@ -20,7 +20,7 @@
 //   note("0 2 4").scale(…) -> n("0 2 4").scale(…) (scale degrees); .scale() after absolute notes -> commented out
 //   a second .note(…) in one chain (it would replace the first one's notes) -> .add(note(…)) when it is numbers
 // Haskell-only syntax (`d1 $`, `every 3 (fast 2)`, `sound "bd"`) can't be guessed: it is reported with a suggestion.
-import { strudelModules } from './strudel-real.js';
+import { strudelModules, prebakeStatus } from './strudel-real.js';
 import { evaluate } from './strudel.js';
 import { canonicalBank } from '../audio/library/drum-machines.js';
 
@@ -332,13 +332,17 @@ function tidalOperators(code, repairs) {
 
 // ------------------------------------------------------------------------------------------- AST passes
 
+/** Names the loaded prebake helper libraries define (their calls are never "repaired"). */
+const prebakeNames = () => new Set(prebakeStatus()?.names || []);
+
 /** Rewrites of mini-notation strings by the control they feed. -> [{start, end, text, repair}] */
 function stringEdits(code, ast) {
   const edits = [];
+  const own = prebakeNames();
   walk(ast, (n, parents) => {
     if (!isMiniLiteral(code, n)) return;
     const ctx = contextOf(parents, n);
-    if (!ctx) return;
+    if (!ctx || own.has(ctx)) return; // (a prebake's own function: its strings mean what it says)
     const quote = code[n.start];
     let text = literalText(code, n);
     const steps = [];
@@ -438,9 +442,11 @@ function callEdits(code, ast, opts) {
   // the song's key: the root of another .scale("D:minor"), opts.key, else C
   const rootM = /scale\(\s*["'`]([A-Ga-g][#b]?)-?\d*:/.exec(code);
   const root = rootM ? rootM[1].toUpperCase() : opts.key || 'C';
+  const own = prebakeNames();
   walk(ast, (n) => {
     if (n.type !== 'CallExpression' || n.callee.type !== 'MemberExpression' || n.callee.computed) return;
     const name = n.callee.property.name;
+    if (own.has(name)) return; // defined by a loaded prebake: not a TidalCycles-ism
     const recv = n.callee.object;
     const arg = n.arguments[0];
     const argStr = arg && arg.type === 'Literal' && typeof arg.value === 'string' ? arg.value : arg && arg.type === 'TemplateLiteral' && !arg.expressions.length ? arg.quasis[0].value.cooked : null;

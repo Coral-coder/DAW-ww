@@ -322,6 +322,19 @@ export function buildCatalog(opts = {}) {
     { label: 'slider', kind: 'function', detail: 'slider(value, min, max, step?)', desc: 'A live slider widget in the editor: drag it to change the value while the pattern plays.', example: 'note("c2*8").s("sawtooth").lpf(slider(800, 100, 4000))', boost: 30 },
     { label: 'const', kind: 'keyword', detail: 'const name = pattern', desc: 'Name a pattern so you can reuse it (e.g. inside stack or arrange).', example: 'const drums = s("bd*4, ~ cp")\n$: drums', boost: 10, snippet: { text: 'const name = s("bd*4")', sel: [6, 10] } },
   ];
+  // functions of the loaded prebake helper libraries (parsePrebakeDocs), listed with their source
+  for (const d of opts.prebake || []) {
+    const isMethod = d.kind === 'method';
+    const arg = prebakeArgs(d);
+    const text = `${d.name}(${arg})`;
+    const item = {
+      label: d.name, kind: isMethod ? 'method' : 'function', detail: d.signature,
+      desc: `${d.desc ? `${d.desc} ` : ''}(prebake: ${d.source || 'helper library'})`, example: d.example || undefined,
+      entry: { name: d.name, signature: d.signature, example: d.example || '', description: d.desc, category: 'Prebake' },
+      snippet: { text, sel: [d.name.length + 1, d.name.length + 1 + arg.length] }, boost: 45, prebake: d.source || true,
+    };
+    (isMethod ? methods : top).push(item);
+  }
   const known = new Set([...methods, ...top].map((i) => i.label));
   for (const nm of dsl) {
     if (known.has(nm) || !/^[A-Za-z][\w$]*$/.test(nm)) continue;
@@ -368,6 +381,19 @@ export function buildCatalog(opts = {}) {
   const vowels = ['a', 'e', 'i', 'o', 'u'].map((v) => ({ label: v, kind: 'value', desc: `Vowel "${v}" formant`, boost: 0 }));
   const minis = MINI_OPS.map((m) => ({ ...m, kind: 'mini', detail: 'mini-notation', boost: -200 }));
   return { methods, top, drums, waves, presets, dirt, vcsl, project, banks, scales, chords, notes, degrees, vowels, minis, key, consts: opts.consts || [] };
+}
+
+/** Argument text for a prebake function: from its @example, else its parameters' defaults (`.5` for the others). */
+export function prebakeArgs(d) {
+  const ex = exampleArg(d.example, d.name, d.kind === 'method') ?? exampleArg(d.example, d.name, d.kind !== 'method');
+  if (ex != null) return ex;
+  const ps = (d.params || []).filter((p) => !/^\.\.\./.test(p));
+  if (!ps.length) return '';
+  const vals = ps.map((p) => (/=/.test(p) ? p.split('=').slice(1).join('=').trim() : null));
+  // trailing parameters with defaults are left out
+  let n = vals.length;
+  while (n > 0 && vals[n - 1] !== null) n--;
+  return vals.slice(0, n).map((v) => v ?? '.5').join(', ');
 }
 
 /** `const`/`let` names declared in the source (and `name:` labels). */
@@ -938,6 +964,30 @@ export function minimalEdit(a, b) {
 
 // ------------------------------------------------------------------------------------------------ palette
 
+/** Palette group of the prebake helper libraries' functions (one section per source). */
+function prebakeGroups(docs) {
+  if (!docs?.length) return [];
+  const bySource = new Map();
+  for (const d of docs) {
+    const k = d.source || 'Prebake';
+    if (!bySource.has(k)) bySource.set(k, []);
+    bySource.get(k).push(d);
+  }
+  return [{
+    id: 'prebake', title: 'Prebake', desc: 'Functions your prebake helper libraries define',
+    sections: [...bySource].map(([src, ds]) => ({
+      title: src,
+      chips: ds.map((d) => {
+        const arg = prebakeArgs(d);
+        const desc = `${d.desc || d.signature} — from the prebake “${src}”`;
+        return d.kind === 'method'
+          ? M(d.name, `.${d.name}(${arg})`, desc, { example: d.example || undefined, prebake: src })
+          : B(d.name, `$: ${d.name}(${arg})`, desc, { example: d.example || undefined, prebake: src });
+      }),
+    })),
+  }];
+}
+
 const M = (label, code, desc, extra = {}) => ({ kind: 'method', label, code, name: /^\.([\w$]+)/.exec(code)?.[1], desc, unique: true, ...extra });
 const B = (label, code, desc, extra = {}) => ({ kind: 'block', label, code, desc, ...extra });
 
@@ -1050,6 +1100,7 @@ export function paletteGroups(opts = {}) {
         ],
       }],
     },
+    ...prebakeGroups(opts.prebake),
     {
       id: 'widgets', title: 'Widgets', desc: 'Live controls in the editor',
       sections: [{

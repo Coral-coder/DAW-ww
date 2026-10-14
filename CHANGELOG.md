@@ -3,6 +3,16 @@
 All notable changes to daW³. Versions follow [semantic versioning](https://semver.org); the web app, Pocket and
 the desktop apps share one version.
 
+## [Unreleased]
+
+### Added
+- **Prebake** (as in strudel.cc Settings → prebake): Strudel helper libraries evaluated before your code — add one by
+  URL (cached for offline use), paste or upload it; enable, reorder, reload; see the functions it defines and any
+  failing statement (line, message). It runs once per change in every code path (Code tab, Song, split import,
+  render, Setlist, Pocket), its functions show in autocomplete and the building blocks, and a project keeps a
+  reference to the prebakes its code uses. Code calling undefined functions offers the saved prebake that defines
+  them. Split import maps what the helpers produce (filter envelopes, delay sends, filters, gain, orbit mute / solo).
+
 ## [1.0.0] — 2026-10-14
 
 The first release: one codebase for the web app, the Pocket phone layout and the desktop apps for macOS,

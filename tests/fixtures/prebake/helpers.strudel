@@ -1,0 +1,65 @@
+// Synthetic prebake helper library for the tests (written for daW³ — exercises the mechanisms
+// community prebakes use: register(), window.fn = …, a registerFunc helper writing strudelScope + window,
+// Pattern.prototype methods, setGainCurve, orbit mute / solo globals, a DOM-only statement).
+
+window.registerFunc = (name, func) => {
+  strudelScope[name] = func
+  window[name] = func
+}
+
+/**
+ * @title pg
+ * Post-gain: multiplies the level of a pattern.
+ * @example s("bd*4").pg(.5)
+ */
+register('pg', (amount, pat) => pat.postgain(amount))
+
+// filter envelope between 0 and 1 (a squelchy bass)
+register('acidenv', (x, pat) => pat.lpf(100).lpenv(x * 9).lps(.2).lpd(.12).lpq(2))
+
+// delay send: amount and feedback from one number
+register('dly', (x, pat) => pat.delay(pure(x).mul(.8)).delayfeedback(pure(x).pow(2)))
+
+// low-pass / high-pass from 0..1 (perceptual curve)
+register('rlpf', (x, pat) => pat.lpf(pure(x).mul(12).pow(4)))
+register('rhpf', (x, pat) => pat.hpf(pure(x).mul(12).pow(4)))
+
+setGainCurve(x => Math.pow(x, 2))
+
+window.mutedOrbits = []
+window.soloedOrbits = []
+window.mute = (...orbits) => { window.mutedOrbits = orbits }
+window.solo = (...orbits) => { window.soloedOrbits = orbits }
+// orbit with mute / solo
+register('o', (orbit, pat) => {
+  pat = pat.orbit(orbit)
+  if (mutedOrbits.includes(orbit)) return pat.hush()
+  if (soloedOrbits.length && !soloedOrbits.includes(orbit)) return pat.hush()
+  return pat
+})
+
+const SHAPES = { min: [0, 3, 7], maj: [0, 4, 7] }
+
+// chord of a root note (MIDI): chrd(48, 'min')
+window.chrd = function (root = 48, kind = 'maj') {
+  return note(stack(...SHAPES[kind].map((i) => root + i)))
+}
+
+// a three-note arpeggio pattern
+window.arp3 = (root = 48) => n(seq(0, 4, 7).add(root)).s('sawtooth')
+
+Pattern.prototype.twice = function () { return this.fast(2) }
+
+registerFunc('zap', (amount = .8) => s('sine').penv(pure(amount).mul(24)).decay(.1))
+
+// a gate in sixteenths (keeps the 1s of the rhythm; not patternified: struct gets the whole pattern)
+register('gate16', (rhythm, pat) => pat.struct(rhythm), false)
+
+// builds a DOM widget (fails where there is no document)
+window.makeWidget = () => document.createElement('div')
+window.widget = window.makeWidget()
+
+// a statement that throws: the rest still loads
+throw new Error('deliberate failure on this line')
+
+window.afterFailure = () => s("hh*8")

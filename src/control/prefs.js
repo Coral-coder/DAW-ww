@@ -1,4 +1,4 @@
-// Preferences dialog: MIDI devices · Mappings · Control surfaces · Sync · Shortcuts · Hardware check.
+// Preferences dialog: MIDI devices · Mappings · Control surfaces · Sync · Shortcuts · Prebake · Hardware check.
 import { h, icon } from '../ui/dom.js';
 import { modal, tabs, toast, fileInput, select, contextMenu, promptText } from '../ui/components.js';
 import { downloadBlob } from '../io/project-file.js';
@@ -9,6 +9,7 @@ import { templateOwner } from './targets.js';
 import { eventToChord, formatChord, fuzzyScore } from './shortcuts.js';
 import { uid } from '../core/util.js';
 import { hardwareCheckTab } from '../ui/hardware-check.js';
+import { prebakePanel } from '../ui/prebake-ui.js';
 
 const chk = (value, onChange, title) => {
   const el = h('input', { type: 'checkbox', title });
@@ -43,6 +44,7 @@ export function openPrefs(app, tab = 'midi') {
     { id: 'surfaces', label: 'Control surfaces', icon: 'grid', render: mk('surfaces', () => surfacesTab(app, () => refresh('surfaces'))) },
     { id: 'sync', label: 'Sync', icon: 'loop', render: mk('sync', () => syncTab(app, () => refresh('sync'))) },
     { id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard', render: mk('shortcuts', () => shortcutsTab(app, () => refresh('shortcuts'))) },
+    { id: 'prebake', label: 'Prebake', icon: 'code', render: () => (app.prebake ? prebakePanel(app) : h('p.ctl-help', 'Prebake is not available here.')) },
     { id: 'hardware', label: 'Hardware check', icon: 'search', render: mk('hardware', () => hardwareCheckTab(app, () => refresh('hardware'))) },
   ], tab);
   const m = modal({ title: 'Preferences', body: h('div.ctl-prefs', t), width: 900, cls: 'ctl-prefs-modal', onClose: () => unsub?.() });

@@ -10,6 +10,7 @@ import { planSongApply, commitSongApply, songApplySummary } from '../../code/son
 import { PRESETS, DRUM_KITS } from '../../audio/index.js';
 import { SNIPPETS, insertSnippet, codeEntries } from '../code-core.js';
 import { pageShell, iconBtn } from './common.js';
+import { undefinedCalls } from '../../code/prebake.js';
 import { actionSheet, haptic, chips, bigButton, confirmSheet, openSheet } from '../touch.js';
 
 const LS_STYLE = 'daw3-code-style'; // shared with the desktop view: 'live' | 'exact'
@@ -120,7 +121,10 @@ export function createCodePage(app, nav) {
       if (res?.error) { errMsg = res.error; render(); return; }
       if ((t.code || '') !== text) actions.updateTrack(t.id, (tt) => { tt.code = text; }, 'Apply code');
       draft = null;
-      app.toast(`Applied “${t.name}”.`, { level: 'success' });
+      app.prebakeUi?.rememberFor(text);
+      const missing = undefinedCalls(res);
+      if (missing.length) app.toast(`This code uses functions that aren’t defined: ${missing.slice(0, 6).join(', ')}${missing.length > 6 ? ', …' : ''} — it probably needs a prebake (Code ▸ ☰ ▸ Prebake).`, { level: 'warn', timeout: 8000 });
+      else app.toast(`Applied “${t.name}”.`, { level: 'success' });
       if (!engine.isPlaying) actions.play?.();
       render();
       return;
@@ -147,6 +151,7 @@ export function createCodePage(app, nav) {
       keep = a === 'keep';
     }
     const rep = commitSongApply(store, plan, text, { keep });
+    app.prebakeUi?.rememberFor(text);
     draft = null;
     regen();
     const parts = songApplySummary(rep, { keep });
@@ -173,6 +178,7 @@ export function createCodePage(app, nav) {
       { label: 'Discard my edits', icon: 'undo', disabled: draft === null, onClick: () => { draft = null; errMsg = null; if (editing) ta.value = shownText(); render(); } },
       { label: 'New code track', icon: 'plus', onClick: () => { const t = actions.addTrack('code', { name: 'Code' }); if (t) { entry = t.id; draft = null; setEditing(true); } } },
       { label: 'Copy the code', icon: 'copy', onClick: () => navigator.clipboard?.writeText(shownText()).then(() => app.toast('Copied'), () => app.toast('Copy failed', { level: 'warn' })) },
+      { label: `Prebake (helper libraries)…${app.prebake ? ` — ${app.prebake.status().count} active` : ''}`, icon: 'sliders', disabled: !app.prebakeUi, onClick: () => app.prebakeUi?.openManager() },
       { label: engine.isPlaying ? 'Stop' : 'Play', icon: engine.isPlaying ? 'stop' : 'play', onClick: () => actions.togglePlay() },
     ]);
   }

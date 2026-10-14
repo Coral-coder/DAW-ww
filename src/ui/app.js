@@ -10,6 +10,7 @@ import { createHeader } from './header.js';
 import { installKeyboard } from './keyboard.js';
 import { installAutomationRecorder } from './automation-recorder.js';
 import { installEngineUi } from './engine-ui.js';
+import { installPrebake } from './prebake-ui.js';
 
 export const VIEWS = [
   { id: 'arrange', label: 'Arrange', icon: 'timeline', key: '1', module: './views/arrange.js', factory: 'createArrangeView', help: 'Timeline: place pattern & audio clips into a full song.' },
@@ -73,6 +74,7 @@ export function createCore() {
   app.requestRender = () => schedule('project', 'refresh');
 
   app.actions = createActions(app);
+  installPrebake(app); // prebake helper libraries (user + project), evaluated before every code evaluation
   import('./plugins-dialog.js').then((m) => m.installPluginUi(app)).catch((e) => console.warn('[plugins] UI', e)); // SoundFont / Faust / WAM plugins
   return app;
 }

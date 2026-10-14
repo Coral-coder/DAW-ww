@@ -158,6 +158,13 @@ export function normalizeProject(p) {
   out.buses = (p.buses || base.buses).map((b) => ({ ...b, fx: b.fx || [], automation: Array.isArray(b.automation) ? b.automation.map(normalizeLane) : [] }));
   out.samples = p.samples || {};
   out.markers = p.markers || [];
+  // prebake helper libraries the project's code needs (src/code/prebake.js): [{name, url}] / [{name, code}]
+  if (p.prebake !== undefined) {
+    out.prebake = (Array.isArray(p.prebake) ? p.prebake : [])
+      .filter((x) => x && typeof x === 'object' && ((typeof x.url === 'string' && /^https?:\/\//.test(x.url)) || (typeof x.code === 'string' && x.code.trim())))
+      .map((x) => (typeof x.url === 'string' && /^https?:\/\//.test(x.url) ? { name: String(x.name || x.url), url: x.url } : { name: String(x.name || 'Pasted prebake'), code: x.code }));
+    if (!out.prebake.length) delete out.prebake;
+  }
   // tempo map / meter changes (src/time): optional; legacy DAWproject fields migrate into them
   migrateLegacyTempo(out);
   return out;

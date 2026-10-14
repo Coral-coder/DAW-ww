@@ -20,7 +20,7 @@
 // without a count; sounds superdough doesn't have) is repaired / substituted and reported; summary.parts lists
 // every part found and what became of it (a part with no notes is visible there).
 import { evaluate, queryEvents, loadStrudel, codeEngine } from './strudel.js';
-import { strudelModules } from './strudel-real.js';
+import { strudelModules, prebakeGlobals } from './strudel-real.js';
 import { noteToMidi } from './theory.js';
 import { SCALES } from '../theory/scales.js';
 import { drumKey } from './convert.js';
@@ -452,6 +452,29 @@ const STRUDEL_PARAM_RENAME = { fmi: 'fm' };
  * -> { error?, bpm, cps, beatsPerCycle, cycles, sections, arranged, tracks: [TrackInfo], warnings }
  */
 export function analyzeStrudel(code, opts = {}) {
+  // orbit mute / solo helpers of a prebake (mute(2) / solo(1) + .o(n), reading mutedOrbits / soloedOrbits when
+  // queried): every part is analysed as if nothing were muted; the calls become track mute / solo
+  const G = prebakeGlobals();
+  const orbitFns = ['mute', 'solo', 'soloOrbit'].filter((k) => typeof G[k] === 'function');
+  if (!orbitFns.length || !Array.isArray(G.mutedOrbits)) return analyze(code, opts);
+  const saved = { mute: G.mute, solo: G.solo, soloOrbit: G.soloOrbit, mutedOrbits: G.mutedOrbits, soloedOrbits: G.soloedOrbits };
+  const rec = { muted: [], soloed: [] };
+  G.mutedOrbits = [];
+  if (Array.isArray(G.soloedOrbits)) G.soloedOrbits = [];
+  if (G.mute) G.mute = (...o) => { rec.muted = o.flat().map(Number); };
+  if (G.solo) G.solo = (...o) => { rec.soloed = o.flat().map(Number); };
+  if (G.soloOrbit) G.soloOrbit = (...o) => { rec.soloed = o.flat().map(Number); };
+  try {
+    const a = analyze(code, opts);
+    if (!a.error && (rec.muted.length || rec.soloed.length)) a.orbitState = rec;
+    return a;
+  } finally {
+    Object.assign(G, { mute: saved.mute, solo: saved.solo, soloOrbit: saved.soloOrbit, mutedOrbits: rec.muted.length ? rec.muted : saved.mutedOrbits, soloedOrbits: rec.soloed.length ? rec.soloed : saved.soloedOrbits });
+    for (const k of ['mute', 'solo', 'soloOrbit']) if (saved[k] === undefined) delete G[k];
+  }
+}
+
+function analyze(code, opts) {
   const bpc = opts.beatsPerCycle || 4;
   if (codeEngine() !== 'strudel') return { error: 'The Strudel engine is not loaded' };
   // TidalCycles-isms (C'min7, |+, .arp("pinkyup") …) -> valid Strudel; the repaired code is what gets stored
@@ -1270,6 +1293,23 @@ export function splitStrudelToProject(project, code, opts = {}) {
     }
   }
   for (const { info } of built) summary.lanes += info.automation.length;
+
+  // ---- orbit mute / solo (prebake helpers): the parts on a muted orbit are muted tracks, soloed orbits solo
+  if (a.orbitState) {
+    const { muted = [], soloed = [] } = a.orbitState;
+    for (const b of built) {
+      if (muted.includes(b.orbit)) { b.track.mute = true; b.info.muted = true; }
+      if (soloed.length && soloed.includes(b.orbit)) { b.track.solo = true; b.info.soloed = true; }
+    }
+    if (muted.length) report.notes.push(`mute(${muted.join(', ')}) — the tracks on orbit ${muted.join(' / ')} are muted`);
+    if (soloed.length) report.notes.push(`solo(${soloed.join(', ')}) — the tracks on orbit ${soloed.join(' / ')} are soloed`);
+  }
+  // ---- prebake helper libraries the code uses travel with the project
+  if (opts.prebake?.length) {
+    const have = new Set((project.prebake || []).map((r) => r.url || r.code));
+    project.prebake = [...(project.prebake || []), ...opts.prebake.filter((r) => !have.has(r.url || r.code))];
+    summary.prebake = opts.prebake.map((r) => r.name);
+  }
 
   // ---- markers per arrange() section
   if (a.arranged) project.markers = a.sections.map((s) => ({ id: uid('mk'), beat: s.start * bpc, name: s.name }));
