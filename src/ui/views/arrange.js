@@ -490,6 +490,8 @@ export function createArrangeView(app) {
     peaks.set(sampleId, e);
     if (!engine.decodeSample) { e.status = 'error'; e.failedAt = performance.now(); return e; }
     Promise.resolve().then(() => engine.decodeSample(sampleId)).then((buf) => {
+      // long samples stream (engine/stream): their overview comes from the PCM cache, no buffer in memory
+      if (buf?.streamed && buf.peaks) { Object.assign(e, { status: 'ready', ...buf.peaks }); invalidate(); return; }
       if (!buf || !buf.getChannelData) throw new Error('no buffer');
       const n = buf.length;
       const bucket = 256;
@@ -1539,9 +1541,11 @@ export function createArrangeView(app) {
         el.classList.toggle('selected', selected);
         el.classList.toggle('is-muted', !!t.mute);
         if (name.textContent !== t.name) name.textContent = t.name;
-        const icn = typeIcon(t);
+        const frozen = !!t.frozen?.sampleId;
+        el.classList.toggle('is-frozen', frozen);
+        const icn = frozen ? 'snow' : typeIcon(t);
         if (ic.dataset.icon !== icn) { ic.dataset.icon = icn; ic.replaceChildren(icon(icn, 14)); }
-        ic.title = typeName(t);
+        ic.title = frozen ? `${typeName(t)} — frozen (plays its rendered audio; unfreeze from the track menu to edit)` : typeName(t);
         mute.setValue(!!t.mute);
         solo.setValue(!!t.solo);
         arm.setValue(!!t.arm);
@@ -2540,5 +2544,14 @@ export function createArrangeView(app) {
     },
     // exposed for automation / other views
     revealAutomation, zoomToFit, revealRange, scenesToArrangement: (o) => scenesToArrangement(app, o), getState: () => ({ ppb, laneH, headW, tool, snapMode, stale }),
+    // geometry for collaboration overlays (src/collab/overlay.js): content coords = beat * ppb, row y
+    collabGeom: () => {
+      const L = rowsLayout();
+      return {
+        kind: 'arrange', scroller, ppb, laneH,
+        rowOf: (trackId) => { const r = L.rows.find((x) => x.t.id === trackId); return r ? { y: r.y, h: laneH } : null; },
+        trackAt: (y) => { const i = rowAt(L, y); return L.rows[i]?.t.id || null; },
+      };
+    },
   };
 }

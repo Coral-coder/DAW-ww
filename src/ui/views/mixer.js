@@ -4,6 +4,7 @@
 // control never rebuilds the DOM. One rAF loop drives every meter while visible.
 import { h, icon, startDrag, fitCanvas, clear } from '../dom.js';
 import { knob, contextMenu, promptText, confirmDialog, button, iconButton, markAuto, touchStart, touchEnd } from '../components.js';
+import { freezeButton } from '../engine-ui.js';
 import { createBus, createEffect } from '../../core/model.js';
 import { clamp, dbToGain, gainToDb } from '../../core/util.js';
 import { EFFECT_DEFS, INSTRUMENT_DEFS, PRESETS, DRUM_KITS } from '../../audio/index.js';
@@ -119,7 +120,8 @@ export function createMixerView(app) {
   function signature(p) {
     return JSON.stringify([
       prefs.narrow, prefs.showBuses,
-      p.tracks.map((t) => [t.id, t.name, t.color, t.type, t.instrument?.type, t.instrument?.preset, fxSig(t.fx), isPatchActive(t) ? patchFxOrder(t).join(',') : 0]),
+      p.tracks.map((t) => [t.id, t.name, t.color, t.type, t.instrument?.type, t.instrument?.preset, fxSig(t.fx), isPatchActive(t) ? patchFxOrder(t).join(',') : 0, t.frozen ? `${t.frozen.sampleId}:${t.frozen.mode}` : 0]),
+      p.bpm, p.mode, // (a frozen track goes stale with tempo / mode)
       p.buses.map((b) => [b.id, b.name, fxSig(b.fx)]),
       fxSig(p.master.fx),
     ]);
@@ -435,9 +437,10 @@ export function createMixerView(app) {
 
     const fad = faderSection({ value: t.volume, color: t.color, title: `${t.name} volume`, auto: { owner: t.id }, onChange: (v, { final }) => { if (final && same(trackOf(t.id)?.volume, v)) return; editTrack(t.id, `Volume ${t.name}`, (tt) => { tt.volume = v; }, !final); } });
 
-    const el = h('div.mx-strip.mx-track', { dataset: { id: t.id }, style: { '--strip-color': t.color } },
+    const frz = freezeButton(app, t); // engine-ui.js
+    const el = h(`div.mx-strip.mx-track${t.frozen?.sampleId ? '.is-frozen' : ''}`, { dataset: { id: t.id }, style: { '--strip-color': t.color } },
       head, inserts, sendsSec, pan.el,
-      h('div.mx-btns', mute, solo, arm),
+      h('div.mx-btns', mute, solo, arm, frz),
       fad.area,
       h('div.mx-foot', fad.readout, fad.peakEl));
     return { kind: 'track', id: t.id, el, pan: pan.knob, panVal: pan.panVal, mute, solo, arm, sends, setVolume: fad.setVolume, meterState: fad.meterState, reset: fad.reset };

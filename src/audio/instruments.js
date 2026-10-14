@@ -122,10 +122,25 @@ export class Instrument {
   allNotesOff(time) { try { this.engine.allNotesOff(time); } catch (e) { warn(e); } }
   /** Plugin instruments (soundfont/faust/wam): resolves true when playable, false on failure. Built-ins: null. */
   get ready() { return this._fallbackReady || (this.engine?.ready ?? null); }
+  /** Processing latency (s): the def's manual `latency` (samples) or what the engine / plugin reports (PDC). */
+  get latency() {
+    const man = Number(this.def?.latency);
+    if (Number.isFinite(man) && man >= 0 && this.def?.latency != null) return man / this.ctx.sampleRate;
+    const l = Number(this.engine?.latency);
+    return Number.isFinite(l) && l > 0 ? l : 0;
+  }
   /** User-facing load error of a plugin instrument (null when fine or when the fallback preset is playing). */
   get error() { return this.fallbackActive ? null : (this.engine?.error ?? null); }
   /** value -1..1 (synth only; others ignore). */
   pitchBend(value, time) { try { this.engine.pitchBend?.(value, time); } catch (e) { warn(e); } }
+  /** Per-note expression of a held note (MPE): { bend (semitones), pressure 0..1, timbre 0..1 }. Engines without
+   * per-voice support fall back to channel pitch bend for the bend. */
+  noteExpression(pitch, x, time) {
+    try {
+      if (this.engine.noteExpression) this.engine.noteExpression(pitch, x, time);
+      else if (x && Number.isFinite(x.bend)) this.engine.pitchBend?.(x.bend / Math.max(1, this.engine.params?.bendRange || 2), time);
+    } catch (e) { warn(e); }
+  }
   /** Number of currently allocated voices (for meters/debug). */
   get activeVoices() { return this.engine ? [...this.engine.voices].filter((v) => !v.done).length : 0; }
   dispose() { try { this.engine?.dispose(); } catch (e) { warn(e); } this.engine = null; }

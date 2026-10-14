@@ -16,6 +16,13 @@ import { renderOffline as renderOfflineImpl, decodeSampleData, findSampleIdByNam
 import { prefetchCodeSamples } from './code-instrument.js';
 import { activeLanes, automationOwner, valueAt } from '../core/automation.js';
 import { nativeAudioForEngine } from '../native/client.js';
+import { createFreezeGuard } from '../core/freeze.js';
+import * as freeze from './freeze.js';
+import { EngineMonitor } from './monitor.js';
+import { SampleStreamer } from './stream/streamer.js';
+
+/** Sample rates offered in the UI (the device / browser decides what actually works). */
+export const SAMPLE_RATES = [44100, 48000, 88200, 96000];
 
 export class AudioEngine extends Emitter {
   constructor(store) {
@@ -45,6 +52,10 @@ export class AudioEngine extends Emitter {
       if (res.ok && this._daw3Code(trackId)) prefetchCodeSamples(this.ctx, this.codeCache.entries.get(trackId)?.evaluated).catch(() => {});
       else this.emit('code-error', { trackId, error: res.error });
     });
+    this.sampleRate = null; // preferred AudioContext sample rate (null = device default), see setSampleRate()
+    this.monitor = new EngineMonitor(this);
+    this.streamer = null; // long-audio streaming (stream/streamer.js), created with the context when supported
+    this._unguard = store.addGuard ? store.addGuard(createFreezeGuard()) : null; // frozen tracks: edits blocked
     this._unsubs = [
       store.on('change', (p) => this._onChange(p)),
       store.on('load', (p) => this._onLoad(p)),
@@ -67,9 +78,19 @@ export class AudioEngine extends Emitter {
     this._initPromise = (async () => {
       const AC = globalThis.AudioContext || globalThis.webkitAudioContext;
       if (!AC) throw new Error('Web Audio API is not supported in this browser');
-      // Mac app: the native audio engine (device / rate / buffer size from Audio Settings) — null in browsers
+      // Mac app: the native audio engine (device / rate / buffer size from Audio Settings) — null in browsers;
+      // its context options win over the in-browser sample-rate choice
       const native = await nativeAudioForEngine().catch(() => null);
-      const ctx = new AC({ latencyHint: 'interactive', ...(native?.contextOptions() || {}) });
+      const nativeOpts = native?.contextOptions() || {};
+      let ctx;
+      try {
+        ctx = new AC({ latencyHint: 'interactive', ...(this.sampleRate ? { sampleRate: this.sampleRate } : {}), ...nativeOpts });
+      } catch (e) {
+        // the device / browser refused the rate: fall back to its default
+        this._error(new Error(`Sample rate ${this.sampleRate} Hz is not available (${e?.message || e}) — using the device default.`));
+        this.sampleRate = null;
+        ctx = new AC({ latencyHint: 'interactive', ...nativeOpts });
+      }
       this.ctx = ctx;
       this.native = native;
       const destination = native ? await native.attachOutput(ctx).catch(() => ctx.destination) : ctx.destination;
@@ -79,7 +100,11 @@ export class AudioEngine extends Emitter {
         getBeatAt: (t) => this.scheduler?.beatAt(t) ?? null,
         getSampleBuffer: (id) => this.getSampleBuffer(id),
         getSampleByName: (name) => this.getSampleByName(name),
+        getSampleStream: (id) => this.streamer?.handle(id) || null,
+        isStreamed: (id) => this._streams(id),
+        playStream: (meta, dest, when, off, dur) => this.streamer.play(meta, dest, when, off, dur),
         onError: (e) => this._error(e),
+        onLatency: (pdc) => this.emit('latency', this.getLatency()),
       });
       this.scheduler = new Scheduler({
         ctx,
@@ -88,15 +113,19 @@ export class AudioEngine extends Emitter {
         dispatch: (ev, time, spb) => this.graph.playEvent(ev, time, spb),
         onError: (e) => this._error(e),
         onWrap: (time) => this.graph.syncLfos(time),
-        onWindow: (project, b0, b1, t0, spb, jump) => this._automateWindow(project, b0, b1, t0, spb, jump),
+        onWindow: (project, b0, b1, t0, spb, jump, pre) => this._automateWindow(project, b0, b1, t0 - (pre || 0), spb, jump),
         onTick: (project) => this._automateTick(project),
+        getPreroll: () => this.graph?.latency || 0, // plugin delay compensation (see latency.js)
       });
       try { this.graph.sync(this.project); } catch (e) { this._error(e); }
       for (const [id, e] of this.codeCache.entries) if (this._daw3Code(id)) prefetchCodeSamples(ctx, e.evaluated).catch(() => {});
       if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      this.streamer = SampleStreamer.supported(ctx) ? new SampleStreamer(ctx, { onError: (e) => this._error(e) }) : null;
       this._sampleKeys = '';
       this._syncSamples(this.project);
+      this.monitor.start();
       this.emit('ready');
+      this.emit('context', ctx);
       return this;
     })();
     return this._initPromise;
@@ -133,15 +162,40 @@ export class AudioEngine extends Emitter {
     this._sampleKeys = k;
     const live = new Set(keys);
     for (const id of [...this.buffers.keys()]) if (!live.has(id)) this.buffers.delete(id);
-    if (this.ctx) for (const id of keys) if (!this.buffers.has(id)) this.decodeSample(id).catch(() => {});
+    if (!this.ctx) return;
+    for (const id of keys) {
+      // long samples stream from the PCM cache (no AudioBuffer); everything else is decoded up front
+      if (this._streams(id)) {
+        this.streamer.prepare(id, project.samples[id]).then(() => this.emit('samples', { id, streamed: true }),
+          () => { if (this.project.samples?.[id]) this.decodeSample(id, { full: true }).catch(() => {}); }); // fall back to memory
+      }
+      else if (!this.buffers.has(id)) this.decodeSample(id).catch(() => {});
+    }
+  }
+
+  /** Does this sample stream (long + streaming supported here)? Audio clips then play it via the streamer. */
+  _streams(id) {
+    const s = this.project.samples?.[id];
+    return !!(this.streamer && s && !this.buffers.has(id) && this.streamer.streams(id, s));
   }
 
   // ------------------------------------------------------------------ samples
+  /** Fully decoded AudioBuffer of a sample (instruments, previews). Starts decoding and returns null when missing. */
   getSampleBuffer(id) {
     if (!id) return null;
     const b = this.buffers.get(id);
     if (b) return b;
-    if (this.project.samples?.[id] && !this._failedSamples.has(id)) this.decodeSample(id).catch(() => {});
+    if (this.project.samples?.[id] && !this._failedSamples.has(id)) this.decodeSample(id, { full: true }).catch(() => {});
+    return null;
+  }
+
+  /**
+   * Waveform overview of a sample without holding its PCM: { bucketSec, min: Float32Array, max, duration } | null.
+   * Streamed samples have it from the PCM cache; decoded ones are computed from the buffer.
+   */
+  getSamplePeaks(id) {
+    const m = this.streamer?.handle(id);
+    if (m?.peaks) return { bucketSec: m.peaks.bucket / m.sampleRate, min: m.peaks.min, max: m.peaks.max, duration: m.duration };
     return null;
   }
 
@@ -150,9 +204,18 @@ export class AudioEngine extends Emitter {
     return id ? this.getSampleBuffer(id) : null;
   }
 
-  /** Decode (and cache) a project sample. Resolves to the AudioBuffer. */
-  decodeSample(id) {
+  /**
+   * Decode (and cache) a project sample. Resolves to the AudioBuffer — or, for a long sample that streams (and
+   * opts.full is not set), to a light info object { duration, length, sampleRate, numberOfChannels, streamed: true,
+   * peaks } without PCM (use engine.getSamplePeaks for drawing).
+   */
+  decodeSample(id, opts = {}) {
     if (this.buffers.has(id)) return Promise.resolve(this.buffers.get(id));
+    if (!opts.full && this._streams(id)) {
+      return this.streamer.prepare(id, this.project.samples[id]).then((m) => ({
+        duration: m.duration, length: m.frames, sampleRate: m.sampleRate, numberOfChannels: m.channels, streamed: true, peaks: this.getSamplePeaks(id),
+      }), () => this.decodeSample(id, { full: true }));
+    }
     if (this._decoding.has(id)) return this._decoding.get(id);
     const sample = this.project.samples?.[id];
     if (!sample) return Promise.reject(new Error(`Unknown sample ${id}`));
@@ -206,6 +269,7 @@ export class AudioEngine extends Emitter {
   // Automation plays in SONG mode only. Mixer targets are AudioParam ramps scheduled per
   // scheduler window; instrument params are evaluated at each window start (so the notes of
   // that window get them) and effect params at the audible position on every tick.
+  // t0 = dispatch time of beat b0 (heard time minus the PDC pre-roll)
   _automateWindow(project, b0, b1, t0, spb, jump) {
     if (project.mode !== 'song') { this._endAutomation(project); return; }
     project = this._withoutOverrides(project);
@@ -414,6 +478,18 @@ export class AudioEngine extends Emitter {
     try { inst.noteOff(pitch, this.ctx.currentTime); } catch (e) { this._error(e); }
   }
 
+  /** Live pitch bend (-1..1) of a track's instrument (MIDI controllers; instruments without bend ignore it). */
+  pitchBend(trackId, value) {
+    const inst = this.graph?.getInstrument(trackId);
+    if (inst && this.ctx) inst.pitchBend(value, this.ctx.currentTime);
+  }
+
+  /** Per-note expression of a held live note (MPE): { bend (semitones), pressure 0..1, timbre 0..1 }. */
+  noteExpression(trackId, pitch, x) {
+    const inst = this.graph?.getInstrument(trackId);
+    if (inst && this.ctx) inst.noteExpression?.(pitch, x, this.ctx.currentTime);
+  }
+
   /** One-shot preview (e.g. clicking a step / piano-roll note). durBeats at current tempo. */
   async previewNote(trackId, pitch, vel = 0.8, durBeats = 0.5) {
     await this.init();
@@ -456,6 +532,82 @@ export class AudioEngine extends Emitter {
     });
   }
 
+  // ------------------------------------------------------------------ freeze / bounce (see audio/freeze.js)
+  /** Render a track (instrument + inserts | + fader) to audio and play that instead. opts: {mode:'preFx'|'postFx'|'postFader'} */
+  freezeTrack(trackId, opts) { return freeze.freezeTrack(this, trackId, opts); }
+  unfreezeTrack(trackId) { return freeze.unfreezeTrack(this, trackId); }
+  /** Bounce to a new audio track (song mode). opts: {mode='postFader', muteSource=true} -> new track id */
+  bounceTrack(trackId, opts) { return freeze.bounceTrack(this, trackId, opts); }
+  /** Replace the track by an audio track of its own render (destructive, undoable). opts: {mode='postFx'} */
+  flattenTrack(trackId, opts) { return freeze.flattenTrack(this, trackId, opts); }
+  /** Render one track to an AudioBuffer without changing the project. -> {buffer, info} */
+  renderTrack(trackId, opts = {}) {
+    return freeze.renderTrack(this.project, trackId, { sampleRate: this.ctx?.sampleRate || 44100, sampleCache: this.buffers, onError: (e) => this._error(e), ...opts });
+  }
+
+  // ------------------------------------------------------------------ latency / health
+  /**
+   * Plugin delay compensation report: { enabled, total (s, whole-mix pre-roll), align, tracks: {id: s}, buses, master }
+   * (null before init). engine.on('latency', report) fires when it changes.
+   */
+  getLatency() { return this.graph ? this.graph.latencyReport() : null; }
+
+  /** Status-bar metrics (see monitor.js): { load, peakLoad, xruns, late, lateEvents, lateMs, latencyMs, pdcMs, sampleRate, state } */
+  getMetrics() { return this.monitor.read(); }
+
+  /**
+   * Panic: silence everything now — all notes off on every instrument / code track, held live notes released,
+   * audition stopped, and the master output briefly muted so effect tails (reverb, delay feedback) die at once.
+   * The transport keeps running.
+   */
+  panic() {
+    this._held.clear();
+    this.stopAudition();
+    if (!this.graph || !this.ctx) return;
+    const t = this.ctx.currentTime;
+    try { this.graph.allNotesOff(t); } catch (e) { this._error(e); }
+    for (const i of this.graph.strudelInstruments?.() || []) { try { i.hush?.(); } catch { /* */ } }
+    const g = this.graph.out.gain;
+    try {
+      g.cancelScheduledValues(t);
+      g.setValueAtTime(g.value, t);
+      g.linearRampToValueAtTime(0, t + 0.01);
+      g.setValueAtTime(0, t + 0.6);
+      g.linearRampToValueAtTime(1, t + 0.65);
+    } catch { /* */ }
+    this.emit('panic');
+  }
+
+  /**
+   * Switch the AudioContext sample rate (44100 / 48000 / 96000 … or null = device default). Rebuilds the context
+   * and the mix graph; playback resumes where it was. Rejects / falls back if the device refuses the rate.
+   */
+  async setSampleRate(rate) {
+    rate = rate ? Number(rate) : null;
+    if (rate === this.sampleRate && (!this.ctx || !rate || this.ctx.sampleRate === rate)) return this.ctx?.sampleRate ?? null;
+    this.sampleRate = rate;
+    if (!this.ctx) return null;
+    const wasPlaying = this._playing;
+    const pos = this.getPosition();
+    if (wasPlaying) this.pause();
+    this.stopAudition();
+    try { this.graph?.dispose(); } catch { /* */ }
+    try { this.streamer?.dispose(); } catch { /* */ }
+    const old = this.ctx;
+    this.ctx = null;
+    this.graph = null;
+    this.scheduler = null;
+    this.streamer = null;
+    this._initPromise = null;
+    await old.close().catch(() => {});
+    this.monitor.reset();
+    await this.init();
+    this._pos = pos;
+    if (wasPlaying) await this.play();
+    this.emit('samplerate', this.ctx.sampleRate);
+    return this.ctx.sampleRate;
+  }
+
   // ------------------------------------------------------------------ misc
   _error(e) {
     const msg = String(e?.message || e);
@@ -469,6 +621,9 @@ export class AudioEngine extends Emitter {
 
   async dispose() {
     this.stop();
+    this.monitor.stop();
+    this._unguard?.();
+    try { this.streamer?.dispose(); } catch { /* */ }
     this._unsubs.forEach((u) => u());
     this.graph?.dispose();
     if (this.ctx) await this.ctx.close().catch(() => {});

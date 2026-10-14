@@ -64,6 +64,7 @@ class WamBase {
     this.url = null;
     this.offline = typeof OfflineAudioContext !== 'undefined' && ctx instanceof OfflineAudioContext;
     this.ready = Promise.resolve(false);
+    this.latency = 0; // seconds (WAM getCompensationDelay), see _build
   }
 
   get key() { return 'wam:' + this.url; }
@@ -99,6 +100,11 @@ class WamBase {
       this.node = instance.audioNode;
       if (this.p.state) { try { await this.node.setState?.(this.p.state); } catch { /* not all plugins support it */ } }
       this._connect();
+      // PDC: WAM 2 nodes report their processing delay in samples
+      try {
+        const frames = Number(await Promise.race([Promise.resolve(this.node.getCompensationDelay?.()), new Promise((r) => setTimeout(() => r(0), 1000))])) || 0;
+        this.latency = frames > 0 ? frames / this.ctx.sampleRate : 0;
+      } catch { this.latency = 0; }
       const d = instance.descriptor || {};
       if (!this.offline) {
         setStatus(key, { state: 'ready', progress: 1, message: d.name || 'Loaded', info: { name: d.name, vendor: d.vendor, isInstrument: d.isInstrument, hasGui: true } });

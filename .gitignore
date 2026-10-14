@@ -6,3 +6,4 @@ node_modules/
 dist/
 desktop/native/third_party/*/
 desktop/native/build/
+*.whl

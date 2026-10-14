@@ -16,6 +16,7 @@ src/
   audio/             Web Audio engine: instruments, drum synth, sampler, effects, scheduler, render
   io/                project save/load, MIDI import/export, WAV encode, autosave
   ui/                views & components
+  collab/            real-time collaboration (CRDT, WebRTC, presence) + versions — docs/COLLAB.md
 tests/               node:test unit tests (*.test.js)
 ```
 
@@ -370,14 +371,143 @@ esbuild (build time only; it applies three small, checked superdough patches —
 * Scheduling: lookahead scheduler (25 ms timer, ~120 ms horizon). Same event-collection code is
   reused for offline rendering via `OfflineAudioContext`.
 
+## Pro engine (PDC, freeze, export quality, streaming, recovery, health) — APIs for other features
+
+**Plugin delay compensation** (`src/audio/latency.js` pure, `mixer.js`, `scheduler.js`, `render.js`)
+* Every insert effect exposes `fx.latency` (s, constant whether bypassed — the bypass path is delayed to match) and
+  `fx.refreshLatency()`; instruments expose `instrument.latency`. Sources: Chromium-measured table
+  (`effectLatencyFrames(def, sr)`: compressor / limiter 6 ms pre-delay, gate 4 ms, tape 12 ms + 2x oversampling,
+  distortion / saturator oversampling, mastering), plugin-reported (WAM `getCompensationDelay()`), or a manual
+  `latency` (samples) on any effect / instrument def (Faust, odd plugins).
+* `computePdc({sampleRate, enabled, tracks:[{id, latency, sends}], buses, master})` → per-route compensation. The
+  `MixGraph` puts `DelayLink`s on each track→master link and each send link (`ChannelStrip.setCompensation`) so
+  every route meets at the master input; `graph.latency` = whole-mix delay, `graph.latencyReport()`,
+  `graph.updatePdc()` (also called when a plugin reports its latency). Plugboard: longest in→out path.
+* Realtime: the scheduler pre-rolls every event by `graph.latency` (`getPreroll`); anchors / `beatAt` /
+  `getPosition` / `engine.beatAtTime(t)` stay in *heard* time, so recording alignment (item 2) needs no change.
+  Fader automation is timed per strip (`faderOffsets`); the metronome joins after the master section.
+  Offline: the render is padded (`PDC_PAD` = 1 s) and the head trimmed → sample-identical to a latency-free graph.
+* `project.pdc === false` turns compensation off (old behaviour). `engine.getLatency()`, `engine.on('latency')`.
+
+**Freeze / bounce** (`src/core/freeze.js` pure, `src/audio/freeze.js`)
+* `track.frozen = {sampleId, mode:'preFx'|'postFx'|'postFader', renderMode:'song'|'pattern', start, length, loop?,
+  gain, bpm, at}`; the original track stays intact. `frozenMode(project, track)` says whether the freeze is in effect
+  (sample present, same transport mode, same tempo — else the track plays live again; `frozenStaleReason`).
+* While frozen the mixer instantiates no instrument / code source and (postFx/postFader) no inserts; the scheduler
+  emits the render as an audio clip (song) or a seamless loop (pattern). postFader bypasses volume / pan.
+* `engine.freezeTrack(id, {mode})`, `engine.unfreezeTrack(id)`, `engine.bounceTrack(id, {mode='postFader',
+  muteSource=true})` → new audio track id, `engine.flattenTrack(id, {mode='postFx'})`, `engine.renderTrack(id, opts)`
+  → `{buffer, info}`. Renders are 24-bit TPDF-dithered WAV samples (`sample.frozen` flag), peak-normalised with the
+  level restored by `frozen.gain` / clip gain.
+* Edits are blocked by a store guard (`createFreezeGuard`, `Store.addGuard`): a transaction changing a frozen
+  track's sound (notes, clips, instrument, inserts, code, fader for postFader) is rolled back for that track and
+  `store.on('blocked', {message})` fires (UI: toast with `FROZEN_HINT`). `store.transact(label, fn, {guard:false})`
+  skips guards (whole-project restores).
+* UI: track menu ▸ Freeze / Freeze… / Bounce / Flatten (`app.freezeMenuItems`), mixer ❄ button, arrange ❄ badge.
+
+**Export quality** (`src/io/wav.js`, re-exported by `src/audio/wav.js`; `src/audio/dsp/truepeak.js`)
+* `encodeWav(buffers, {bitDepth: 16|24|32, dither: 'none'|'tpdf', noiseShaping: 'none'|'first'|'shaped', seed,
+  sampleRate})` — buffers = AudioBuffer | Float32Array[] | {channels, sampleRate}. 32 = bit-exact float (overs kept);
+  integer formats clamp after dither (never wrap). `decodeWav`, `wavInfo`, `readWavFrames` (range decode).
+* `truePeak(channels)`, `truePeakDb`, `limitTruePeak(channels, sr, {ceilingDb=-1, lookahead, release})` — offline
+  look-ahead true-peak limiter (no latency). `renderOffline(..., {truePeakCeiling: -1})` applies it to the master;
+  `applyTruePeakLimit(audioBuffer, opts)`. The render path is float32 end to end. (Export UI: item 4.)
+
+**Long-audio streaming** (`src/audio/stream/*`)
+* Samples ≥ `STREAM_MIN_SECONDS` (30 s) are not decoded into AudioBuffers for clip playback: `SampleStreamer`
+  caches PCM chunks (32768 frames) in IndexedDB `daw3-pcm` via a module Worker (`stream-worker.js`; WAV parsed in
+  the worker, other formats decoded once with decodeAudioData and handed over), and each clip play is an
+  AudioWorkletNode `daw3-stream` (`stream-processor.js`) fed chunk by chunk over a MessagePort (3 chunks ahead,
+  linear resampling when rates differ, silence + underrun count when late). Short samples, offline renders and
+  browsers without AudioWorklet / module workers / IndexedDB use buffers. `engine.decodeSample(id)` returns a light
+  `{duration, streamed: true, peaks}` object for streamed samples (`{full: true}` forces a buffer);
+  `engine.getSamplePeaks(id)` gives the waveform overview.
+
+**Crash-safe autosave / recovery / history** (`src/io/recovery.js`, UI in `src/ui/engine-ui.js`)
+* `createRecovery({backend})`: incremental snapshots to IndexedDB `daw3-recovery` (project JSON without samples;
+  each sample stored once by content key) every 10 s when changed, on tab hide and on pagehide; sessions carry a
+  heartbeat and are marked clean on pagehide. On boot `findUnclean()` → "Recover unsaved session (time)" dialog.
+  `listSnapshots(projectId)` (last 20 per project), `loadSnapshot(id)`; main menu ▸ Version history… restores as
+  one undoable step (`restoreProject`). The older whole-project autosave (`autosave.js`) is unchanged.
+
+**Engine health** (`src/audio/monitor.js`, `engine.js`)
+* `engine.getMetrics()` → `{load, peakLoad, xruns, late, lateEvents, lateMs, latencyMs, pdcMs, sampleRate, state}`
+  (load from `AudioContext.renderCapacity` where available; xruns from `playoutStats` or audio-clock drift;
+  scheduler lateness / skipped windows). Status bar: DSP / dropouts / latency + PDC, sample-rate select, Panic.
+* `engine.panic()` (all notes off + 0.6 s master mute to kill tails; Shift+Esc), `engine.setSampleRate(rate|null)`
+  (rebuilds the context, resumes playback; `SAMPLE_RATES`; preference in localStorage `daw3-sample-rate`; emits
+  `'samplerate'` and `'context'` — anything holding nodes of the old context, e.g. the recorder, must rebind).
+
 ## IO (`src/io/*.js`)
 
 * `project-file.js`: `serializeProject(project) -> string`, `parseProjectFile(text) -> project` (validates, normalizes),
   `downloadProject(project)`, `readFileAsProject(file)`.
 * `midi.js`: `exportMidi(project, {mode}) -> Uint8Array`, `importMidi(arrayBuffer) -> {bpm, tracks:[{name, notes, isDrums}]}`.
-* `wav.js`: `encodeWav(audioBuffer, {bitDepth:16|24|32}) -> ArrayBuffer`.
+* `wav.js`: `encodeWav(buffers, {bitDepth:16|24|32, dither, noiseShaping}) -> ArrayBuffer`, `decodeWav` (see Pro engine).
+* `recovery.js`: crash-safe incremental snapshots, recovery and version history (see Pro engine).
 * `autosave.js`: IndexedDB autosave + list/restore of local projects.
 * `samples.js`: `fileToSample(file) -> Sample` (base64), `sampleToArrayBuffer(sample)`.
+* `interchange/*`: other-DAW formats — see "Interchange" below.
+
+## Interchange (`src/io/interchange/*` — pure except `ui.js`)
+
+Menu: File → Import / Export → *DAWproject…*, *For mixing engineer (stems + MIDI ZIP)…*, *MusicXML…*
+(`actions.interchange(fn)` lazy-loads `ui.js`; Open… also accepts `.dawproject`).
+
+* `zip.js`: `writeZip(entries) / readZip(bytes) / zipText` — store + deflate (method 8), CRC-checked, UTF-8 names,
+  no ZIP64. Deflate via `CompressionStream('deflate-raw')` when available, else `node:zlib`; a `{deflateRaw,
+  inflateRaw}` codec can be injected (tests use node:zlib). `xml.js`: `el()/toXml()` writer + small `parseXml()`
+  (no DOMParser needed — works in Node). `media.js`: WAV header info, mime/extension, safe names.
+* `dawproject.js` — [DAWproject 1.0](https://github.com/bitwig/dawproject) (Bitwig, Studio One, Cubase…):
+  `exportDawproject(project, {renders, sampleInfo}) -> {bytes, report}`, `importDawproject(bytes) -> {project, report}`.
+  * Tracks → `<Track><Channel>` (Volume linear 0..2, Pan normalized 0..1 ↔ −1..1, Mute, Solo), buses → `role="effect"`
+    channels with post-fader `<Send>`s, master → `role="master"`. Group (`submix`) tracks are flattened on import.
+  * Instruments / code tracks → `<BuiltinDevice deviceRole="instrument" deviceID="daw3.instrument.<type>">` named after
+    the preset, every number/enum/bool param as a `*Parameter` (automation targets) + a JSON State file
+    (`plugins/*.json`, `format: 'daw3-device'`) that restores the device exactly in daW³ (referenced samples are
+    exported with it). Compressor / Limiter / Gate / EQ (eq3, eq8) → the spec's generic `<Compressor>` /
+    `<Limiter>` / `<NoiseGate>` / `<Equalizer>` (ratio ↔ percent `1−1/r`); other effects → `BuiltinDevice audioFX`.
+  * Pattern clips → `<Clip playStart=offset loopStart=0 loopEnd=patternLength><Notes>` with the notes **unrolled**
+    over the played range: loop-aware and loop-ignoring importers both play the right notes; the importer keeps
+    `[loopStart, loopEnd)` as the pattern and dedupes identical clips into one shared pattern. Velocity = `vel`
+    (× clip gain). Audio clips → `<Clip contentTimeUnit="beats" fade*><Warps>` (beats → seconds at natural speed)
+    `<Audio><File path="audio/…">`; offsets / fades round-trip (`clip.fadeIn` / `clip.fadeOut` in beats, played by
+    `MixGraph._playAudioClip`). Code tracks export their rendered notes as one clip (State restores the code).
+  * Automation → `<Points><Target parameter=…>` in the owner's arrangement lane: volume, pan, mute, sends,
+    instrument / effect params, effect on/off. Step lanes (mute, on/off, enums) are written as switch points
+    (`stepPoints`, daW³ thresholds linear lanes); `hold` points import as vertical steps. Unmappable lanes
+    (plugboard cables, disabled lanes) are omitted and listed in `report.unmapped`.
+  * Tempo / meter → `<Transport>`; optional `project.tempoAutomation [{beat,bpm}]` / `project.timeSigAutomation
+    [{beat,num,den}]` ↔ `<TempoAutomation>` / `<TimeSignatureAutomation>` (kept on import, but daW³ plays the first
+    value — reported). Markers ↔ `<Markers>`.
+  * *Render instrument tracks to audio alongside MIDI*: `renders[trackId]` (post-insert, pre-fader, pre-master
+    renders from `stems.js` + `renderOffline`) become extra audio tracks `"<name> (audio)"` carrying the original
+    fader / pan / sends + their automation, tagged `comment="daw3:rendered-from:<id>"` — skipped when daW³ re-imports
+    its own file (the instrument is restored), kept otherwise.
+  * Import of foreign devices: instruments → nearest daW³ preset by device / track name and note range; effects by
+    name (reverb, delay, EQ, compressor…) with default settings; anything else stays a placeholder in
+    `track.foreignDevices` (written back as an unloaded device of the same kind on export). Everything approximate
+    or dropped (MIDI CC / expression automation, clip-launcher scenes, disabled clips, time-stretch, pre-fader sends,
+    group processing) goes into `report` (`summarizeReport` → toast, details dialog).
+* `stems.js` — "Export for mixing engineer": `stemVariant(project, trackId, {tap})` (`post-fader` = fader, pan,
+  automation, sends; `post-insert` = unity, centre, no sends; both bypass the master), `renderStems(project, {render})`
+  (one offline render per unmuted track with content, same `startBeat 0 … endBeat + tail` → identical lengths),
+  `buildMixBundle()` → `Name/README.txt` (BPM, meter, key, sample rate, bit depth, tap), `Stems/NN Track.wav`
+  (`encodeWav` at the chosen bit depth), `MIDI/Name.mid` (`exportMidi`), `Tempo map.txt`.
+* `musicxml.js` — MusicXML 4.0 partwise lead sheet: the melody track (role lead/vocal, else most monophonic & highest)
+  as a top-line skyline, quantized to 24 divisions per quarter (16ths, 32nds, triplets exact), split at barlines with
+  ties, notatable values via `splitDuration`; key signature from `project.key`; chord symbols (`<harmony>`, MusicXML
+  `kind` + `text`) from the project's harmony = the chords / pad track detected per beat (`harmonyChords`, bass from
+  the bass track); tempo, rehearsal marks for markers, velocities as `dynamics`. Import (`.musicxml`, `.xml`,
+  compressed `.mxl`): pitched notes (chords, ties, backup / forward, pickups) → one track + pattern per part;
+  chord symbols → an optional chords track. Percussion (unpitched) and timewise scores are not supported.
+* **AAF / OMF are out of scope.** Both are binary post-production containers (AAF = Microsoft Structured Storage
+  with an object model of several hundred classes; OMF 2 a legacy Avid binary) built for audio/video editorial
+  hand-off to Pro Tools / Media Composer: seconds-based timelines with audio and fades only — no notes, no musical
+  time, no instruments or devices. A faithful writer needs a compound-document (CFB) implementation plus the AAF
+  object model (or the AAF SDK, a native library), and what it can carry is a strict subset of the stems bundle and
+  DAWproject (audio regions + volume/pan). For post-production delivery use the stems bundle (sample-accurate,
+  identical lengths from 0:00) or DAWproject; Pro Tools users import the stems + MIDI.
 
 ## Plugins (`src/plugins/*`, browser runtime lazy-loaded)
 

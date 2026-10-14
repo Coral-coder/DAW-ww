@@ -9,6 +9,7 @@ import { createActions } from './actions.js';
 import { createHeader } from './header.js';
 import { installKeyboard } from './keyboard.js';
 import { installAutomationRecorder } from './automation-recorder.js';
+import { installEngineUi } from './engine-ui.js';
 
 export const VIEWS = [
   { id: 'arrange', label: 'Arrange', icon: 'timeline', key: '1', module: './views/arrange.js', factory: 'createArrangeView', help: 'Timeline: place pattern & audio clips into a full song.' },
@@ -149,6 +150,10 @@ export async function createApp(rootEl) {
     const narrow = window.matchMedia('(max-width: 1024px)');
     if (narrow.matches && ui.get('assistantOpen')) ui.set({ assistantOpen: false });
     narrow.addEventListener?.('change', (e) => { if (e.matches && ui.get('assistantOpen')) ui.set({ assistantOpen: false }); });
+    // phone width: the browser is an overlay drawer too (styles/main.css ≤ 820px)
+    const phone = window.matchMedia('(max-width: 820px)');
+    if (phone.matches && ui.get('browserOpen')) ui.set({ browserOpen: false });
+    phone.addEventListener?.('change', (e) => { if (e.matches && ui.get('browserOpen')) ui.set({ browserOpen: false }); });
   } catch { /* matchMedia unavailable */ }
 
   // ---- status bar ----
@@ -159,7 +164,7 @@ export async function createApp(rootEl) {
   const updateStatus = () => {
     const p = store.get();
     const pats = Object.keys(p.patterns).length;
-    statusRight.textContent = `${p.tracks.length} tracks · ${pats} patterns · ${p.clips.length} clips · ${engine.ctx ? (engine.ctx.sampleRate / 1000).toFixed(1) + ' kHz' : 'audio idle'} · ${store.canUndo() ? 'Ctrl+Z to undo' : ''}`;
+    statusRight.textContent = `${p.tracks.length} tracks · ${pats} patterns · ${p.clips.length} clips · ${store.canUndo() ? 'Ctrl+Z to undo' : ''}`;
   };
 
   app.subscribe((r) => {
@@ -172,6 +177,8 @@ export async function createApp(rootEl) {
 
   installKeyboard(app);
   installAutomationRecorder(app);
+  const engineUi = installEngineUi(app, status); // health meter, panic, sample rate, freeze, recovery / history
+  import('../control/index.js').then((m) => m.installControl(app)).catch((e) => console.warn('[control]', e)); // MIDI, surfaces, sync, palette
 
   await showView(ui.get('view'));
   app.panels = {
@@ -180,10 +187,14 @@ export async function createApp(rootEl) {
     device: await mountPanel(deviceEl, './panels/device.js', 'createDevicePanel', 'Device panel'),
   };
 
+  // Real-time collaboration + versions (src/collab) — optional, never blocks startup.
+  try { (await import('../collab/ui.js')).installCollab(app); } catch (e) { console.warn('[collab]', e); }
+
   // Restore last session (autosave) or offer the welcome screen.
   await app.actions.boot();
   // Mac app (Electron): native menus / Finder open-file / save dialogs. Not loaded in the browser.
   if (window.daw3Native) import('./native.js').then((m) => m.installNative(app)).catch((e) => console.warn('[native]', e));
+  await engineUi.afterBoot();
   updateStatus();
   app.setStatus('Ready. Press Space to play, ? for help.');
   return app;

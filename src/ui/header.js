@@ -120,6 +120,7 @@ export function createHeader(app) {
     h('div.hgroup', genBtn),
     h('div.spacer'),
     h('div.hgroup', masterVol, masterMeter),
+    h('div.hgroup.ctl-slot'), // hardware control: MIDI learn + command palette (src/control/index.js)
     h('div.hgroup', browserBtn, deviceBtn, assistBtn),
   );
 
