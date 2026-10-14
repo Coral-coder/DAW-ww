@@ -1,0 +1,7 @@
+setcpm(100/4)
+let prog = "<Am7 Dm7 G7 C^7>"
+stack(
+  chord(prog).voicing().s("square").struct("x ~ x x ~ x ~ ~").crush(8).coarse(2).room(perlin.range(0, .5)).gain(.35),
+  note("<a1 d2 g1 c2>").s("sawtooth").lpf(perlin.range(300, 1200)),
+  note("a4 c5 e5 g5").add(note("<0 -2 -4 -5>")).s("gm_flute").mask("<1 0 1 1>").delay(.3).pan(cosine.range(0, 1).slow(4))
+)
