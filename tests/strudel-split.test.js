@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { loadStrudel, codeEngine, splitTopLevel } from '../src/code/strudel.js';
+import { loadStrudel, codeEngine, splitTopLevel, evaluate, queryEvents } from '../src/code/strudel.js';
 import { analyzeStrudel, splitStrudelToProject, splitCodeByLabels, importStrudelSplit, summaryText } from '../src/code/import-split.js';
 import { createProject, DRUM_PITCH } from '../src/core/model.js';
 import { parseTarget, valueAt } from '../src/core/automation.js';
@@ -221,4 +221,179 @@ test('importStrudelSplit: one undo step that replaces the project', async () => 
   assert.equal(store.get().tracks.length, 4);
   store.undo();
   assert.equal(store.get().tracks.length, before);
+});
+
+// ------------------------------------------------------------------------------------------------ accuracy
+
+/** Notes a track plays over the timeline (clips loop their pattern). */
+const timelineCount = (p, t) => clipsOf(p, t).reduce((n, c) => {
+  const pat = p.patterns[c.patternId];
+  for (let o = 0; o < c.length; o += pat.length) n += pat.notes.filter((x) => o + x.start < c.length - 1e-6).length;
+  return n;
+}, 0);
+const sounding = (v) => v.s !== undefined || v.note !== undefined || v.freq !== undefined || v.n !== undefined;
+/** Raw haps of the code as Strudel plays it (the importer's repaired code), per sound. */
+function rawCounts(a) {
+  const res = evaluate(a.playedCode);
+  const by = new Map();
+  for (let c = 0; c < a.cycles; c += 16) for (const e of queryEvents(res, c, Math.min(a.cycles, c + 16))) if (sounding(e.value)) by.set(String(e.value.s), (by.get(String(e.value.s)) || 0) + 1);
+  return by;
+}
+/** Every part plays, no note is lost (per sound), every track's timeline has exactly its notes. */
+function assertComplete(code) {
+  const a = analyzeStrudel(code);
+  assert.equal(a.error, undefined, a.error);
+  const p = createProject();
+  const s = splitStrudelToProject(p, a);
+  assert.equal(s.error, undefined, s.error);
+  for (const part of s.parts) assert.notEqual(part.status, 'silent', `part "${part.label}" (${part.code}) made no track`);
+  const raw = rawCounts(a);
+  const got = new Map();
+  for (const t of a.tracks) for (const h of t.haps) got.set(String(h.v.s), (got.get(String(h.v.s)) || 0) + 1);
+  assert.deepEqual(Object.fromEntries([...got].sort()), Object.fromEntries([...raw].sort()), 'notes per sound');
+  const inst = p.tracks.filter((t) => t.type === 'instrument');
+  assert.equal(inst.length, a.tracks.length);
+  a.tracks.forEach((t, i) => assert.equal(timelineCount(p, inst[i]), t.haps.length, `${t.name}: timeline notes`));
+  return { a, p, s, track: (name) => inst.find((t) => t.name === name), names: inst.map((t) => t.name) };
+}
+const sendOf = (p, t, type) => {
+  const e = Object.entries(t.sends).find(([id]) => p.buses.find((b) => b.id === id)?.fx[0].type === type);
+  return e ? { amount: e[1], bus: p.buses.find((b) => b.id === e[0]) } : null;
+};
+const laneRange = (l) => [Math.min(...l.points.map((x) => x.value)), Math.max(...l.points.map((x) => x.value))];
+
+test('ambient stack without consts: three parts named from their comments, nothing dropped', () => {
+  const { p, s, a, track, names } = assertComplete(fixture('ambient'));
+  assert.deepEqual(names, ['Warm, Expanding Chord Progression', 'The Wanderer', 'Shimmering Sky']);
+  assert.deepEqual(s.parts.map((x) => [x.label, x.status]), [['Warm, Expanding Chord Progression', 'ok'], ['The Wanderer', 'ok'], ['Shimmering Sky', 'ok']]);
+  assert.equal(p.bpm, 120); // no setcpm: Strudel's 0.5 cycles/s, 1 cycle = 1 bar of 4 beats
+  assert.deepEqual(p.key, { root: 5, scale: 'major' }); // Fmaj7 Dm7 Bbmaj7 Cmaj7 -> F major (not the default C minor)
+  assert.equal(p.importedCode, fixture('ambient')); // the user's code is kept as written
+  // .scramble() without a count is silent in Strudel itself -> repaired (count = the 8 steps), and said so
+  assert.ok(s.notes.some((n) => /scramble\(\) has no count.*\.scramble\(8\)/.test(n)), s.notes.join('\n'));
+
+  // 1. supersaw chords: patch, low-pass insert with lpq -> resonance, the sine sweep 300..900 every 8 cycles as a lane
+  const warm = track('Warm, Expanding Chord Progression');
+  assert.equal(warm.role, 'chords');
+  assert.deepEqual([warm.instrument.params.s, warm.instrument.params.attack, warm.instrument.params.release], ['supersaw', 0.8, 1.5]);
+  assert.equal(warm.volume, 0.4);
+  const [lp] = fxOf(warm, 'filter');
+  assert.deepEqual([lp.params.type, lp.params.resonance], ['lowpass', 4]);
+  const cut = laneOf(warm, (t) => t?.kind === 'fx' && t.fxId === lp.id && t.key === 'cutoff');
+  assert.ok(cut, 'cutoff lane');
+  const [lo, hi] = laneRange(cut);
+  assert.ok(Math.abs(lo - 300) < 15 && Math.abs(hi - 900) < 15, `${lo}..${hi}`);
+  const at = (cycle) => valueAt(cut.points, cycle * 4);
+  assert.ok(Math.abs(at(0) - 600) < 30 && Math.abs(at(2) - 900) < 30 && Math.abs(at(6) - 300) < 30 && Math.abs(at(10) - 900) < 30);
+  assert.deepEqual(notesOf(p, warm).slice(0, 4).map((n) => n.pitch).sort(), [53, 57, 60, 64].sort()); // F3 A3 C4 E4
+
+  // 2. the Wanderer: scrambled euclid melody on sine, delay + reverb sends, the gain sine as a volume lane
+  const wan = track('The Wanderer');
+  assert.equal(wan.instrument.params.s, 'sine');
+  const pitches = new Set(notesOf(p, wan).map((n) => n.pitch));
+  assert.ok(pitches.size >= 6 && [...pitches].every((x) => [60, 62, 65, 67, 69, 72, 74, 77].includes(x)), [...pitches].join());
+  const rev = sendOf(p, wan, 'reverb');
+  assert.equal(rev.amount, 0.8);
+  const dl = sendOf(p, wan, 'delay');
+  assert.equal(dl.amount, 0.6); // delay(.6) is the wet level
+  assert.equal(dl.bus.fx[0].params.feedback, 0.7); // .delayfb(.7)
+  assert.equal(dl.bus.fx[0].params.division, '1/8D'); // no delaytime: Strudel's default 3/16 cycle
+  const vol = laneOf(wan, (t) => t?.kind === 'volume');
+  const [v0, v1] = laneRange(vol);
+  assert.ok(Math.abs(v0 - 0.1) < 0.01 && Math.abs(v1 - 0.35) < 0.01, `${v0}..${v1}`);
+  assert.ok(Math.abs(valueAt(vol.points, 5 * 4 * 0.25) - 0.35) < 0.02, 'peaks a quarter into its 5-cycle period');
+  assert.ok(notesOf(p, wan).every((n) => n.vel === 1));
+
+  // 3. Shimmering Sky: its own notes (not derived from the chords), the pan sweep, gain .15, degradeBy holes
+  const sky = track('Shimmering Sky');
+  assert.notEqual(sky.role, 'chords');
+  assert.deepEqual([...new Set(notesOf(p, sky).map((n) => n.pitch))].sort(), [77, 84, 88]);
+  assert.equal(sky.instrument.params.s, 'triangle'); // "supersoft" isn't a Strudel sound
+  assert.ok(s.notes.some((n) => /supersoft/.test(n)));
+  assert.equal(sky.volume, 0.15);
+  const pan = laneOf(sky, (t) => t?.kind === 'pan');
+  assert.ok(pan && laneRange(pan)[0] < -0.5 && laneRange(pan)[1] > 0.5);
+  const per = a.tracks.find((t) => t.name === 'Shimmering Sky').haps.length / a.cycles;
+  assert.ok(per > 6.5 && per < 9.5, `degradeBy(.4) of 13.5 notes a cycle: ${per}`);
+  assert.equal(s.sends, 2);
+  assert.match(summaryText(s), /3 tracks .* 64 bars at 120 BPM · F major/);
+});
+
+const CORPUS = ['anon-labels', 'consts-stack', 'arrange', 'random', 'layers', 'samples', 'polymeter', 'chords-let', 'fm'];
+const corpus = (name) => fs.readFileSync(new URL(`./fixtures/strudel-split/corpus/${name}.strudel`, import.meta.url), 'utf8');
+
+test('corpus: every part becomes a track, no note lost (per sound), the timeline holds every note', () => {
+  for (const name of CORPUS) {
+    try { assertComplete(corpus(name)); } catch (e) { e.message = `${name}: ${e.message}`; throw e; }
+  }
+});
+
+test('corpus: names, continuous controls -> lanes, constants -> static params, sends', () => {
+  let r = assertComplete(corpus('anon-labels'));
+  assert.deepEqual(r.names, ['drums', 'bassline', 'keys']);
+  const [blp] = fxOf(r.track('bassline'), 'filter');
+  assert.equal(blp.params.resonance, 8);
+  const bl = laneOf(r.track('bassline'), (t) => t?.kind === 'fx' && t.key === 'cutoff');
+  assert.ok(laneRange(bl)[0] < 450 && laneRange(bl)[1] > 1900);
+  assert.equal(sendOf(r.p, r.track('keys'), 'reverb').amount, 0.5);
+  assert.ok(laneOf(r.track('keys'), (t) => t?.kind === 'volume'), 'perlin gain -> volume lane');
+  assert.deepEqual(r.p.key, { root: 0, scale: 'minor' });
+
+  r = assertComplete(corpus('consts-stack'));
+  assert.deepEqual(r.names, ['kick', 'hats', 'bass', 'lead']);
+  assert.ok(laneOf(r.track('hats'), (t) => t?.kind === 'pan'));
+  assert.equal(fxOf(r.track('bass'), 'filter')[0].params.cutoff, 600);
+  assert.equal(r.track('bass').automation.length, 0);
+  assert.equal(fxOf(r.track('bass'), 'saturator').length, 1);
+  assert.equal(sendOf(r.p, r.track('lead'), 'delay').amount, 0.5);
+
+  r = assertComplete(corpus('arrange'));
+  assert.equal(r.s.sections, 3);
+  assert.equal(r.p.bpm, 132);
+  assert.equal(fxOf(r.track('pad'), 'filter')[0].params.cutoff, 1200);
+  assert.ok(laneOf(r.track('arp'), (t) => t?.kind === 'fx' && t.key === 'cutoff'));
+  assert.equal(r.track('arp').instrument.params.fm, 2);
+  assert.equal(sendOf(r.p, r.track('drums'), 'reverb').amount, 0.2); // only the snare has .room(.2): sent at its level
+
+  r = assertComplete(corpus('random'));
+  assert.deepEqual(r.names, ['hats', 'melody', 'shuffled bass']);
+  assert.equal(r.s.bars, 64); // randomness never repeats: the whole probe length, as concrete notes
+  assert.ok(new Set(notesOf(r.p, r.track('hats')).map((n) => n.vel)).size > 5, 'rand gain -> velocities');
+
+  r = assertComplete(corpus('layers'));
+  assert.deepEqual(r.names, ['Sawtooth lead L', 'Sawtooth lead R', 'Sine bass', 'Square bass', 'Drums']);
+  assert.deepEqual([r.track('Sawtooth lead L').pan, r.track('Sawtooth lead R').pan], [-1, 1]); // jux(rev)
+  assert.equal(r.track('Square bass').volume, 0.3);
+
+  r = assertComplete(corpus('samples'));
+  assert.equal(r.track('Piano chords').instrument.params.s, 'piano');
+  assert.equal(sendOf(r.p, r.track('Vibraphone lead'), 'delay').amount, 0.4);
+  assert.equal(r.track('Sawtooth lead').instrument.params.vowel, 'a');
+
+  r = assertComplete(corpus('polymeter'));
+  assert.equal(r.s.bars, 12); // {c d e}%4 + saw.slow(3) (3 cycles) with <c2 g1>/2 (4 cycles) -> 12
+  assert.ok(laneOf(r.track('Triangle lead'), (t) => t?.kind === 'volume'));
+  const hp = laneOf(r.track('Supersaw bass'), (t) => t?.kind === 'fx' && t.key === 'cutoff');
+  assert.ok(laneRange(hp)[0] < 50 && laneRange(hp)[1] > 350, 'sine hpf on 2-cycle notes -> a full sweep');
+
+  r = assertComplete(corpus('chords-let'));
+  assert.deepEqual(r.names, ['Square chords', 'Sawtooth bass', 'Flute lead']); // not named after `let prog`
+  assert.equal(fxOf(r.track('Square chords'), 'bitcrusher')[0].params.bits, 8);
+  assert.ok(laneOf(r.track('Square chords'), (t) => t?.kind === 'send'), 'perlin room -> send lane');
+  assert.ok(laneOf(r.track('Flute lead'), (t) => t?.kind === 'pan'));
+  assert.ok(laneOf(r.track('Sawtooth bass'), (t) => t?.kind === 'fx' && t.key === 'cutoff'));
+
+  r = assertComplete(corpus('fm'));
+  assert.deepEqual(r.names, ['fm bell', 'fm bass', 'noise riser']);
+  assert.equal(r.track('fm bell').instrument.params.fmh, 2.01);
+  assert.ok(sendOf(r.p, r.track('fm bell'), 'reverb').bus.fx[0].params.decay >= 8);
+  assert.notEqual(r.track('noise riser').role, 'bass');
+  assert.ok(laneOf(r.track('noise riser'), (t) => t?.kind === 'volume'));
+  assert.ok(laneOf(r.track('noise riser'), (t) => t?.kind === 'fx' && t.key === 'cutoff'));
+});
+
+test('parts summary: a part Strudel plays nothing for is listed as such', () => {
+  const s = split('stack(\n  // keys\n  note("c4 e4").s("piano"),\n  // broken\n  note("c4").s("sine").struct("~"),\n)').s;
+  assert.deepEqual(s.parts.map((x) => [x.label, x.status]), [['keys', 'ok'], ['broken', 'silent']]);
+  assert.match(summaryText(s), /Plays nothing in Strudel \(no track\): broken/);
 });

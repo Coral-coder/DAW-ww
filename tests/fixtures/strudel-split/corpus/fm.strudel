@@ -1,0 +1,7 @@
+setcps(.6)
+// fm bell
+$: n("0 2 4 <7 9>").scale("E4:major").s("sine").fm("<1 2 4>").fmh(2.01).fmdecay(.3).fmsustain(0).decay(.4).sustain(0).room(.6).size(8)
+// fm bass
+$: n("0 ~ 0 3").scale("E1:major").s("square").fm(1.5).penv(12).pdecay(.05).distort(.3)
+// noise riser
+$: s("white").seg(8).gain(saw.range(0, .3).slow(4)).hpf(saw.range(500, 8000).slow(4)).attack(.01).release(.05)

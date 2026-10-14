@@ -1,0 +1,9 @@
+// glitchy: randomness everywhere
+stack(
+  // hats with random gaps
+  s("hh*16").bank("RolandTR909").degradeBy(.3).gain(rand.range(.3, .8)),
+  // melody that sometimes jumps an octave
+  n("0 1 2 3 4 5 6 7").scale("D4:dorian").s("triangle").sometimes(x => x.add(note(12))).every(4, x => x.rev()),
+  // shuffled bass
+  note("d2 f2 a2 c3").shuffle(4).s("sawtooth").lpf(900)
+)
