@@ -160,3 +160,30 @@ export function tempoFromSelection(project, b0, b1, beats) {
   setTempoPoint(project, b0 + target, after, 'jump');
   return bpm;
 }
+
+/**
+ * A tempo received from outside (Ableton Link, MIDI clock in). While automation is being recorded (song mode,
+ * playing, armed) it is written as a tempo-map point at `beat` (a point less than `merge` beats after the previous
+ * one is updated instead, so a gliding external tempo does not leave hundreds of points); otherwise it changes the
+ * tempo segment under `beat` (no map / pattern mode: project.bpm). Returns 'point' | 'segment' | 'bpm'.
+ */
+export function applyExternalTempo(project, bpm, { beat = 0, record = false, mode = project.mode, merge = 1 } = {}) {
+  if (!(bpm > 0)) return null;
+  const b = Math.max(0, r6(beat));
+  if (record && mode === 'song') {
+    const pts = project.tempoMap || [];
+    let prev = -1;
+    for (let i = 0; i < pts.length; i++) if (pts[i].beat <= b + 1e-9) prev = i;
+    if (prev > 0 && b - pts[prev].beat < merge) { pts[prev].bpm = clampBpm(bpm); normalizeTempoMap(project); return 'point'; }
+    setTempoPoint(project, b, bpm, 'jump');
+    return 'point';
+  }
+  if (mode !== 'song' || !project.tempoMap?.length) { project.bpm = clampBpm(bpm); normalizeTempoMap(project); return 'bpm'; }
+  const pts = project.tempoMap;
+  let i = 0;
+  for (let k = 0; k < pts.length; k++) if (pts[k].beat <= b + 1e-9) i = k;
+  if (i === 0) project.bpm = clampBpm(bpm);
+  pts[i].bpm = clampBpm(bpm);
+  normalizeTempoMap(project);
+  return 'segment';
+}

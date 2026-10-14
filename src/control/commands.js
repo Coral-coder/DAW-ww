@@ -74,6 +74,8 @@ export function buildCommands(app) {
     { id: 'midi.devices', label: 'MIDI devices…', category: 'MIDI', keys: [], run: () => ctl()?.openPrefs('midi') },
     { id: 'midi.mappings', label: 'MIDI mappings…', category: 'MIDI', keys: [], run: () => ctl()?.openPrefs('mappings') },
     { id: 'midi.surfaces', label: 'Control surfaces (Mackie / HUI / pad grids)…', category: 'MIDI', keys: [], run: () => ctl()?.openPrefs('surfaces') },
+    { id: 'midi.bankNext', label: 'Next controller template bank', category: 'MIDI', keys: [], run: () => ctl()?.selectTemplateBank(1) },
+    { id: 'midi.bankPrev', label: 'Previous controller template bank', category: 'MIDI', keys: [], run: () => ctl()?.selectTemplateBank(-1) },
     { id: 'midi.sync', label: 'Sync: MIDI clock, MTC, Ableton Link…', category: 'MIDI', keys: [], run: () => ctl()?.openPrefs('sync') },
     // view-specific keys (piano roll, arrange, step rack, mixer): same map, scoped to their view
     ...viewCommandEntries(app),

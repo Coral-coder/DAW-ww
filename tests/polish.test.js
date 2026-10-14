@@ -265,3 +265,130 @@ test('MPE: FM, organ, sampler and synth voices take per-note bend / pressure / t
     if (name === 'sampler') assert.equal(a.filters[0].detune.value, timbreCents(0.1, 1), 'sampler: own filter detuned');
   }
 });
+
+import { SurfaceController, faderToGain, gainToFader } from '../src/control/surface.js';
+import { MCU_BUTTONS } from '../src/control/surface-protocol.js';
+import { framesToTimecode, toTimecode, mtcFullFrame, quarterFrames, MtcOut, ClockPhaseLock, MidiClockIn } from '../src/control/clock.js';
+import { applyExternalTempo } from '../src/time/tempo-edit.js';
+import { TemplateBanks } from '../src/control/mapping.js';
+
+function fakeSurfaceHost() {
+  const st = { strips: [{ id: 't1', name: 'Kick', volume: 0.8, pan: 0, mute: false, solo: false, arm: false, selected: true }, { id: 't2', name: 'Bass', volume: 0.5, pan: -0.5 }],
+    autoMode: 'read', cmds: [], vol: {}, pan: {} };
+  return { st, strips: () => st.strips, master: () => ({ volume: 0.9 }), setVolume: (id, g) => { st.vol[id] = g; const s = st.strips.find((x) => x.id === id); if (s) s.volume = g; },
+    setPan: (id, v) => { st.pan[id] = v; const s = st.strips.find((x) => x.id === id); if (s) s.pan = v; }, toggle() {}, select() {}, touch() {},
+    transport: () => ({ playing: false, autoMode: st.autoMode }), setAutoMode: (m) => { st.autoMode = m; }, command: (n) => st.cmds.push(n), jog: (d) => st.cmds.push(`jog${d}`) };
+}
+const btnMsg = (name, on = true) => [0x90, MCU_BUTTONS[name], on ? 127 : 0];
+
+test('MCU: flip swaps faders and V-pots; automation-mode buttons; marker add / navigate', () => {
+  const host = fakeSurfaceHost();
+  const sent = [];
+  const c = new SurfaceController({ kind: 'mcu', host, send: (m) => sent.push(...m) });
+  c.connect();
+  c.handle(btnMsg('flip')); c.handle(btnMsg('flip', false));
+  assert.equal(c.flip, true);
+  // flipped: fader 1 (pitch bend ch 1) sets Bass's pan (V-pot parameter in pan mode)
+  c.handle([0xe1, 0x7f, 0x7f]);
+  assert.ok(Math.abs(host.st.pan.t2 - 1) < 0.01);
+  // the V-pot rides the volume
+  c.handle([0xb0, 0x10, 0x05]);
+  assert.ok(host.st.vol.t1 > 0.8);
+  // fader motor of strip 0 follows the pan value (centre) — pitch bend ≈ 8192
+  const fb = sent.filter((m) => m[0] === 0xe0).at(-1);
+  assert.ok(Math.abs(((fb[2] << 7) | fb[1]) - 8191) < 64);
+  // automation modes
+  c.handle(btnMsg('latch')); assert.equal(host.st.autoMode, 'latch');
+  c.handle(btnMsg('write')); assert.equal(host.st.autoMode, 'write');
+  c.handle(btnMsg('readOff')); assert.equal(host.st.autoMode, 'read');
+  c.handle(btnMsg('readOff')); assert.equal(host.st.autoMode, 'off');
+  c.handle(btnMsg('touch')); assert.equal(host.st.autoMode, 'touch');
+  assert.ok(sent.some((m) => m[0] === 0x90 && m[1] === MCU_BUTTONS.touch && m[2] === 127), 'touch LED');
+  // marker: press+release = add; hold + ▶ / ◀ = navigate (no add)
+  c.handle(btnMsg('marker')); c.handle(btnMsg('marker', false));
+  c.handle(btnMsg('marker')); c.handle(btnMsg('right')); c.handle(btnMsg('left')); c.handle(btnMsg('marker', false));
+  assert.deepEqual(host.st.cmds, ['marker', 'nextMarker', 'prevMarker']);
+  c.handle(btnMsg('right'));
+  assert.equal(host.st.cmds.at(-1), 'jog16');
+  assert.ok(faderToGain(gainToFader(0.8)) - 0.8 < 1e-3);
+});
+
+test('MTC 29.97 drop-frame: frame numbering, full frame and quarter-frame rate bits, real-time quarter frames', () => {
+  assert.deepEqual(framesToTimecode(1799, '29.97'), { h: 0, m: 0, s: 59, f: 29 });
+  assert.deepEqual(framesToTimecode(1800, '29.97'), { h: 0, m: 1, s: 0, f: 2 }); // ;00 and ;01 skipped
+  assert.deepEqual(framesToTimecode(17982, '29.97'), { h: 0, m: 10, s: 0, f: 0 }); // not skipped at minute 10
+  assert.deepEqual(toTimecode(3600, '29.97'), { h: 1, m: 0, s: 0, f: 0 }); // DF tracks the wall clock
+  assert.deepEqual(toTimecode(3600, 30), { h: 1, m: 0, s: 0, f: 0 });
+  const ff = mtcFullFrame(0, '29.97');
+  assert.equal(ff[5] >> 5, 2);
+  assert.equal(quarterFrames({ h: 0, m: 0, s: 0, f: 0 }, '29.97')[7] & 0x0f, 2 << 1);
+  const out = [];
+  const m = new MtcOut({ fps: '29.97', send: (d, ts) => out.push([d, ts]), lookahead: 0 });
+  m.start(0, 0);
+  m.pump(1000);
+  const qf = out.filter(([d]) => d[0] === 0xf1);
+  assert.ok(Math.abs(qf.length - Math.ceil(1000 / (1000 / (30000 / 1001 * 4)))) <= 1, `≈120 quarter frames per second, got ${qf.length}`);
+});
+
+test('MIDI clock in: continuous phase lock (trim small drift, relocate large) and beatAt extrapolation', () => {
+  const lock = new ClockPhaseLock();
+  assert.equal(lock.update(10, 10, 120).kind, 'hold');
+  const r = lock.update(10.05, 10, 120);
+  assert.equal(r.kind, 'trim');
+  assert.ok(r.bpm > 120 && r.bpm <= 120 * 1.02); // behind -> slightly faster
+  const r2 = new ClockPhaseLock().update(9.95, 10, 120);
+  assert.ok(r2.bpm < 120);
+  const j = lock.update(20, 10, 120);
+  assert.deepEqual([j.kind, j.beat], ['jump', 20]);
+  // simulate: a local transport 0.06 beat behind converges under the trim loop
+  const pl = new ClockPhaseLock();
+  let local = 0, ext = 0.06;
+  for (let i = 0; i < 400; i++) { const u = pl.update(ext, local, 120); const bpm = u.bpm || 120; ext += 0.25; local += 0.25 * bpm / 120; }
+  assert.ok(Math.abs(ext - local) < 0.01, `converged (${ext - local})`);
+  const ci = new MidiClockIn({ minTicks: 4 });
+  ci.handle([0xfa], 0);
+  for (let k = 0; k < 30; k++) ci.handle([0xf8], k * (500 / 24));
+  assert.ok(Math.abs(ci.bpm - 120) < 0.5);
+  const b = ci.beatAt(29 * (500 / 24) + 10);
+  assert.ok(b > ci.position && b <= ci.position + 1 / 24 + 1e-9);
+});
+
+test('external tempo (Link / MIDI clock): tempo-map points while recording automation, else the current segment', () => {
+  const p = createProject({ bpm: 120 }); p.mode = 'song';
+  assert.equal(applyExternalTempo(p, 124, { beat: 8 }), 'bpm');
+  assert.equal(p.bpm, 124); assert.ok(!p.tempoMap);
+  assert.equal(applyExternalTempo(p, 126, { beat: 16, record: true }), 'point');
+  assert.deepEqual(p.tempoMap.map((x) => [x.beat, x.bpm]), [[0, 124], [16, 126]]);
+  applyExternalTempo(p, 127, { beat: 16.5, record: true }); // within a beat: the point glides instead of piling up
+  assert.deepEqual(p.tempoMap.map((x) => [x.beat, x.bpm]), [[0, 124], [16, 127]]);
+  applyExternalTempo(p, 130, { beat: 32, record: true });
+  assert.equal(p.tempoMap.length, 3);
+  // not recording: changes the segment under the playhead only
+  assert.equal(applyExternalTempo(p, 110, { beat: 20 }), 'segment');
+  assert.deepEqual(p.tempoMap.map((x) => [x.beat, x.bpm]), [[0, 124], [16, 110], [32, 130]]);
+  applyExternalTempo(p, 100, { beat: 4 });
+  assert.equal(p.bpm, 100);
+  // pattern mode: just the project tempo
+  p.mode = 'pattern';
+  assert.equal(applyExternalTempo(p, 90, { beat: 20, record: true }), 'bpm');
+  assert.equal(p.bpm, 90);
+});
+
+test('named controller-template banks', () => {
+  const b = new TemplateBanks(null, [{ id: 'm1' }]);
+  assert.deepEqual(b.names(), ['Default']);
+  b.saveAs('Synth edit', [{ id: 'm2' }, { id: 'm3' }]);
+  assert.equal(b.active, 'Synth edit');
+  assert.equal(b.select(1).length, 1); // wraps to Default
+  assert.equal(b.active, 'Default');
+  assert.equal(b.select(-1).length, 2);
+  b.store([{ id: 'm4' }]);
+  assert.deepEqual(b.banks['Synth edit'], [{ id: 'm4' }]);
+  assert.ok(b.rename('Synth edit', 'Synth'));
+  assert.equal(b.active, 'Synth');
+  assert.equal(b.select('nope'), null);
+  assert.ok(b.remove('Synth'));
+  assert.ok(!b.remove('Default')); // the last bank stays
+  const round = new TemplateBanks(JSON.parse(JSON.stringify(b)));
+  assert.deepEqual(round.names(), ['Default']);
+});

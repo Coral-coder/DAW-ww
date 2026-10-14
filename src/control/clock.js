@@ -108,6 +108,7 @@ export class MidiClockIn extends Emitter {
       if (gap > 400 || (typical && gap > typical * 4)) this.reset(); // clock paused / restarted
     }
     ts.push(t);
+    this.lastTick = t;
     if (ts.length > this.window) ts.shift();
     if (this.running) { this.ticks++; this.position = this.base + this.ticks / PPQN; this.emit('tick', this.position); }
     if (ts.length < this.minTicks) return;
@@ -125,6 +126,36 @@ export class MidiClockIn extends Emitter {
   }
 }
 
+/** External clock position (beats) at time t (ms): the last tick's position + the time since, at the clock's tempo. */
+MidiClockIn.prototype.beatAt = function beatAt(t) {
+  if (this.lastTick == null || !this.bpm) return this.position;
+  return this.position + Math.max(0, Math.min(1 / PPQN, ((t - this.lastTick) * this.bpm) / 60000));
+};
+
+/**
+ * Continuous phase lock to an external clock (not just its tempo). update(extBeat, localBeat, bpm) compares where
+ * the external clock is with where daW³ plays at the same instant:
+ *   |error| > jump beats  -> { kind: 'jump', beat }   relocate (start / lost sync)
+ *   |error| < deadband    -> { kind: 'hold', bpm }    run at the clock's tempo
+ *   otherwise             -> { kind: 'trim', bpm }    run slightly faster / slower until the phase meets
+ * The error is smoothed (one-pole) so per-tick jitter does not wobble the tempo; the trim is capped (±maxTrim).
+ */
+export class ClockPhaseLock {
+  constructor({ jump = 0.5, deadband = 0.003, gain = 0.25, maxTrim = 0.02, smooth = 0.35 } = {}) {
+    Object.assign(this, { jump, deadband, gain, maxTrim, smooth });
+    this.err = 0;
+  }
+  reset() { this.err = 0; }
+  update(extBeat, localBeat, bpm) {
+    const e = extBeat - localBeat;
+    if (Math.abs(e) > this.jump) { this.err = 0; return { kind: 'jump', beat: extBeat, error: e }; }
+    this.err += (e - this.err) * this.smooth;
+    if (Math.abs(this.err) < this.deadband) return { kind: 'hold', bpm, error: this.err };
+    const trim = Math.max(-this.maxTrim, Math.min(this.maxTrim, this.err * this.gain));
+    return { kind: 'trim', bpm: bpm * (1 + trim), error: this.err };
+  }
+}
+
 /** Least-squares slope of times[i] against i. */
 export function slope(times) {
   const n = times.length;
@@ -134,13 +165,33 @@ export function slope(times) {
 }
 
 // ------------------------------------------------------------------------------------------- MTC out
-export const MTC_RATES = { 24: 0, 25: 1, 30: 3 }; // (29.97 drop-frame not offered)
+/** MTC rate codes (bits 5-6 of the hours byte): 24, 25, 29.97 drop-frame ('29.97'), 30 non-drop. */
+export const MTC_RATES = { 24: 0, 25: 1, '29.97': 2, 30: 3 };
+export const isDropFrame = (fps) => String(fps) === '29.97';
+/** Real frames per second (29.97 DF runs at 30000/1001; its frame numbers still count 0-29). */
+export const mtcFrameRate = (fps) => (isDropFrame(fps) ? 30000 / 1001 : Number(fps));
+/** Nominal (integer) frames per timecode second. */
+const nominal = (fps) => (isDropFrame(fps) ? 30 : Number(fps));
 
-/** Split seconds into {h, m, s, f} at fps. */
+/**
+ * Frame count (since 00:00:00:00) -> {h, m, s, f}. 29.97 drop-frame skips frame numbers 0 and 1 at the start of
+ * every minute except minutes 0, 10, 20, 30, 40, 50 (SMPTE 12M), so the timecode tracks the wall clock.
+ */
+export function framesToTimecode(frames, fps) {
+  let n = Math.max(0, Math.floor(frames));
+  const F = nominal(fps);
+  if (isDropFrame(fps)) {
+    const per10 = 17982; // frames in 10 DF minutes
+    const d = Math.floor(n / per10), m = n % per10;
+    n += 18 * d + (m < 2 ? 0 : 2 * Math.floor((m - 2) / 1798));
+  }
+  const f = n % F, s = Math.floor(n / F) % 60, mi = Math.floor(n / F / 60) % 60, h = Math.floor(n / F / 3600) % 24;
+  return { h, m: mi, s, f };
+}
+
+/** Split seconds into {h, m, s, f} at fps (24 | 25 | 30 | '29.97' drop-frame). */
 export function toTimecode(seconds, fps) {
-  const total = Math.max(0, Math.floor(seconds * fps + 1e-6));
-  const f = total % fps, s = Math.floor(total / fps) % 60, m = Math.floor(total / fps / 60) % 60, h = Math.floor(total / fps / 3600) % 24;
-  return { h, m, s, f };
+  return framesToTimecode(Math.floor(Math.max(0, seconds) * mtcFrameRate(fps) + 1e-6), fps);
 }
 /** Full-frame SysEx (locate). */
 export function mtcFullFrame(seconds, fps = 25) {
@@ -156,26 +207,27 @@ export function quarterFrames(tc, fps) {
 export class MtcOut {
   constructor({ send, fps = 25, lookahead = 120 } = {}) {
     this.send = send || (() => {});
-    this.fps = MTC_RATES[fps] != null ? fps : 25;
+    this.fps = MTC_RATES[fps] != null ? (isDropFrame(fps) ? '29.97' : Number(fps)) : 25;
     this.lookahead = lookahead;
     this.running = false;
   }
   /** Start at song time `seconds`, audible at t0 (ms). Quarter frames start on a frame boundary. */
   start(seconds, t0) {
-    const frame0 = Math.ceil(seconds * this.fps - 1e-6);
+    const rate = mtcFrameRate(this.fps);
+    const frame0 = Math.ceil(seconds * rate - 1e-6);
     this.frame0 = frame0 % 2 ? frame0 + 1 : frame0; // 8-QF sequences span 2 frames: start on an even frame
-    this.t0 = t0 + ((this.frame0 / this.fps) - seconds) * 1000;
+    this.t0 = t0 + ((this.frame0 / rate) - seconds) * 1000;
     this.qf = 0;
     this.running = true;
-    this.send(mtcFullFrame(this.frame0 / this.fps, this.fps), t0);
+    this.send(mtcFullFrame(this.frame0 / rate, this.fps), t0);
   }
-  qfTime(k) { return this.t0 + (k * 1000) / (this.fps * 4); }
+  qfTime(k) { return this.t0 + (k * 1000) / (mtcFrameRate(this.fps) * 4); }
   pump(now) {
     if (!this.running) return 0;
     let n = 0;
     while (this.qfTime(this.qf) < now + this.lookahead) {
       const seq = Math.floor(this.qf / 8), i = this.qf % 8;
-      const tc = toTimecode((this.frame0 + seq * 2) / this.fps, this.fps);
+      const tc = framesToTimecode(this.frame0 + seq * 2, this.fps);
       this.send([0xf1, quarterFrames(tc, this.fps)[i]], this.qfTime(this.qf));
       this.qf++;
       if (++n > 500) break;
