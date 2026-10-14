@@ -1,0 +1,74 @@
+/* Hardware control: MIDI learn mode, command palette, preferences (src/control/*) */
+
+/* header */
+.ctl-slot { gap: 4px; }
+.transport-btn.ctl-midi-btn { width: auto; padding: 0 7px; gap: 5px; font-size: 10px; font-weight: 800; letter-spacing: .06em; }
+.ctl-midi-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--line-2); transition: background .08s; }
+.ctl-midi-btn.ctl-activity .ctl-midi-dot { background: var(--good); }
+.ctl-midi-btn.on { color: #fff; background: var(--accent); border-color: var(--accent); }
+
+/* learn mode: every learnable control is outlined; mapped ones get a badge; the one being learned pulses */
+body.ctl-learn-mode [data-auto-target] { outline: 1px dashed color-mix(in srgb, var(--accent) 80%, transparent); outline-offset: 1px; cursor: crosshair !important; }
+body.ctl-learn-mode [data-auto-target]:hover { outline: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+body.ctl-learn-mode [data-auto-target].ctl-mapped { outline: 2px solid var(--good); position: relative; }
+body.ctl-learn-mode [data-auto-target].ctl-mapped::before {
+  content: 'MIDI'; position: absolute; left: -2px; top: -9px; z-index: 5; padding: 0 3px; border-radius: 3px; font: 700 8px/11px var(--font);
+  color: #fff; background: var(--good); pointer-events: none;
+}
+[data-auto-target].ctl-learn-target { outline: 2px solid var(--warn) !important; animation: ctl-pulse .8s infinite; }
+@keyframes ctl-pulse { 50% { outline-color: transparent; } }
+.ctl-learn-banner {
+  position: fixed; left: 50%; top: calc(var(--header-h) + 6px); transform: translateX(-50%); z-index: 1150; display: flex; align-items: center; gap: 6px;
+  max-width: calc(100vw - 32px); padding: 7px 12px; border-radius: var(--radius); background: var(--bg-4); color: var(--text);
+  border: 1px solid var(--accent); box-shadow: var(--shadow); font-size: 12px;
+}
+.ctl-learn-banner.hidden { display: none; }
+.ctl-learn-banner b { color: var(--accent-2); }
+
+/* command palette */
+.ctl-palette-backdrop { position: fixed; inset: 0; z-index: 1300; background: rgba(0,0,0,.35); display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; animation: fade .1s; }
+.ctl-palette { width: min(620px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--line-2); border-radius: 10px; box-shadow: var(--shadow); display: flex; flex-direction: column; overflow: hidden; }
+.ctl-palette-input { border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--text); font-size: 15px; padding: 12px 14px; outline: none; }
+.ctl-palette-list { max-height: min(420px, 60vh); overflow-y: auto; padding: 4px; }
+.ctl-palette-item { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
+.ctl-palette-item.sel { background: color-mix(in srgb, var(--accent) 22%, var(--bg-3)); }
+.ctl-palette-cat { flex: 0 0 92px; color: var(--text-3); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctl-palette-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctl-palette-item kbd, .ctl-chip kbd { font: 11px var(--mono); padding: 1px 5px; border-radius: 3px; border: 1px solid var(--line-2); background: var(--bg-3); color: var(--text-2); white-space: nowrap; }
+.ctl-palette-empty { padding: 14px; color: var(--text-3); text-align: center; }
+.ctl-palette-hint { padding: 6px 12px; border-top: 1px solid var(--line); color: var(--text-3); font-size: 11px; }
+
+/* preferences */
+.ctl-prefs .tab-body { padding-top: 8px; min-height: 360px; }
+.ctl-tab h4 { margin: 14px 0 6px; font-size: 13px; }
+.ctl-tab h4:first-child { margin-top: 4px; }
+.ctl-help { margin: 4px 0 8px; color: var(--text-3); font-size: 12px; line-height: 1.45; }
+.ctl-warn { margin: 6px 0; padding: 6px 8px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--text); font-size: 12px; }
+.ctl-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; font-size: 12px; }
+.ctl-gap { flex: 0 0 12px; }
+.ctl-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.ctl-table th { text-align: left; font-weight: 600; color: var(--text-3); padding: 3px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.ctl-table td { padding: 3px 6px; border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent); vertical-align: middle; }
+.ctl-table tr.ctl-off { opacity: .5; }
+.ctl-table select, .ctl-select { max-width: 190px; }
+.ctl-name { font-weight: 600; }
+.ctl-sub { color: var(--text-3); font-size: 10px; }
+.ctl-src { white-space: nowrap; }
+.ctl-tgt { min-width: 160px; }
+.ctl-range { white-space: nowrap; }
+.ctl-tag { margin-left: 6px; padding: 0 5px; border-radius: 8px; font-size: 10px; font-weight: 600; background: var(--bg-4); color: var(--accent-2); }
+.ctl-num, .ctl-text { background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--text); padding: 2px 5px; font-size: 12px; }
+.ctl-text { min-width: 200px; }
+.ctl-search { flex: 1; min-width: 180px; }
+.ctl-checks { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; }
+.ctl-live { color: var(--text-2); font-family: var(--mono); font-size: 11px; }
+.ctl-shortcuts tr.ctl-cat td { padding-top: 10px; color: var(--text-3); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+.ctl-shortcuts tr.ctl-conflict td { background: color-mix(in srgb, var(--bad) 12%, transparent); }
+.ctl-chip { display: inline-flex; align-items: center; gap: 1px; margin-right: 4px; }
+.ctl-chip-x { border: 0; background: transparent; color: var(--text-3); cursor: pointer; padding: 0 3px; font-size: 13px; line-height: 1; }
+.ctl-chip-x:hover { color: var(--bad); }
+.btn.recording { color: #fff; background: var(--accent); border-color: var(--accent); }
+@media (max-width: 720px) {
+  .ctl-table { display: block; overflow-x: auto; }
+  .ctl-palette-cat { display: none; }
+}

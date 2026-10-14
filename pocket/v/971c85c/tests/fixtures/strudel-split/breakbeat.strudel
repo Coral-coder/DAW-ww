@@ -1,0 +1,45 @@
+// --- Set Global Tempo ---
+// 0.65 cps equals roughly 156 BPM, perfect for a breakbeat/drum & bass feel
+setcps(0.65)
+
+stack(
+  // LAYER 1: Dynamic Breakbeat & Percussion
+  // Uses brackets, rests (~), and step-multipliers (*) to build syncopation
+  stack(
+    s("bd ~ bd [~ bd]"),                    // Punchy kick pattern
+    s("~ sd ~ [sd*2 ~]"),                   // Snare with a quick double-strike ghost note
+    s("hh*4").gain(0.7),                    // Continuous hi-hats lowered in volume
+    s("~ ~ [cp*3] ~").room(0.4).gain(0.8)   // Reverbed clap accent on the third beat
+  ).bank("rolandtr909"),                    // Uses classic 909 drum machine samples
+
+  // LAYER 2: Generative Acid Bassline
+  // Shifts down two octaves (|-24|) and uses 'struct' to create a syncopated groove
+  s("saw")
+    .note("<c g f b_>" |+ "[0,4,7,11]")     // Progresses through scale notes
+    .struct("x o x x o x o x")              // 'x' triggers a note, 'o' is a rest
+    .scale("aeolian")                       // Forces everything into a moody minor scale
+    .note("<0 3 5 7>/4")                    // Automatically walks the bassline over 4 cycles
+    .pan(0.3)                               // Slanted slightly to the left
+    .lpf(sine.range(400, 2000).slow(4))     // Sweeps a low-pass filter up and down over 4 cycles
+    .resonance(2)                           // Gives it that classic squelchy "acid" peak
+    .gain(0.85),
+
+  // LAYER 3: Ambient Chord Pads
+  // Slow-moving, lush chords to fill out the stereo space
+  s("sine")
+    .chord("<C'min7 F'min7 G'min7 G'dom7>") // Cycles through 4 beautiful jazz chords
+    .slow(4)                                // Stretches each chord out over 4 full cycles
+    .voicings()                             // Smoothly blends the chord note transitions
+    .attack(0.4).release(1.5)               // Soft attack and long fade out
+    .room(0.8).size(0.9)                    // Drenched in heavy cathedral-like reverb
+    .gain(0.6),
+
+  // LAYER 4: Cosmic Arpeggiator Lead
+  // A fast, energetic melody line bouncing on top of the mix
+  s("triangle")
+    .note("<c4_ef4_g4_bb4 f4_ab4_c5_eb5>")  // Moves fast through upper scale intervals
+    .arp("pinkyup")                         // Arpeggiates the notes in a complex pattern
+    .jux(rev)                               // Audio magic: mirrors and reverses the pattern in the right ear
+    .delay(0.6).delayfb(0.4)                // Adds stereo tape-echo delay effects
+    .gain(0.7)
+)
