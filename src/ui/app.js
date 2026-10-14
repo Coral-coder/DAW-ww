@@ -158,6 +158,10 @@ export async function createApp(rootEl) {
     const narrow = window.matchMedia('(max-width: 1024px)');
     if (narrow.matches && ui.get('assistantOpen')) ui.set({ assistantOpen: false });
     narrow.addEventListener?.('change', (e) => { if (e.matches && ui.get('assistantOpen')) ui.set({ assistantOpen: false }); });
+    // phone width: the browser is an overlay drawer too (styles/main.css ≤ 820px)
+    const phone = window.matchMedia('(max-width: 820px)');
+    if (phone.matches && ui.get('browserOpen')) ui.set({ browserOpen: false });
+    phone.addEventListener?.('change', (e) => { if (e.matches && ui.get('browserOpen')) ui.set({ browserOpen: false }); });
   } catch { /* matchMedia unavailable */ }
 
   // ---- status bar ----
@@ -181,6 +185,7 @@ export async function createApp(rootEl) {
 
   installKeyboard(app);
   installAutomationRecorder(app);
+  import('../control/index.js').then((m) => m.installControl(app)).catch((e) => console.warn('[control]', e)); // MIDI, surfaces, sync, palette
 
   await showView(ui.get('view'));
   app.panels = {
@@ -188,6 +193,9 @@ export async function createApp(rootEl) {
     assistant: await mountPanel(assistantEl, './panels/assistant.js', 'createAssistantPanel', 'Assistant'),
     device: await mountPanel(deviceEl, './panels/device.js', 'createDevicePanel', 'Device panel'),
   };
+
+  // Real-time collaboration + versions (src/collab) — optional, never blocks startup.
+  try { (await import('../collab/ui.js')).installCollab(app); } catch (e) { console.warn('[collab]', e); }
 
   // Restore last session (autosave) or offer the welcome screen.
   await app.actions.boot();

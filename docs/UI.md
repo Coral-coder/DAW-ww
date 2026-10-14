@@ -48,6 +48,10 @@ export function createXView(app) { return { el, show?(), hide?() } }
   follow their lanes during song playback (via `el.autoSet(v)` or `el.setValue(v)`), get a dot marker and the
   right-click "Show / Add / Clear automation lane" menu. Custom drag controls should call `touchStart(el)` /
   `touchEnd(el)` so TOUCH-mode recording knows when the user lets go. Target metadata: `src/ui/automation-targets.js`.
+* Hardware control (`src/control/*`, `app.control`): every `markAuto`-tagged control is automatically MIDI-learnable
+  (right-click → "MIDI learn…", header MIDI button = learn mode) and drivable from Mackie/HUI surfaces — nothing to do
+  in your view. Global keyboard shortcuts are commands in `src/control/commands.js` (rebindable in Preferences →
+  Shortcuts, listed in the Ctrl/Cmd+K palette); add new global actions there, not as hard-coded keys.
 * Reuse components from `src/ui/components.js` (knob, fader, toggle, select, numberField, button, iconButton,
   paramPanel, meter, modal, toast, contextMenu, promptText, confirmDialog, tabs, fileInput) and `h`, `icon`,
   `startDrag`, `fitCanvas`, `cssVar` from `src/ui/dom.js`.
@@ -78,6 +82,7 @@ export function createXView(app) { return { el, show?(), hide?() } }
 | Guided session (assistant "Guide" tab) | `src/ui/wizard.js` (`createWizard`; pure logic in `src/ui/wizard-core.js`) | `styles/wizard.css` |
 | Device panel (bottom) | `src/ui/panels/device.js` (`createDevicePanel`) | `styles/device.css` |
 | Plugboard (patch bay + project routing) | `src/ui/views/patch.js` (`createPatchView`) | `styles/patch.css` |
+| Hardware control (MIDI devices, learn, surfaces, sync, palette, shortcuts) | `src/control/index.js` (`installControl`; Node-safe logic in `src/control/{midi,mapping,devices,router,surface-protocol,surface,grid,clock,link-client,shortcuts,targets}.js`; Link bridge `tools/link-bridge/`) | `styles/control.css` |
 | Setlist (endless DJ set, view 8) | `src/ui/views/setlist.js` (`createSetlistView`; logic `src/live/setlist-engine.js` pure + `src/live/setlist-runner.js`, `app.setlist`) | `styles/setlist.css` |
 
 `index.html` links every CSS file above. Run the app with `npm start` (http://localhost:5173, add `?nowelcome`

@@ -126,6 +126,7 @@ export class StrudelVoice {
 
   _makeFallback() {
     if (this.fallback) return this.fallback;
+    if (this._standIn && !this._settled) { this.fallback = this._standIn; return this.fallback; } // keep the stand-in
     try { this.fallback = this.opts.makeFallback?.() || null; } catch (e) { warn(e); this.fallback = null; }
     return this.fallback;
   }
@@ -137,6 +138,7 @@ export class StrudelVoice {
     if (!ok || this.sdi.fallback) {
       this.fallbackReason = 'Strudel sound engine unavailable';
       this._makeFallback();
+      this._endStandIn();
       return true;
     }
     const sound = await this._probe();
@@ -146,8 +148,28 @@ export class StrudelVoice {
       warn(`${this.fallbackReason} — playing the fallback preset`);
       this._makeFallback();
     }
+    this._endStandIn();
     if (!isOfflineCtx(this.ctx)) for (let i = 0; i < 2; i++) this._newLane();
     return true;
+  }
+
+  /**
+   * Realtime: until the patch is confirmed playable (superdough + its sound loading, a few seconds on the first
+   * play), notes play on the fallback preset instead of silence. Not used offline (renders wait for `ready`).
+   */
+  _standInEngine() {
+    if (this._standIn !== undefined || isOfflineCtx(this.ctx) || this.disposed) return this._standIn || null;
+    try { this._standIn = this.opts.makeFallback?.() || null; } catch (e) { warn(e); this._standIn = null; }
+    return this._standIn;
+  }
+
+  /** The patch is playable (or its fallback took over): stop routing notes to the stand-in. */
+  _endStandIn() {
+    this._settled = true;
+    const s = this._standIn;
+    if (!s || s === this.fallback) return;
+    // let the stand-in's notes ring out, then drop it
+    setTimeout(() => { try { s.allNotesOff(); s.dispose(); } catch { /* */ } }, 4000);
   }
 
   /** Loads the patch's sound with a muted note. Resolves false only when superdough reports a load failure. */
@@ -199,7 +221,9 @@ export class StrudelVoice {
 
   trigger(time, pitch, vel, durSec, extra) {
     if (this.fallback) { this.fallback.trigger(time, pitch, vel, durSec, extra); return; }
-    if (!this.sdi.ready || this.disposed) return;
+    if (this.disposed) return;
+    if (!this._settled && !isOfflineCtx(this.ctx)) { this._standInEngine()?.trigger(time, pitch, vel, durSec, extra); return; }
+    if (!this.sdi.ready) return;
     const ev = this._ev();
     this._track(time, durSec);
     this._applyPost();
@@ -218,7 +242,9 @@ export class StrudelVoice {
 
   noteOn(pitch, vel, time) {
     if (this.fallback) { this.fallback.noteOn(pitch, vel, time); return; }
-    if (!this.sdi.ready || this.disposed) return;
+    if (this.disposed) return;
+    if (!this._settled && !isOfflineCtx(this.ctx)) { this._standInEngine()?.noteOn(pitch, vel, time); return; }
+    if (!this.sdi.ready) return;
     const t = Math.max(time ?? this.ctx.currentTime, this.ctx.currentTime);
     const now = this.ctx.currentTime;
     let lane = this.lanes.find((l) => l.sdi.ready && !l.held && l.freeAt <= now);
@@ -256,6 +282,7 @@ export class StrudelVoice {
 
   noteOff(pitch, time) {
     if (this.fallback) { this.fallback.noteOff(pitch, time); return; }
+    if (this._standIn) { try { this._standIn.noteOff(pitch, time); } catch { /* */ } }
     const t = Math.max(time ?? this.ctx.currentTime, this.ctx.currentTime);
     const rel = this.params.release > 0 ? Math.min(4, this.params.release) : 0.25;
     for (const lane of this.lanes) if (lane.held && lane.pitch === pitch) this._release(lane, t, rel);
@@ -263,6 +290,7 @@ export class StrudelVoice {
 
   allNotesOff(time) {
     this.fallback?.allNotesOff(time);
+    if (this._standIn && this._standIn !== this.fallback) { try { this._standIn.allNotesOff(time); } catch { /* */ } }
     this.sdi.allNotesOff(time);
     const t = Math.max(time ?? this.ctx.currentTime, this.ctx.currentTime);
     for (const lane of this.lanes) if (lane.held) this._release(lane, t, 0.03);
@@ -274,6 +302,7 @@ export class StrudelVoice {
     const post = [this.postGain, this.postLp, this.postHp, this.postPan];
     if (!isOfflineCtx(this.ctx)) setTimeout(() => { for (const n of post) { try { n?.disconnect(); } catch { /* */ } } }, 300);
     try { this.fallback?.dispose(); } catch { /* */ }
+    if (this._standIn && this._standIn !== this.fallback) { try { this._standIn.dispose(); } catch { /* */ } }
     this.sdi.dispose();
     for (const lane of this.lanes) {
       clearTimeout(lane.timer);

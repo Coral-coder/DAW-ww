@@ -421,12 +421,17 @@ export function createActions(app) {
   engine.on?.('state', ({ playing }) => { if (!playing && audioTake && audioTake.ctxStart != null) finishAudioRecording(); });
 
   // live notes + recording
-  const liveHeld = new Map(); // pitch -> {trackId, startBeat, vel}
+  const liveHeld = new Map(); // `${trackId}|${pitch}` -> {trackId, startBeat, vel}
+  const heldKeyOf = (pitch, trackId) => {
+    if (trackId != null) return `${trackId}|${pitch}`;
+    for (const k of liveHeld.keys()) if (k.endsWith(`|${pitch}`)) return k; // any track (keyboard piano / old callers)
+    return null;
+  };
   async function liveNoteOn(pitch, vel = 0.8, trackId = ui.get('selectedTrackId')) {
     const t = get().tracks.find((x) => x.id === trackId);
     if (!t || t.type !== 'instrument') { if (!t) toast('Select an instrument track to play it'); return; }
     const held = { trackId, startBeat: engine.getPosition(), vel };
-    liveHeld.set(pitch, held);
+    liveHeld.set(`${trackId}|${pitch}`, held);
     app.emitLiveNote?.(pitch, true);
     // noteOff awaits `ready`, so a quick release during audio start-up can't leave a stuck note.
     held.ready = ensureAudio().then(() => {
@@ -434,9 +439,12 @@ export function createActions(app) {
       engine.noteOn(trackId, pitch, vel);
     }).catch(() => {});
   }
-  async function liveNoteOff(pitch) {
-    const held = liveHeld.get(pitch);
-    liveHeld.delete(pitch);
+  /** trackId: which track's note (default: the first held one of that pitch); expr: note expression to record
+   * ({bend, bendAt} from MPE / pitch bend, see src/control/router.js). */
+  async function liveNoteOff(pitch, trackId = null, expr = null) {
+    const hk = heldKeyOf(pitch, trackId);
+    const held = hk ? liveHeld.get(hk) : null;
+    liveHeld.delete(hk);
     if (!held) return;
     await held.ready;
     engine.noteOff(held.trackId, pitch);
@@ -454,13 +462,14 @@ export function createActions(app) {
       if (start >= pat.length) start -= pat.length;
       const dur = Math.max(snap, Math.round((engine.getPosition() - held.startBeat) / snap) * snap);
       store.transact('Record note', (pp) => {
-        pp.patterns[pat.id]?.notes.push(createNote(pitch, start, dur, held.vel));
+        pp.patterns[pat.id]?.notes.push(expr ? { ...createNote(pitch, start, dur, held.vel), ...expr } : createNote(pitch, start, dur, held.vel));
       });
     }
   }
 
   // Web MIDI input
   async function enableMidiInput() {
+    if (app.control) { app.control.openPrefs('midi'); return; } // src/control: device manager, routing, learn
     if (!navigator.requestMIDIAccess) { toast('Web MIDI is not supported in this browser', { level: 'warn' }); return; }
     try {
       const access = await navigator.requestMIDIAccess();
@@ -517,8 +526,9 @@ export function createActions(app) {
   }
 
   async function openProject(file) {
-    if (!(file instanceof Blob)) [file] = await fileInput('.daW3,.daw3,.json,application/json');
+    if (!(file instanceof Blob)) [file] = await fileInput('.daW3,.daw3,.json,application/json,.dawproject');
     if (!file) return;
+    if (/\.dawproject$/i.test(file.name || '')) return interchange('importDawprojectFile', file);
     try {
       const text = await file.text();
       loadProjectObject(parseProjectFile(text), 'Opened');
@@ -541,6 +551,12 @@ export function createActions(app) {
   }
 
   // ---------------------------------------------------------------- export / import
+  /** Interchange formats (DAWproject, stems bundle, MusicXML) — lazy-loaded, see src/io/interchange/ui.js. */
+  function interchange(fn, ...args) {
+    return import('../io/interchange/ui.js')
+      .then((m) => m[fn]({ app, ensureAudio, loadProjectObject, selectTrack }, ...args))
+      .catch((e) => { console.error(e); toast(`Interchange failed: ${e.message}`, { level: 'error', timeout: 7000 }); });
+  }
   let exportNoticeShown = false;
   async function exportWav({ stems = false } = {}) {
     await ensureAudio();
@@ -903,6 +919,8 @@ export function createActions(app) {
       { label: 'Import', icon: 'upload', submenu: [
         { label: 'Audio samples…', icon: 'wave', onClick: () => importSamples() },
         { label: 'MIDI file…', icon: 'music', onClick: () => importMidiFile() },
+        { label: 'DAWproject (Bitwig, Studio One, Cubase)…', icon: 'folder', onClick: () => interchange('importDawprojectFile') },
+        { label: 'MusicXML melody…', icon: 'music', onClick: () => interchange('importMusicXmlFile') },
         { label: 'Strudel / code file…', icon: 'code', onClick: () => importStrudel() },
         { label: 'Paste Strudel code…', icon: 'code', onClick: async () => { const code = await promptText('Paste Strudel code', '', { multiline: true }); if (code) importStrudel(new File([code], 'pasted.strudel')); } },
       ] },
@@ -910,13 +928,20 @@ export function createActions(app) {
         { label: 'Mixdown WAV', icon: 'wave', shortcut: 'Ctrl+E', onClick: () => exportWav() },
         { label: 'Stems (WAV per track)', icon: 'layers', onClick: () => exportWav({ stems: true }) },
         { label: 'MIDI file', icon: 'music', onClick: () => exportMidiFile() },
+        { label: 'DAWproject (Bitwig, Studio One, Cubase)…', icon: 'folder', onClick: () => interchange('exportDawprojectDialog') },
+        { label: 'For mixing engineer (stems + MIDI ZIP)…', icon: 'layers', onClick: () => interchange('exportMixBundleDialog') },
+        { label: 'MusicXML lead sheet…', icon: 'music', onClick: () => interchange('exportMusicXmlDialog') },
         { label: 'Strudel code', icon: 'code', onClick: () => exportCode() },
         { label: 'Project file (.daW3)', icon: 'save', onClick: () => saveProject() },
       ] },
       '-',
       { label: 'Plugins (SoundFonts, Faust, WAM)…', icon: 'plug', onClick: () => import('./plugins-dialog.js').then((m) => m.openPluginsDialog(app)) },
       '-',
-      { label: 'Enable MIDI keyboard input', icon: 'piano', onClick: () => enableMidiInput() },
+      { label: 'MIDI devices, controllers & sync…', icon: 'piano', onClick: () => (app.control ? app.control.openPrefs('midi') : enableMidiInput()) },
+      ...(app.control ? [
+        { label: 'Preferences (shortcuts, MIDI, sync)…', icon: 'sliders', onClick: () => app.control.openPrefs() },
+        { label: 'Command palette', icon: 'search', shortcut: app.control.shortcutLabel('palette.open'), onClick: () => app.control.openPalette() },
+      ] : []),
       { label: `Computer keyboard piano (\`)`, icon: 'keyboard', onClick: () => { app.keyboardPiano.enabled = !app.keyboardPiano.enabled; toast(`Keyboard piano ${app.keyboardPiano.enabled ? 'ON' : 'OFF'}`); } },
       { label: 'Pocket layout (phone / touch)', icon: 'music', onClick: () => import('../mobile/mode.js').then((m) => m.switchLayout('pocket')) },
       { label: `Theme: ${ui.get('theme') === 'dark' ? 'switch to light' : 'switch to dark'}`, icon: 'sun', onClick: () => ui.set({ theme: ui.get('theme') === 'dark' ? 'light' : 'dark' }) },
@@ -1189,7 +1214,7 @@ export function createActions(app) {
         card('folder', 'Open project', 'Continue a saved .daW3 file', () => openProject()),
         card('layers', 'Recent in browser', 'Restore an autosaved session', () => showLocalProjects()),
       ),
-      h('p.muted', { style: { textAlign: 'center', fontSize: '12px' } }, 'Tip: press ? any time for shortcuts. Space plays, 1–7 switch views, ` toggles the keyboard piano.'));
+      h('p.muted', { style: { textAlign: 'center', fontSize: '12px' } }, 'Tip: press ? any time for shortcuts. Space plays, 1–8 switch views, ` toggles the keyboard piano.'));
     const m = modal({ title: '', body, width: 820, cls: 'welcome' });
   }
 
@@ -1198,6 +1223,7 @@ export function createActions(app) {
       ['Space', 'Play / pause'], ['Enter', 'Stop (twice: return to start)'], ['1 – 7', 'Arrange, Scenes, Step Rack, Piano Roll, Mixer, Code, Plugboard'],
       ['P', 'Toggle Pattern / Song mode'], ['L', 'Toggle loop'], ['M', 'Metronome'], ['R', 'Record'], ['Shift+A', 'Arm automation recording (move any control while playing)'], ['`', 'Computer keyboard piano'],
       ['Z…M / Q…P', 'Play notes (keyboard piano on)'], ['- / =', 'Octave down / up'], ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'],
+      ['Ctrl/Cmd+K', 'Command palette — search every action'], ['Ctrl+Shift+M', 'MIDI learn mode (map hardware knobs to any control)'],
       ['Ctrl+S / Ctrl+O', 'Save / open project'], ['Ctrl+E', 'Export WAV'], ['B / D / A', 'Toggle browser / device / assistant panels'],
       ['Piano roll', 'Click empty = add note, drag = move, edge = resize, right-click/Alt = delete, Shift-drag = select, Ctrl+A/C/V/D'],
       ['Arrange', 'Double-click lane = new clip, drag clips, edge resize, Alt-drag = copy, Delete removes'],
@@ -1275,7 +1301,7 @@ export function createActions(app) {
     togglePlay, play, stop, setPosition, setMode, toggleRecord, liveNoteOn,
     recorder, startAudioRecording, finishAudioRecording, getCountIn, setCountIn, liveNoteOff, enableMidiInput, ensureAudio,
     setGenre, applyGenreDefaults, newProject, openProject, saveProject, renameProject, loadProjectObject,
-    exportWav, exportMidiFile, exportCode, importMidiFile, importStrudel, renderCodeToTracks, importSamples, placeSample, sampleToSampler,
+    exportWav, exportMidiFile, exportCode, importMidiFile, interchange, importStrudel, renderCodeToTracks, importSamples, placeSample, sampleToSampler,
     generatePart, generateSong, newProgression, currentProgression, applyAssistantAction, showExtendDialog, extendSongBy, removeSectionAt,
     mainMenuItems, generateMenuItems, showSongWizard, showHelp, showAbout, showWelcome, showLocalProjects,
     undo: () => { const l = store.undo(); if (l) app.setStatus?.(`Undo: ${l}`); },

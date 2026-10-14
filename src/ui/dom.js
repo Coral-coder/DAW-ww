@@ -54,6 +54,7 @@ const ICONS = {
   record: '<circle cx="12" cy="12" r="6" fill="currentColor" stroke="none"/>',
   loop: '<path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/>',
   metronome: '<path d="M8 21l3-18h2l3 18z"/><path d="M12 15l6-8"/>',
+  refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>',
   undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
   redo: '<path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
