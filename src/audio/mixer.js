@@ -813,6 +813,33 @@ export class MixGraph {
     }
   }
 
+  /** Gain envelope of one audio-clip play: 4 ms de-click ramps + the clip's own fades (fadeIn / fadeOut, beats). */
+  _clipEnvelope(g, clip, ev, time, dur, spb) {
+    const gain = clip.gain ?? 1;
+    const fade = Math.min(0.004, dur / 4);
+    if (clip.fadeIn > 0 || clip.fadeOut > 0) {
+      // clip fades (beats, e.g. from DAWproject imports): linear in / out over the clip's own timeline
+      const t0 = Math.max(0, ev.offset * spb);
+      const clipDur = clip.length * spb;
+      const fi = Math.max(0, (clip.fadeIn || 0) * spb);
+      const fo = Math.max(0, (clip.fadeOut || 0) * spb);
+      const env = (tc) => gain * (fi > 0 ? Math.min(1, tc / fi) : 1) * (fo > 0 ? Math.min(1, Math.max(0, clipDur - tc) / fo) : 1);
+      const end = time + dur;
+      g.gain.setValueAtTime(0, time);
+      g.gain.linearRampToValueAtTime(env(t0 + fade), time + fade);
+      if (fi > t0 + fade && time + fi - t0 < end) g.gain.linearRampToValueAtTime(env(fi), time + fi - t0);
+      const foStart = time + (clipDur - fo) - t0;
+      if (fo > 0 && foStart > time + fade && foStart < end) g.gain.linearRampToValueAtTime(env(clipDur - fo), foStart);
+      g.gain.linearRampToValueAtTime(env(t0 + dur - fade), end - fade);
+      g.gain.linearRampToValueAtTime(0, end);
+    } else {
+      g.gain.setValueAtTime(0, time);
+      g.gain.linearRampToValueAtTime(gain, time + fade);
+      g.gain.setValueAtTime(gain, time + dur - fade);
+      g.gain.linearRampToValueAtTime(0, time + dur);
+    }
+  }
+
   _playAudioClip(e, ev, time, spb) {
     const clip = ev.clip;
     // long samples stream from the PCM cache (stream/streamer.js) instead of an AudioBuffer
@@ -828,12 +855,7 @@ export class MixGraph {
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;
     const g = this.ctx.createGain();
-    const gain = clip.gain ?? 1;
-    const fade = Math.min(0.004, dur / 4);
-    g.gain.setValueAtTime(0, time);
-    g.gain.linearRampToValueAtTime(gain, time + fade);
-    g.gain.setValueAtTime(gain, time + dur - fade);
-    g.gain.linearRampToValueAtTime(0, time + dur);
+    this._clipEnvelope(g, clip, ev, time, dur, spb);
     src.connect(g);
     g.connect(e.strip.input);
     src.start(time, offSec, dur + 0.001);
@@ -849,12 +871,7 @@ export class MixGraph {
     const dur = Math.min(ev.dur * spb, stream.duration - offSec);
     if (dur <= 0.002) return;
     const g = this.ctx.createGain();
-    const gain = clip.gain ?? 1;
-    const fade = Math.min(0.004, dur / 4);
-    g.gain.setValueAtTime(0, time);
-    g.gain.linearRampToValueAtTime(gain, time + fade);
-    g.gain.setValueAtTime(gain, time + dur - fade);
-    g.gain.linearRampToValueAtTime(0, time + dur);
+    this._clipEnvelope(g, clip, ev, time, dur, spb);
     g.connect(e.strip.input);
     let voice;
     try { voice = this.o.playStream(stream, g, time, offSec, dur + 0.001); } catch (err) { this.onError(err); try { g.disconnect(); } catch { /* */ } return; }

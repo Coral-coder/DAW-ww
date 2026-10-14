@@ -471,6 +471,18 @@ export class AudioEngine extends Emitter {
     try { inst.noteOff(pitch, this.ctx.currentTime); } catch (e) { this._error(e); }
   }
 
+  /** Live pitch bend (-1..1) of a track's instrument (MIDI controllers; instruments without bend ignore it). */
+  pitchBend(trackId, value) {
+    const inst = this.graph?.getInstrument(trackId);
+    if (inst && this.ctx) inst.pitchBend(value, this.ctx.currentTime);
+  }
+
+  /** Per-note expression of a held live note (MPE): { bend (semitones), pressure 0..1, timbre 0..1 }. */
+  noteExpression(trackId, pitch, x) {
+    const inst = this.graph?.getInstrument(trackId);
+    if (inst && this.ctx) inst.noteExpression?.(pitch, x, this.ctx.currentTime);
+  }
+
   /** One-shot preview (e.g. clicking a step / piano-roll note). durBeats at current tempo. */
   async previewNote(trackId, pitch, vel = 0.8, durBeats = 0.5) {
     await this.init();

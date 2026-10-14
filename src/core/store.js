@@ -16,6 +16,10 @@ export class Store extends Emitter {
     this._lastLabel = null;
     this._lastTime = 0;
     this.guards = []; // edit guards: {capture(project), check(captured, project) -> violation|null, restore(violation, project)}
+    // Optional undo provider (collaboration: undo only your own ops) — { undo, redo, canUndo, canRedo }.
+    this.history = null;
+    // How the last top-level transaction was made ({ label, undo, coalesce }) — read by 'change' listeners.
+    this.lastCommit = null;
   }
 
   /**
@@ -72,6 +76,7 @@ export class Store extends Emitter {
       });
     }
     if (this._batchDepth === 0) {
+      this.lastCommit = { label, undo: recordUndo, coalesce: !!opts.coalesce };
       this.project.modifiedAt = new Date().toISOString();
       this._emitChange(label);
     }
@@ -82,10 +87,11 @@ export class Store extends Emitter {
     this.emit('change', this.project, label);
   }
 
-  canUndo() { return this.undoStack.length > 0; }
-  canRedo() { return this.redoStack.length > 0; }
+  canUndo() { return this.history ? this.history.canUndo() : this.undoStack.length > 0; }
+  canRedo() { return this.history ? this.history.canRedo() : this.redoStack.length > 0; }
 
   undo() {
+    if (this.history) return this.history.undo();
     const step = this.undoStack.pop();
     if (!step) return null;
     this.redoStack.push({ label: step.label, snap: this._snapshot() });
@@ -96,6 +102,7 @@ export class Store extends Emitter {
   }
 
   redo() {
+    if (this.history) return this.history.redo();
     const step = this.redoStack.pop();
     if (!step) return null;
     this.undoStack.push({ label: step.label, snap: this._snapshot() });
@@ -111,6 +118,7 @@ export class Store extends Emitter {
     this.undoStack.length = 0;
     this.redoStack.length = 0;
     this._lastLabel = null;
+    this.lastCommit = { label: 'load', undo: false, coalesce: false };
     this.emit('load', this.project);
     this._emitChange('load');
   }

@@ -16,6 +16,7 @@ src/
   audio/             Web Audio engine: instruments, drum synth, sampler, effects, scheduler, render
   io/                project save/load, MIDI import/export, WAV encode, autosave
   ui/                views & components
+  collab/            real-time collaboration (CRDT, WebRTC, presence) + versions — docs/COLLAB.md
 tests/               node:test unit tests (*.test.js)
 ```
 
@@ -446,6 +447,67 @@ esbuild (build time only; it applies three small, checked superdough patches —
 * `recovery.js`: crash-safe incremental snapshots, recovery and version history (see Pro engine).
 * `autosave.js`: IndexedDB autosave + list/restore of local projects.
 * `samples.js`: `fileToSample(file) -> Sample` (base64), `sampleToArrayBuffer(sample)`.
+* `interchange/*`: other-DAW formats — see "Interchange" below.
+
+## Interchange (`src/io/interchange/*` — pure except `ui.js`)
+
+Menu: File → Import / Export → *DAWproject…*, *For mixing engineer (stems + MIDI ZIP)…*, *MusicXML…*
+(`actions.interchange(fn)` lazy-loads `ui.js`; Open… also accepts `.dawproject`).
+
+* `zip.js`: `writeZip(entries) / readZip(bytes) / zipText` — store + deflate (method 8), CRC-checked, UTF-8 names,
+  no ZIP64. Deflate via `CompressionStream('deflate-raw')` when available, else `node:zlib`; a `{deflateRaw,
+  inflateRaw}` codec can be injected (tests use node:zlib). `xml.js`: `el()/toXml()` writer + small `parseXml()`
+  (no DOMParser needed — works in Node). `media.js`: WAV header info, mime/extension, safe names.
+* `dawproject.js` — [DAWproject 1.0](https://github.com/bitwig/dawproject) (Bitwig, Studio One, Cubase…):
+  `exportDawproject(project, {renders, sampleInfo}) -> {bytes, report}`, `importDawproject(bytes) -> {project, report}`.
+  * Tracks → `<Track><Channel>` (Volume linear 0..2, Pan normalized 0..1 ↔ −1..1, Mute, Solo), buses → `role="effect"`
+    channels with post-fader `<Send>`s, master → `role="master"`. Group (`submix`) tracks are flattened on import.
+  * Instruments / code tracks → `<BuiltinDevice deviceRole="instrument" deviceID="daw3.instrument.<type>">` named after
+    the preset, every number/enum/bool param as a `*Parameter` (automation targets) + a JSON State file
+    (`plugins/*.json`, `format: 'daw3-device'`) that restores the device exactly in daW³ (referenced samples are
+    exported with it). Compressor / Limiter / Gate / EQ (eq3, eq8) → the spec's generic `<Compressor>` /
+    `<Limiter>` / `<NoiseGate>` / `<Equalizer>` (ratio ↔ percent `1−1/r`); other effects → `BuiltinDevice audioFX`.
+  * Pattern clips → `<Clip playStart=offset loopStart=0 loopEnd=patternLength><Notes>` with the notes **unrolled**
+    over the played range: loop-aware and loop-ignoring importers both play the right notes; the importer keeps
+    `[loopStart, loopEnd)` as the pattern and dedupes identical clips into one shared pattern. Velocity = `vel`
+    (× clip gain). Audio clips → `<Clip contentTimeUnit="beats" fade*><Warps>` (beats → seconds at natural speed)
+    `<Audio><File path="audio/…">`; offsets / fades round-trip (`clip.fadeIn` / `clip.fadeOut` in beats, played by
+    `MixGraph._playAudioClip`). Code tracks export their rendered notes as one clip (State restores the code).
+  * Automation → `<Points><Target parameter=…>` in the owner's arrangement lane: volume, pan, mute, sends,
+    instrument / effect params, effect on/off. Step lanes (mute, on/off, enums) are written as switch points
+    (`stepPoints`, daW³ thresholds linear lanes); `hold` points import as vertical steps. Unmappable lanes
+    (plugboard cables, disabled lanes) are omitted and listed in `report.unmapped`.
+  * Tempo / meter → `<Transport>`; optional `project.tempoAutomation [{beat,bpm}]` / `project.timeSigAutomation
+    [{beat,num,den}]` ↔ `<TempoAutomation>` / `<TimeSignatureAutomation>` (kept on import, but daW³ plays the first
+    value — reported). Markers ↔ `<Markers>`.
+  * *Render instrument tracks to audio alongside MIDI*: `renders[trackId]` (post-insert, pre-fader, pre-master
+    renders from `stems.js` + `renderOffline`) become extra audio tracks `"<name> (audio)"` carrying the original
+    fader / pan / sends + their automation, tagged `comment="daw3:rendered-from:<id>"` — skipped when daW³ re-imports
+    its own file (the instrument is restored), kept otherwise.
+  * Import of foreign devices: instruments → nearest daW³ preset by device / track name and note range; effects by
+    name (reverb, delay, EQ, compressor…) with default settings; anything else stays a placeholder in
+    `track.foreignDevices` (written back as an unloaded device of the same kind on export). Everything approximate
+    or dropped (MIDI CC / expression automation, clip-launcher scenes, disabled clips, time-stretch, pre-fader sends,
+    group processing) goes into `report` (`summarizeReport` → toast, details dialog).
+* `stems.js` — "Export for mixing engineer": `stemVariant(project, trackId, {tap})` (`post-fader` = fader, pan,
+  automation, sends; `post-insert` = unity, centre, no sends; both bypass the master), `renderStems(project, {render})`
+  (one offline render per unmuted track with content, same `startBeat 0 … endBeat + tail` → identical lengths),
+  `buildMixBundle()` → `Name/README.txt` (BPM, meter, key, sample rate, bit depth, tap), `Stems/NN Track.wav`
+  (`encodeWav` at the chosen bit depth), `MIDI/Name.mid` (`exportMidi`), `Tempo map.txt`.
+* `musicxml.js` — MusicXML 4.0 partwise lead sheet: the melody track (role lead/vocal, else most monophonic & highest)
+  as a top-line skyline, quantized to 24 divisions per quarter (16ths, 32nds, triplets exact), split at barlines with
+  ties, notatable values via `splitDuration`; key signature from `project.key`; chord symbols (`<harmony>`, MusicXML
+  `kind` + `text`) from the project's harmony = the chords / pad track detected per beat (`harmonyChords`, bass from
+  the bass track); tempo, rehearsal marks for markers, velocities as `dynamics`. Import (`.musicxml`, `.xml`,
+  compressed `.mxl`): pitched notes (chords, ties, backup / forward, pickups) → one track + pattern per part;
+  chord symbols → an optional chords track. Percussion (unpitched) and timewise scores are not supported.
+* **AAF / OMF are out of scope.** Both are binary post-production containers (AAF = Microsoft Structured Storage
+  with an object model of several hundred classes; OMF 2 a legacy Avid binary) built for audio/video editorial
+  hand-off to Pro Tools / Media Composer: seconds-based timelines with audio and fades only — no notes, no musical
+  time, no instruments or devices. A faithful writer needs a compound-document (CFB) implementation plus the AAF
+  object model (or the AAF SDK, a native library), and what it can carry is a strict subset of the stems bundle and
+  DAWproject (audio regions + volume/pan). For post-production delivery use the stems bundle (sample-accurate,
+  identical lengths from 0:00) or DAWproject; Pro Tools users import the stems + MIDI.
 
 ## Plugins (`src/plugins/*`, browser runtime lazy-loaded)
 

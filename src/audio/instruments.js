@@ -133,6 +133,14 @@ export class Instrument {
   get error() { return this.fallbackActive ? null : (this.engine?.error ?? null); }
   /** value -1..1 (synth only; others ignore). */
   pitchBend(value, time) { try { this.engine.pitchBend?.(value, time); } catch (e) { warn(e); } }
+  /** Per-note expression of a held note (MPE): { bend (semitones), pressure 0..1, timbre 0..1 }. Engines without
+   * per-voice support fall back to channel pitch bend for the bend. */
+  noteExpression(pitch, x, time) {
+    try {
+      if (this.engine.noteExpression) this.engine.noteExpression(pitch, x, time);
+      else if (x && Number.isFinite(x.bend)) this.engine.pitchBend?.(x.bend / Math.max(1, this.engine.params?.bendRange || 2), time);
+    } catch (e) { warn(e); }
+  }
   /** Number of currently allocated voices (for meters/debug). */
   get activeVoices() { return this.engine ? [...this.engine.voices].filter((v) => !v.done).length : 0; }
   dispose() { try { this.engine?.dispose(); } catch (e) { warn(e); } this.engine = null; }
