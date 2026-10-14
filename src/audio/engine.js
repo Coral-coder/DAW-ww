@@ -98,6 +98,7 @@ export class AudioEngine extends Emitter {
         getSampleAnalysis: (id) => this.project.samples?.[id]?.analysis || null, // warp: transients (beats mode)
         isStreamed: (id) => this._streams(id),
         playStream: (meta, dest, when, off, dur) => this.streamer.play(meta, dest, when, off, dur),
+        openStreamPort: (meta) => this.streamer.openPort(meta), // warped streamed clips (warp/worklet.js)
         onError: (e) => this._error(e),
         onLatency: (pdc) => this.emit('latency', this.getLatency()),
       });

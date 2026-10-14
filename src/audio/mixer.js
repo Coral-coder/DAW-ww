@@ -990,7 +990,10 @@ export class MixGraph {
 
   /** Warp engine for audio clips (warp modes / tempo maps), created on first use. */
   _warpPlayer() {
-    return this._warp || (this._warp = new WarpPlayer(this, { getSampleBuffer: (id) => this.o.getSampleBuffer(id), getSampleAnalysis: (id) => this.o.getSampleAnalysis?.(id) || null, worklet: this.o.warpWorklet !== false }));
+    return this._warp || (this._warp = new WarpPlayer(this, {
+      getSampleBuffer: (id) => this.o.getSampleBuffer(id), getSampleAnalysis: (id) => this.o.getSampleAnalysis?.(id) || null, worklet: this.o.warpWorklet !== false,
+      getSampleStream: (id) => this.o.getSampleStream?.(id) || null, isStreamed: (id) => !!this.o.isStreamed?.(id), openStreamPort: this.o.openStreamPort,
+    }));
   }
 
   /** Gain envelope of one audio-clip play: 4 ms de-click ramps + the clip's own fades (fadeIn / fadeOut, beats). */

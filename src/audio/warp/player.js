@@ -8,6 +8,9 @@
 //              PCM is posted once per context into the worklet scope;
 //              fallback (no AudioWorklet, worklet still loading, offline renders / export): the same WarpRenderer
 //              runs once on the main thread and the result is cached (LRU) and played as a plain buffer.
+// Long streamed samples (stream/streamer.js; no AudioBuffer): every warp mode — repitch too — streams through the
+// same worklet with a sliding source window fed by the stream worker (o.getSampleStream / o.openStreamPort), so a
+// warped 10-minute stem plays warped right away and is never decoded whole.
 // Live tempo edits: retime(map, time, beat) re-curves every voice that spans `beat` from ctx `time` on (worklet
 // voices get the spliced curve and carry on seamlessly; repitch re-schedules playbackRate; cached voices restart).
 import { clipCurve, curveRates, curveTimeAt, isWarped, secAtBeat, spliceCurve } from './markers.js';
@@ -60,7 +63,7 @@ export function beatSlices(clip, analysis, duration) {
   if (analysis?.transients?.length) return analysis.transients;
   const out = [];
   const w = clip.warp;
-  for (let k = 0; k < 4096; k++) {
+  for (let k = 0; k < 1 << 20; k++) { // (long streamed clips: thousands of 16ths)
     const s = secAtBeat(w, (w.markers?.[0]?.beat || 0) + k / 4);
     if (s > duration) break;
     if (s >= 0) out.push(s);
@@ -83,8 +86,11 @@ export class WarpPlayer {
 
   play(e, ev, time, spb, map) {
     const clip = ev.clip;
-    const buffer = this.o.getSampleBuffer(clip.sampleId);
-    if (!buffer) return;
+    // streamed sample: never decode it whole (getSampleBuffer would) — still preparing: skip this play
+    const stream = this.o.getSampleStream?.(clip.sampleId) || null;
+    if (!stream && this.o.isStreamed?.(clip.sampleId)) return;
+    const buffer = stream ? null : this.o.getSampleBuffer(clip.sampleId);
+    if (!buffer && !stream) return;
     if (!map) map = new TempoMap({ bpm: 60 / (spb || 0.5) });
     const b0 = ev.beat, b1 = ev.beat + ev.dur;
     const { points, duration } = clipCurve(clip, map, b0, b1);
@@ -95,7 +101,8 @@ export class WarpPlayer {
     this.g._clipEnvelope(g, clip, ev, time, duration, map.spbAt(b0));
     g.connect(e.strip.input);
     let src = null;
-    if (mode === 'off' || mode === 'repitch') src = this._native(buffer, points, duration, time, g, mode);
+    if (stream) src = this._streamed(clip, stream, points, time, g, mode);
+    else if (mode === 'off' || mode === 'repitch') src = this._native(buffer, points, duration, time, g, mode);
     else src = this._stretched(clip, buffer, points, duration, time, g, mode);
     if (!src) { try { g.disconnect(); } catch { /* */ } return; }
     const rec = { src, g };
@@ -199,6 +206,25 @@ export class WarpPlayer {
     return src;
   }
 
+  /** Streamed sample through the warp worklet (any mode); null while the worklet is not loaded yet. */
+  _streamed(clip, meta, points, time, dest, mode) {
+    const st = workletState.get(this.ctx);
+    if (!this.useWorklet || st?.status !== 'ready' || !this.o.openStreamPort) {
+      if (this.useWorklet && !st) loadWarpWorklet(this.ctx);
+      return null;
+    }
+    const info = { duration: meta.frames / meta.sampleRate, sampleRate: meta.sampleRate };
+    const o = this._opts(clip, info, points, mode);
+    const node = new AudioWorkletNode(this.ctx, 'daw3-warp', {
+      numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
+      processorOptions: { sampleId: clip.sampleId, when: time, mode, curve: o.curve, transpose: o.transpose, formants: o.formants, quality: o.quality, slices: o.slices, srcRate: o.srcRate,
+        stream: { frames: meta.frames, channels: meta.channels, chunkFrames: meta.chunkFrames } },
+    });
+    const port = this.o.openStreamPort(meta);
+    node.port.postMessage({ port }, [port]);
+    return this._workletVoice(node, dest);
+  }
+
   _opts(clip, buffer, points, mode) {
     const w = clip.warp || {};
     const analysis = this.o.getSampleAnalysis?.(clip.sampleId) || null;
@@ -263,6 +289,10 @@ export class WarpPlayer {
       node.port.postMessage({ type: 'sample', id: sampleId, sr: buffer.sampleRate, channels: chs }, chs.map((c) => c.buffer));
       st.samples.add(sampleId);
     }
+    return this._workletVoice(node, dest);
+  }
+
+  _workletVoice(node, dest) {
     node.connect(dest);
     const voice = {
       node,
@@ -270,7 +300,7 @@ export class WarpPlayer {
       stop: (t) => { try { node.port.postMessage({ type: 'stop', at: t ?? 0 }); } catch { /* */ } },
     };
     node.port.onmessage = (m) => {
-      if (m.data?.type === 'ended') { try { node.disconnect(); } catch { /* */ } voice.onended?.(); }
+      if (m.data?.type === 'ended') { this.stats.underruns = (this.stats.underruns || 0) + (m.data.underruns || 0); try { node.disconnect(); } catch { /* */ } voice.onended?.(); }
     };
     this.stats.worklet++;
     return voice;

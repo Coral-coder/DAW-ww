@@ -15,6 +15,9 @@
 //
 // new WarpRenderer({ channels: Float32Array[], srcRate, outRate, curve: [{t, s}], mode, transpose, formants,
 //                    quality, slices: [sec] }) ; .process(outs: Float32Array[], frames) -> frames written; .done
+// Windowed source (long streamed samples, see worklet.js): pass `window: { mono, frames }` — `channels` / `mono` then
+// hold source frames [base, base + length) only; the owner keeps them filled and sets `.base`, asking
+// neededRange(frames) which source frames the next `frames` output frames read. Reads outside the window are 0.
 
 import { curveAt, curveTimeAt } from './markers.js';
 
@@ -84,7 +87,9 @@ export class WarpRenderer {
     this.n = 0; // output frames produced
     this.hint = { i: 0 };
     this.done = this.total === 0;
-    this.srcLen = this.ch[0]?.length || 0;
+    this.srcLen = o.window?.frames ?? (this.ch[0]?.length || 0);
+    this.base = 0; // source frame of channels[c][0] (windowed source)
+    this.windowMono = o.window?.mono || null;
     if (this.mode === 'beats') this._initBeats(o.slices || []);
     else if (this.mode === 'tones' || this.mode === 'complex') this._initWsola(o.quality || 'normal');
   }
@@ -101,6 +106,32 @@ export class WarpRenderer {
     this.hint = { i: 0 };
     this.done = this.n >= this.total;
     if (this.mode === 'beats' && this.slices) this.sliceT = this.slices.map((x) => curveTimeAt(this.curve, x));
+  }
+
+  /** Source frames [lo, hi] the next `frames` output frames read (windowed source: what must be loaded). */
+  neededRange(frames) {
+    const sr = this.srcRate, t0 = this.n / this.outRate, t1 = (this.n + frames) / this.outRate;
+    let lo, hi;
+    if (this.mode === 'beats') {
+      const S = this.slices, T = this.sliceT;
+      let j = this.sj;
+      while (j + 1 < S.length && T[j + 1] <= t0) j++;
+      while (j > 0 && T[j] > t0) j--;
+      lo = Infinity; hi = -Infinity;
+      for (let k = Math.max(0, j - 1); k < S.length && (k <= j || T[k] <= t1); k++) {
+        const a = S[k] + Math.max(0, t0 - T[k]) * this.P, b = Math.min(S[k + 1] ?? Infinity, S[k] + Math.max(0, t1 - T[k]) * this.P);
+        lo = Math.min(lo, a); hi = Math.max(hi, b);
+      }
+      lo = lo * sr - 4; hi = hi * sr + 4;
+    } else if (this.mode === 'tones' || this.mode === 'complex') {
+      const span = this.N * this.r + this.tol * 5 + 4 * this.order + 16;
+      const tA = (this._gStart(this.k) + this.N / 2) / this.outRate, tB = (this.n + frames + this.N * 1.5) / this.outRate;
+      lo = this.s(Math.min(t0, tA)) * sr - span; hi = this.s(tB) * sr + span;
+      if (this.prevA != null) lo = Math.min(lo, this.prevA - 8);
+    } else {
+      lo = this.s(t0) * sr - 4; hi = this.s(t1) * sr + 4;
+    }
+    return [Math.max(0, Math.floor(lo)), Math.min(this.srcLen, Math.ceil(hi))];
   }
 
   /** Source seconds at output seconds t. */
@@ -135,7 +166,7 @@ export class WarpRenderer {
   _repitch(outs, n) {
     const ratio = this.srcRate;
     for (let i = 0; i < n; i++) {
-      const p = this.s((this.n + i) / this.outRate) * ratio;
+      const p = this.s((this.n + i) / this.outRate) * ratio - this.base;
       for (let c = 0; c < outs.length; c++) outs[c][i] = readCubic(this.ch[Math.min(c, this.nch - 1)], p);
     }
   }
@@ -158,7 +189,7 @@ export class WarpRenderer {
     const left = (next - pos) * this.srcRate;
     if (left <= 0) return 0;
     const g = left < this.fadeOut ? left / this.fadeOut : 1;
-    return g * readCubic(this.ch[Math.min(c, this.nch - 1)], p);
+    return g * readCubic(this.ch[Math.min(c, this.nch - 1)], p - this.base);
   }
   _beats(outs, n) {
     const S = this.slices, T = this.sliceT;
@@ -191,7 +222,7 @@ export class WarpRenderer {
     for (let i = 0; i < N; i++) this.win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N); // periodic Hann: Σ = ov/2
     this.norm = 2 / this.ov;
     this.r = this.P * (this.srcRate / this.outRate); // source samples per output sample inside a grain
-    this.mono = this.nch > 1 ? (() => { const m = new Float32Array(this.srcLen); for (const x of this.ch) for (let i = 0; i < m.length; i++) m[i] += x[i] / this.nch; return m; })() : this.ch[0];
+    this.mono = this.windowMono || (this.nch > 1 ? (() => { const m = new Float32Array(this.srcLen); for (const x of this.ch) for (let i = 0; i < m.length; i++) m[i] += x[i] / this.nch; return m; })() : this.ch[0]);
     // accumulator: acc[c][i] = output sample (accBase + i)
     this.accLen = N * 2;
     this.acc = Array.from({ length: Math.max(2, this.nch) }, () => new Float32Array(this.accLen));
@@ -222,10 +253,10 @@ export class WarpRenderer {
   }
 
   _corr(a0, b0, len) {
-    const m = this.mono, r = this.r, D = this.D;
+    const m = this.mono, r = this.r, D = this.D, base = this.base;
     let s = 0;
     for (let i = 0; i < len; i += D) {
-      const ia = Math.floor(a0 + i * r), ib = Math.floor(b0 + i * r);
+      const ia = Math.floor(a0 + i * r) - base, ib = Math.floor(b0 + i * r) - base;
       if (ia < 0 || ib < 0 || ia >= m.length || ib >= m.length) continue;
       s += m[ia] * m[ib];
     }
@@ -265,13 +296,13 @@ export class WarpRenderer {
       // LPC on the source span the grain reads (mono, Hann-windowed)
       const L = Math.min(4096, Math.max(64, Math.round(N * r)));
       const fr = new Float32Array(L);
-      for (let i = 0; i < L; i++) fr[i] = readLin(this.mono, a + i * (N * r / L)) * (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / L));
+      for (let i = 0; i < L; i++) fr[i] = readLin(this.mono, a + i * (N * r / L) - this.base) * (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / L));
       A = lpc(fr, this.order);
     }
     for (let c = 0; c < this.acc.length; c++) {
       const x = this.ch[Math.min(c, this.nch - 1)];
       if (A) this._formantGrain(x, a, A, g);
-      else for (let i = 0; i < N; i++) g[i] = readCubic(x, a + i * r);
+      else { const a0 = a - this.base; for (let i = 0; i < N; i++) g[i] = readCubic(x, a0 + i * r); }
       const acc = this.acc[c];
       for (let i = 0; i < N; i++) { const j = base + i; if (j >= 0 && j < acc.length) acc[j] += w[i] * g[i]; }
     }
@@ -282,11 +313,12 @@ export class WarpRenderer {
   _formantGrain(x, a, A, g) {
     const { N, r, order: p } = this;
     const warm = 2 * p;
-    const s0 = Math.floor(a) - p - 2;
+    const s0 = Math.floor(a) - p - 2; // (absolute source frame; the window starts at this.base)
+    const xb = this.base;
     const span = Math.ceil((N + warm) * r) + p + 8;
     const res = new Float32Array(span);
     for (let m = 0; m < span; m++) {
-      const idx = s0 + m;
+      const idx = s0 + m - xb;
       let v = idx >= 0 && idx < x.length ? x[idx] : 0;
       for (let i = 1; i <= p; i++) { const k = idx - i; if (k >= 0 && k < x.length) v += A[i] * x[k]; }
       res[m] = v;

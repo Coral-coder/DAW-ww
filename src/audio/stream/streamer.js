@@ -11,6 +11,8 @@
 //                                                     sessions under key = id + data length)
 //   s.handle(sampleId) -> meta | null                 ready to stream (null while preparing / for short samples)
 //   s.play(meta, destination, when, offsetSec, durSec) -> voice { node, stop(time), onended }
+//   s.openPort(meta) -> MessagePort                   chunk server for another consumer (warped streamed clips:
+//                                                     warp/worklet.js) — { need: idx } -> { chunk: idx, data }
 //   isLongSample(sample)                              should this sample stream?
 // Offline renders (export, freeze) never stream: they decode normally (render.js).
 import { sampleToArrayBuffer } from '../../io/samples.js';
@@ -122,6 +124,13 @@ export class SampleStreamer {
     return p;
   }
 
+  /** A MessagePort served by the stream worker for meta's PCM ({ need } -> { chunk, data }); transfer it to its user. */
+  openPort(meta) {
+    const ch = new MessageChannel();
+    this.worker.postMessage({ cmd: 'serve', key: meta.key, port: ch.port1 }, [ch.port1]);
+    return ch.port2;
+  }
+
   /** Start a voice: plays [offsetSec, offsetSec + durSec) of the sample at ctx time `when` into `destination`. */
   play(meta, destination, when, offsetSec = 0, durSec = Infinity) {
     const sr = this.ctx.sampleRate;
@@ -134,9 +143,8 @@ export class SampleStreamer {
         length: Number.isFinite(durSec) ? Math.round(durSec * sr) : undefined,
       },
     });
-    const ch = new MessageChannel();
-    this.worker.postMessage({ cmd: 'serve', key: meta.key, port: ch.port1 }, [ch.port1]);
-    node.port.postMessage({ port: ch.port2 }, [ch.port2]);
+    const port = this.openPort(meta);
+    node.port.postMessage({ port }, [port]);
     node.connect(destination);
     const voice = {
       node,
