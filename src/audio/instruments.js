@@ -84,6 +84,12 @@ export class Instrument {
     }
     this.type = type;
     this.params = params;
+    if (this._padOuts) { try { this.engine?.setPadOutputs?.(this._padOuts); } catch (e) { warn(e); } }
+  }
+  /** Drum multi-out ({padKey: AudioNode}); engines without per-pad outputs ignore it. */
+  setPadOutputs(map) {
+    this._padOuts = map || null;
+    try { this.engine?.setPadOutputs?.(map); } catch (e) { warn(e); }
   }
   /** A built-in engine playing preset `presetId` (fallback of 'strudel' instruments). */
   _fallbackEngine(presetId) {

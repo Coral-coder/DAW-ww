@@ -13,6 +13,7 @@
 // Port 1 on a 'ducker' effect node is its key (sidechain) input.
 //
 // When `patch.enabled` is false or the patch is absent the serial chain (track.fx order) is used.
+import { busesFedBy } from './mixer-model.js';
 import { uid } from './util.js';
 
 export const PATCH_IN = 'in';
@@ -427,12 +428,15 @@ export function findDrumTrack(project, excludeId) {
     || null;
 }
 
-/** All ducker key requests of the project: [{ ownerKind, ownerId, fxId, sourceTrackId }]. */
+/** Effect types with a sidechain key input (param `sourceTrackId`: a track or bus id, '' = none / internal). */
+export const KEYED_FX = new Set(['ducker', 'compressor', 'gate']);
+
+/** All sidechain key requests of the project: [{ ownerKind, ownerId, fxId, sourceTrackId }] (source: track or bus id). */
 export function keyRequests(project) {
   const out = [];
   const scan = (kind, id, fx) => {
     for (const f of fx || []) {
-      const src = f?.type === 'ducker' ? f.params?.sourceTrackId : null;
+      const src = KEYED_FX.has(f?.type) ? f.params?.sourceTrackId : null;
       if (src) out.push({ ownerKind: kind, ownerId: id, fxId: f.id, sourceTrackId: src });
     }
   };
@@ -442,19 +446,26 @@ export function keyRequests(project) {
   return out;
 }
 
+/** Audio routing edges (track → bus via sends / output / drum multi-outs) used for key-loop checks. */
+function routingEdges(project) {
+  const edges = [];
+  for (const t of project?.tracks || []) for (const b of busesFedBy(project, t)) edges.push({ from: { node: t.id }, to: { node: b } });
+  return edges;
+}
+
 /**
- * Key links the engine may build: Map(fxId -> sourceTrackId). Drops self-keying, missing source
- * tracks and any track→track link that would close a loop (A ducks B while B ducks A, which in
- * Web Audio would be a delay-free cycle). Earlier tracks / effects win.
+ * Key links the engine may build: Map(fxId -> source id). Drops self-keying, missing sources and any link that
+ * would close a loop through the audio routing (track → bus) or other keys (A ducks B while B ducks A; a track
+ * keyed by a bus it feeds) — in Web Audio that would be a delay-free cycle. Earlier tracks / effects win.
  */
 export function resolveKeyLinks(project) {
-  const trackIds = new Set((project?.tracks || []).map((t) => t.id));
-  const edges = []; // track → track
+  const ids = new Set([...(project?.tracks || []).map((t) => t.id), ...(project?.buses || []).map((b) => b.id)]);
+  const edges = routingEdges(project);
   const out = new Map();
   for (const r of keyRequests(project)) {
-    if (!trackIds.has(r.sourceTrackId)) continue;
-    if (r.ownerKind === 'track') {
-      if (r.ownerId === r.sourceTrackId) continue;
+    if (!ids.has(r.sourceTrackId)) continue;
+    if (r.ownerId === r.sourceTrackId) continue;
+    if (r.ownerKind !== 'master') {
       if (wouldCreateCycle(edges, r.sourceTrackId, r.ownerId)) continue;
       edges.push({ from: { node: r.sourceTrackId }, to: { node: r.ownerId } });
     }
@@ -463,13 +474,13 @@ export function resolveKeyLinks(project) {
   return out;
 }
 
-/** Could `sourceTrackId` key a ducker on `targetTrackId` without a loop? */
+/** Could `sourceTrackId` (track or bus) key a sidechain effect on `targetTrackId` (track or bus) without a loop? */
 export function canKey(project, targetTrackId, sourceTrackId, ignoreFxId = null) {
   if (!sourceTrackId || targetTrackId === sourceTrackId) return false;
-  const edges = [];
+  const edges = routingEdges(project);
   const links = resolveKeyLinks(project);
   for (const r of keyRequests(project)) {
-    if (r.ownerKind !== 'track' || r.fxId === ignoreFxId || links.get(r.fxId) !== r.sourceTrackId) continue;
+    if (r.ownerKind === 'master' || r.fxId === ignoreFxId || links.get(r.fxId) !== r.sourceTrackId) continue;
     edges.push({ from: { node: r.sourceTrackId }, to: { node: r.ownerId } });
   }
   return !wouldCreateCycle(edges, sourceTrackId, targetTrackId);

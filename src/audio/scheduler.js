@@ -12,14 +12,14 @@ import * as strudel from '../code/strudel.js';
 import { beatsPerBar } from '../core/model.js';
 import { hasMuteLane } from '../core/automation.js';
 import { frozenMode, frozenClip } from '../core/freeze.js';
+import { isAudible } from '../core/mixer-model.js';
 
 export const EPS = 1e-7;
 const inWin = (x, b0, b1) => x >= b0 - EPS && x < b1 - EPS;
 
 export function isTrackAudible(project, track) {
-  if (!track || track.mute) return false;
-  const anySolo = project.tracks.some((t) => t.solo);
-  return !anySolo || !!track.solo;
+  // mute, solo-in-place (+ solo-safe); AFL / PFL solo never silences the main mix — see core/mixer-model.js
+  return isAudible(project, track);
 }
 
 /**
@@ -29,8 +29,7 @@ export function isTrackAudible(project, track) {
 export function isTrackPlayable(project, track, mode) {
   if (isTrackAudible(project, track)) return true;
   if (!track || mode !== 'song' || !track.mute || !hasMuteLane(track)) return false;
-  const anySolo = project.tracks.some((t) => t.solo);
-  return !anySolo || !!track.solo;
+  return isAudible(project, { ...track, mute: false });
 }
 
 /** Delay odd 16ths by swing * 1/8 beat. */

@@ -77,6 +77,7 @@ export function snapshotTargets(project, opts = {}) {
     put(b.id, 'mute', !!b.mute);
     fxOf(b.id, b.fx);
   }
+  for (const v of project?.mixer?.vcas || []) put(v.id, 'volume', v.volume ?? 1); // VCA faders (core/mixer-model.js)
   if (project?.master) {
     put('master', 'volume', project.master.volume ?? 0.9);
     fxOf('master', project.master.fx);

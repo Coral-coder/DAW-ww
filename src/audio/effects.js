@@ -420,11 +420,55 @@ const BUILDERS = {
     const comp = ctx.createDynamicsCompressor();
     const makeup = ctx.createGain();
     const dryDelay = ctx.createDelay(0.05);
-    dryDelay.delayTime.value = lookaheadTime(COMPRESSOR_LOOKAHEAD, ctx.sampleRate); // DynamicsCompressor look-ahead -> keep parallel mix phase-aligned
+    const look = lookaheadTime(COMPRESSOR_LOOKAHEAD, ctx.sampleRate);
+    dryDelay.delayTime.value = look; // DynamicsCompressor look-ahead -> keep parallel mix phase-aligned
     try { sh.fxIn.disconnect(sh.dry); } catch { /* */ }
     sh.fxIn.connect(dryDelay); dryDelay.connect(sh.dry);
     sh.fxIn.connect(comp); comp.connect(makeup); makeup.connect(sh.wet);
+    // External sidechain (params.sourceTrackId): the native compressor can't take a key, so a keyed gain computer
+    // runs instead — key → mono → |x| → peak follower (attack / release) → static curve (threshold, ratio, knee →
+    // gain reduction) → VCA on the signal, delayed by the same look-ahead (constant latency for PDC).
+    const keyIn = ctx.createGain();
+    keyIn.channelCount = 1; keyIn.channelCountMode = 'explicit';
+    let keyed = null;
+    let keyedOn = false;
+    let curveKey = '';
+    let lastRed = 0;
+    const buildKeyed = () => {
+      const rect = ctx.createWaveShaper(); rect.curve = makeCurve((x) => Math.abs(x), 4097);
+      const fast = ctx.createBiquadFilter(); fast.type = 'lowpass'; fast.Q.value = -3;
+      const slowIn = ctx.createGain(); slowIn.gain.value = 1.6;
+      const slow = ctx.createBiquadFilter(); slow.type = 'lowpass'; slow.Q.value = -3;
+      const maxSum = ctx.createGain(); maxSum.gain.value = 0.5;
+      const diff = ctx.createGain();
+      const neg = ctx.createGain(); neg.gain.value = -1;
+      const diffAbs = ctx.createWaveShaper(); diffAbs.curve = makeCurve((x) => Math.abs(x), 4097);
+      const gr = ctx.createWaveShaper(); // envelope (0..1 linear) -> -(1 - gain)
+      const vca = ctx.createGain(); vca.gain.value = 1;
+      const sigDelay = ctx.createDelay(0.05); sigDelay.delayTime.value = look;
+      const an = ctx.createAnalyser(); an.fftSize = 256;
+      keyIn.connect(rect); rect.connect(fast); rect.connect(slowIn); slowIn.connect(slow);
+      fast.connect(maxSum); slow.connect(maxSum);
+      fast.connect(diff); slow.connect(neg); neg.connect(diff); diff.connect(diffAbs); diffAbs.connect(maxSum);
+      maxSum.connect(gr); gr.connect(vca.gain); gr.connect(an);
+      sigDelay.connect(vca);
+      return { rect, fast, slowIn, slow, maxSum, diff, neg, diffAbs, gr, vca, sigDelay, an, buf: new Float32Array(256) };
+    };
+    const route = (on) => {
+      if (on === keyedOn) return;
+      keyedOn = on;
+      if (on) {
+        keyed ||= buildKeyed();
+        try { sh.fxIn.disconnect(comp); } catch { /* */ }
+        sh.fxIn.connect(keyed.sigDelay); keyed.vca.connect(makeup);
+      } else {
+        try { sh.fxIn.disconnect(keyed.sigDelay); } catch { /* */ }
+        try { keyed.vca.disconnect(); } catch { /* */ }
+        sh.fxIn.connect(comp);
+      }
+    };
     return {
+      keyInput: keyIn,
       apply(p, im) {
         setP(comp.threshold, p.threshold, ctx, im);
         setP(comp.ratio, p.ratio, ctx, im);
@@ -432,8 +476,41 @@ const BUILDERS = {
         setP(comp.release, p.release, ctx, im);
         setP(comp.knee, p.knee, ctx, im);
         setP(makeup.gain, dbToGain(p.makeup), ctx, im);
+        route(!!p.sourceTrackId);
+        if (keyed) {
+          const k = `${p.threshold}|${p.ratio}|${p.knee}`;
+          if (k !== curveKey) {
+            curveKey = k;
+            const slope = 1 - 1 / Math.max(1, p.ratio);
+            const knee = Math.max(0.01, p.knee);
+            keyed.gr.curve = makeCurve((x) => {
+              const lvl = Math.abs(x);
+              if (lvl <= 1e-6) return 0;
+              const over = 20 * Math.log10(lvl) + 3 - p.threshold; // follower ≈ peak − 3 dB
+              let red;
+              if (over <= -knee / 2) red = 0;
+              else if (over < knee / 2) red = (slope * (over + knee / 2) ** 2) / (2 * knee);
+              else red = slope * over;
+              return -(1 - Math.pow(10, -red / 20));
+            }, 8193);
+          }
+          setP(keyed.fast.frequency, clamp(1 / (2 * Math.PI * Math.max(0.0005, p.attack)), 2, 800), ctx, im);
+          setP(keyed.slow.frequency, clamp(1 / (2 * Math.PI * Math.max(0.01, p.release) * 0.5), 0.3, 100), ctx, im);
+        }
       },
-      getReduction: () => comp.reduction,
+      getReduction: () => {
+        if (!keyedOn || !keyed) return comp.reduction;
+        keyed.an.getFloatTimeDomainData(keyed.buf);
+        let m = 0;
+        for (let i = 0; i < keyed.buf.length; i++) m = Math.min(m, keyed.buf[i]);
+        lastRed = m <= -0.999 ? -60 : 20 * Math.log10(1 + m);
+        return lastRed;
+      },
+      dispose() {
+        try { keyIn.disconnect(); } catch { /* */ }
+        if (keyed) for (const n of Object.values(keyed)) { try { n.disconnect?.(); } catch { /* */ } }
+        for (const n of [comp, makeup, dryDelay]) { try { n.disconnect(); } catch { /* */ } }
+      },
     };
   },
 
@@ -489,9 +566,18 @@ const BUILDERS = {
     sh.fxIn.connect(detMono); detMono.connect(det); det.connect(env); env.connect(thresh); thresh.connect(smooth);
     smooth.connect(vca.gain);
     sh.fxIn.connect(look); look.connect(vca); vca.connect(sh.wet);
+    // external sidechain (params.sourceTrackId): the detector listens to the key instead of the signal
+    const keyIn = ctx.createGain();
+    let keyedOn = false;
     let key = '';
     return {
+      keyInput: keyIn,
       apply(p, im) {
+        if (!!p.sourceTrackId !== keyedOn) {
+          keyedOn = !!p.sourceTrackId;
+          try { (keyedOn ? sh.fxIn : keyIn).disconnect(detMono); } catch { /* */ }
+          (keyedOn ? keyIn : sh.fxIn).connect(detMono);
+        }
         const k = `${p.threshold}|${p.range}|${p.knee}`;
         if (k !== key) {
           key = k;

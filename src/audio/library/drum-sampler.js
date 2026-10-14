@@ -146,7 +146,7 @@ export class DrumSamplerInstrument extends DrumInstrument {
       const pn = v.node(ctx.createStereoPanner()); pn.pan.value = pan;
       node.connect(pn); node = pn;
     }
-    node.connect(this.out.input);
+    node.connect(this.padOuts?.[padKey] || this.out.input); // multi-out (DrumInstrument.setPadOutputs)
     v.amp = amp;
     v.group = group;
     v.pad = padKey;
