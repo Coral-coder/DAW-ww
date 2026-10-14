@@ -18,7 +18,7 @@
 namespace daw3 {
 
 constexpr uint32_t kShmMagic = 0x48503344;  // "D3PH"
-constexpr uint32_t kShmVersion = 1;
+constexpr uint32_t kShmVersion = 2;
 constexpr uint32_t kMaxMidi = 512;
 constexpr uint32_t kMaxParamEvents = 256;
 
@@ -31,6 +31,7 @@ struct ShmHeader {
   uint32_t magic, version, maxFrames, maxChannels;
   // request
   uint32_t instId, nframes, numIn, numOut;
+  uint32_t numSc, reserved;  // sidechain channels follow the numIn main channels in the input area
   uint32_t midiCount, paramCount;
   uint32_t playing, flags;
   double tempo, ppqPos, sampleRate;
@@ -44,7 +45,7 @@ struct ShmHeader {
 
 inline size_t shmAudioOffset() { return (sizeof(ShmHeader) + 63) & ~size_t(63); }
 inline size_t shmSize(uint32_t maxFrames, uint32_t maxCh) { return shmAudioOffset() + size_t(2) * maxFrames * maxCh * sizeof(float); }
-/** Planar input: channel c at shmIn(h) + c * maxFrames. */
+/** Planar input: channel c at shmIn(h) + c * maxFrames (main channels, then sidechain channels). */
 inline float* shmIn(ShmHeader* h) { return reinterpret_cast<float*>(reinterpret_cast<char*>(h) + shmAudioOffset()); }
 inline float* shmOut(ShmHeader* h) { return shmIn(h) + size_t(h->maxFrames) * h->maxChannels; }
 

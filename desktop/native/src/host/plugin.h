@@ -11,14 +11,38 @@
 
 namespace daw3 {
 
+/** One audio bus (CLAP port / VST3 bus / AU element). */
+struct AudioBus {
+  std::string name;
+  int channels = 2;
+};
+
 struct PluginDesc {
   std::string format;  // "clap" | "vst3" | "au"
   std::string uid;     // format-specific id (clap id, vst3 class id hex, au "type:subtype:manu")
   std::string name, vendor, version, category, path;
   bool instrument = false;
   int numInputs = 2, numOutputs = 2;  // main bus channels
+  int sidechainChannels = 0;          // aux input bus (sidechain key), 0 = none
+  std::vector<AudioBus> outputBuses;  // every output bus, main first (filled once the plugin is created)
   bool midiInput = false;
   std::string key() const { return format + ":" + uid; }
+  /** Output channels over all buses (ProcessBlock::out holds them bus after bus). */
+  int totalOutputs() const {
+    if (outputBuses.empty()) return numOutputs;
+    int n = 0;
+    for (auto& b : outputBuses) n += b.channels;
+    return n;
+  }
+  Json toJson() const;
+};
+
+/** A preset the plugin offers: built in ("factory") or a preset file on disk ("file"). */
+struct PresetInfo {
+  std::string id;        // what loadPreset() takes back
+  std::string name, category;
+  std::string kind;      // "factory" | "file"
+  std::string path;      // preset file (kind "file")
   Json toJson() const;
 };
 
@@ -39,8 +63,10 @@ struct ParamEvt { uint32_t offset; uint32_t id; double value; };
 struct ProcessBlock {
   uint32_t nframes = 0;
   uint32_t numIn = 0, numOut = 0;
-  const float* const* in = nullptr;  // planar
-  float* const* out = nullptr;
+  const float* const* in = nullptr;  // planar, main input bus
+  float* const* out = nullptr;       // planar, every output bus one after the other (desc().outputBuses)
+  const float* const* sc = nullptr;  // planar sidechain (aux input bus) channels, may be null
+  uint32_t numSc = 0;
   const MidiEvt* midi = nullptr;
   uint32_t midiCount = 0;
   const ParamEvt* params = nullptr;  // plain values
@@ -80,6 +106,12 @@ class PluginInstance {
   virtual bool hasEditor() = 0;
   virtual bool openEditor(std::string& err) = 0;
   virtual void closeEditor() = 0;
+  /** Main thread. Factory presets + preset files found for this plugin. */
+  virtual std::vector<PresetInfo> presets() { return {}; }
+  /** Main thread, audio thread idle (the host holds the instance lock). */
+  virtual bool loadPreset(const std::string& id, std::string& err) { err = "This plugin has no presets"; return false; }
+  /** Write the current state as a preset file in the format's own format (.vstpreset / .aupreset). */
+  virtual bool savePreset(const std::string& path, std::string& err) { err = "Saving presets is not supported for this format"; return false; }
   void setListener(InstanceListener l) { std::lock_guard<std::mutex> g(lm_); listener_ = std::move(l); }
 
  protected:
@@ -112,6 +144,13 @@ bool isDirectory(const std::string& p);
 std::vector<std::string> listDir(const std::string& p);
 std::string baseName(const std::string& p);
 std::string stripExt(const std::string& s);
+/** Folders that hold preset files of a plugin: <root>/<vendor>/<plugin name> for every preset root
+ *  (macOS ~/Library/Audio/Presets + /Library/Audio/Presets, Linux ~/.vst3/presets, plus $DAW3_PRESET_DIRS). */
+std::vector<std::string> presetFolders(const PluginDesc& d);
+/** Preset files with extension `ext` (".vstpreset") below `dirs` -> {path, category (sub folder)}. */
+std::vector<std::pair<std::string, std::string>> findPresetFiles(const std::vector<std::string>& dirs, const std::string& ext);
+bool readFile(const std::string& path, std::vector<uint8_t>& out);
+bool writeFile(const std::string& path, const std::vector<uint8_t>& data);
 /** The executable inside a bundle: Contents/MacOS/<name> on macOS, Contents/<arch>-linux/<name>.so on Linux, or the path itself. */
 std::string bundleBinary(const std::string& bundle, const std::string& ext);
 

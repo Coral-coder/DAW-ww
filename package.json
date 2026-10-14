@@ -83,7 +83,8 @@
         "to": "native",
         "filter": [
           "daw3_audio.node",
-          "daw3-plughost"
+          "daw3-plughost",
+          "daw3-link"
         ]
       }
     ],

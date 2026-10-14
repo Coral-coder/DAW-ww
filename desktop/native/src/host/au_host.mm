@@ -93,7 +93,7 @@ class AuInstance : public PluginInstance {
 
   const PluginDesc& desc() const override { return desc_; }
 
-  bool setFormat(AudioUnitScope scope, UInt32 ch) {
+  bool setFormat(AudioUnitScope scope, UInt32 ch, AudioUnitElement element = 0) {
     AudioStreamBasicDescription f = {};
     f.mSampleRate = sr_;
     f.mFormatID = kAudioFormatLinearPCM;
@@ -103,7 +103,21 @@ class AuInstance : public PluginInstance {
     f.mBytesPerFrame = 4;
     f.mChannelsPerFrame = ch;
     f.mBitsPerChannel = 32;
-    return AudioUnitSetProperty(unit_, kAudioUnitProperty_StreamFormat, scope, 0, &f, sizeof f) == noErr;
+    return AudioUnitSetProperty(unit_, kAudioUnitProperty_StreamFormat, scope, element, &f, sizeof f) == noErr;
+  }
+
+  UInt32 elementCount(AudioUnitScope scope) {
+    UInt32 n = 0, sz = sizeof n;
+    if (AudioUnitGetProperty(unit_, kAudioUnitProperty_ElementCount, scope, 0, &n, &sz) != noErr) return scope == kAudioUnitScope_Output ? 1 : 0;
+    return n;
+  }
+
+  std::string elementName(AudioUnitScope scope, AudioUnitElement el) {
+    CFStringRef name = nullptr;
+    UInt32 sz = sizeof name;
+    std::string out;
+    if (AudioUnitGetProperty(unit_, kAudioUnitProperty_ElementName, scope, el, &name, &sz) == noErr && name) { out = cfString(name); CFRelease(name); }
+    return out;
   }
 
   bool activate(double sr, uint32_t maxFrames, std::string& err) override {
@@ -115,6 +129,19 @@ class AuInstance : public PluginInstance {
       if (setFormat(kAudioUnitScope_Output, 1)) desc_.numOutputs = 1;
       else { err = "The Audio Unit rejected a 32-bit float stream format"; return false; }
     }
+    // multi-out instruments / effects: every output element is a bus (stereo, else mono)
+    outCh_.assign(1, (UInt32)desc_.numOutputs);
+    desc_.outputBuses.assign(1, AudioBus{"Main", desc_.numOutputs});
+    const UInt32 nOutEl = std::min<UInt32>(elementCount(kAudioUnitScope_Output), 16);
+    for (UInt32 el = 1; el < nOutEl; el++) {
+      UInt32 ch = setFormat(kAudioUnitScope_Output, 2, el) ? 2 : setFormat(kAudioUnitScope_Output, 1, el) ? 1 : 0;
+      if (!ch) break;
+      std::string nm = elementName(kAudioUnitScope_Output, el);
+      outCh_.push_back(ch);
+      desc_.outputBuses.push_back(AudioBus{nm.empty() ? "Out " + std::to_string(el + 1) : nm, (int)ch});
+    }
+    desc_.sidechainChannels = 0;
+    scChannels_ = 0;
     if (!isInstrument_) {
       UInt32 inBuses = 1, sz = sizeof inBuses;
       AudioUnitGetProperty(unit_, kAudioUnitProperty_ElementCount, kAudioUnitScope_Input, 0, &inBuses, &sz);
@@ -126,6 +153,17 @@ class AuInstance : public PluginInstance {
         }
         AURenderCallbackStruct cb = {&AuInstance::renderInput, this};
         AudioUnitSetProperty(unit_, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &cb, sizeof cb);
+        // sidechain: the second input element (compressors / gates with a key input)
+        if (inBuses > 1) {
+          UInt32 ch = setFormat(kAudioUnitScope_Input, 2, 1) ? 2 : setFormat(kAudioUnitScope_Input, 1, 1) ? 1 : 0;
+          if (ch) {
+            AURenderCallbackStruct sc = {&AuInstance::renderSidechain, this};
+            if (AudioUnitSetProperty(unit_, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 1, &sc, sizeof sc) == noErr) {
+              scChannels_ = ch;
+              desc_.sidechainChannels = (int)ch;
+            }
+          }
+        }
       } else {
         desc_.numInputs = 0;
       }
@@ -133,9 +171,10 @@ class AuInstance : public PluginInstance {
     OSStatus st = AudioUnitInitialize(unit_);
     if (st != noErr) { err = "AudioUnitInitialize failed (" + std::to_string((int)st) + ")"; return false; }
     initialized_ = true;
-    abl_.resize(sizeof(AudioBufferList) + sizeof(AudioBuffer) * 2);
+    abl_.resize(sizeof(AudioBufferList) + sizeof(AudioBuffer) * 8);
     silence_.assign(maxFrames, 0.f);
-    scratch_.assign((size_t)maxFrames * 2, 0.f);
+    scratch_.assign((size_t)maxFrames * std::max(2, desc_.totalOutputs()), 0.f);
+    maxFrames_ = maxFrames;
     return true;
   }
 
@@ -151,6 +190,8 @@ class AuInstance : public PluginInstance {
     playing_ = b.playing;
     curIn_ = b.in;
     curNumIn_ = b.numIn;
+    curSc_ = b.sc;
+    curNumSc_ = b.numSc;
     curFrames_ = b.nframes;
     for (uint32_t i = 0; i < b.paramCount; i++)
       AudioUnitSetParameter(unit_, b.params[i].id, kAudioUnitScope_Global, 0, (AudioUnitParameterValue)b.params[i].value, std::min(b.params[i].offset, b.nframes - 1));
@@ -158,24 +199,31 @@ class AuInstance : public PluginInstance {
       for (uint32_t i = 0; i < b.midiCount; i++)
         MusicDeviceMIDIEvent(unit_, b.midi[i].data[0], b.midi[i].data[1], b.midi[i].data[2], std::min(b.midi[i].offset, b.nframes ? b.nframes - 1 : 0));
     auto* abl = reinterpret_cast<AudioBufferList*>(abl_.data());
-    const UInt32 nout = (UInt32)std::max(1, desc_.numOutputs);
-    abl->mNumberBuffers = nout;
-    for (UInt32 c = 0; c < nout; c++) {
-      abl->mBuffers[c].mNumberChannels = 1;
-      abl->mBuffers[c].mDataByteSize = b.nframes * sizeof(float);
-      abl->mBuffers[c].mData = c < b.numOut ? b.out[c] : scratch_.data() + (size_t)c * silence_.size();
-    }
     AudioTimeStamp ts = {};
     ts.mSampleTime = (Float64)samplePos_;
     ts.mFlags = kAudioTimeStampSampleTimeValid;
-    AudioUnitRenderActionFlags flags = 0;
-    if (AudioUnitRender(unit_, &flags, &ts, 0, b.nframes, abl) == noErr) {
-      for (UInt32 c = 0; c < nout && c < b.numOut; c++)
-        if (abl->mBuffers[c].mData != b.out[c] && abl->mBuffers[c].mData) std::memcpy(b.out[c], abl->mBuffers[c].mData, sizeof(float) * b.nframes);
-      if (nout == 1 && b.numOut > 1) std::memcpy(b.out[1], b.out[0], sizeof(float) * b.nframes);
+    // each output element renders into its slice of b.out (bus after bus); element 0 pulls the input
+    uint32_t oc = 0;
+    for (size_t el = 0; el < outCh_.size(); el++) {
+      const UInt32 nout = std::max<UInt32>(1, outCh_[el]);
+      abl->mNumberBuffers = nout;
+      for (UInt32 c = 0; c < nout; c++) {
+        const uint32_t idx = oc + c;
+        abl->mBuffers[c].mNumberChannels = 1;
+        abl->mBuffers[c].mDataByteSize = b.nframes * sizeof(float);
+        abl->mBuffers[c].mData = idx < b.numOut ? b.out[idx] : scratch_.data() + (size_t)idx * maxFrames_;
+      }
+      AudioUnitRenderActionFlags flags = 0;
+      if (AudioUnitRender(unit_, &flags, &ts, (UInt32)el, b.nframes, abl) == noErr) {
+        for (UInt32 c = 0; c < nout && oc + c < b.numOut; c++)
+          if (abl->mBuffers[c].mData != b.out[oc + c] && abl->mBuffers[c].mData) std::memcpy(b.out[oc + c], abl->mBuffers[c].mData, sizeof(float) * b.nframes);
+        if (outCh_.size() == 1 && nout == 1 && b.numOut > 1) std::memcpy(b.out[1], b.out[0], sizeof(float) * b.nframes);
+      }
+      oc += outCh_[el];
     }
     samplePos_ += b.nframes;
     curIn_ = nullptr;
+    curSc_ = nullptr;
   }
 
   std::vector<ParamInfo> params() override {
@@ -270,6 +318,79 @@ class AuInstance : public PluginInstance {
     AudioUnitSetProperty(unit_, kAudioUnitProperty_OfflineRender, kAudioUnitScope_Global, 0, &v, sizeof v);
   }
 
+  // ---- presets: factory presets (kAudioUnitProperty_FactoryPresets) and .aupreset files (ClassInfo plists)
+  std::vector<PresetInfo> presets() override {
+    std::vector<PresetInfo> out;
+    CFArrayRef list = nullptr;
+    UInt32 sz = sizeof list;
+    if (AudioUnitGetProperty(unit_, kAudioUnitProperty_FactoryPresets, kAudioUnitScope_Global, 0, &list, &sz) == noErr && list) {
+      const CFIndex n = CFArrayGetCount(list);
+      for (CFIndex i = 0; i < n && i < 2048; i++) {
+        auto* p = (const AUPreset*)CFArrayGetValueAtIndex(list, i);
+        if (!p) continue;
+        PresetInfo pi;
+        pi.kind = "factory";
+        pi.name = cfString(p->presetName);
+        if (pi.name.empty()) pi.name = "Preset " + std::to_string((int)p->presetNumber);
+        pi.id = "factory:" + std::to_string((int)p->presetNumber);
+        out.push_back(pi);
+      }
+      CFRelease(list);
+    }
+    for (auto& [path, cat] : findPresetFiles(presetFolders(desc_), ".aupreset")) {
+      PresetInfo pi;
+      pi.kind = "file";
+      pi.path = path;
+      pi.category = cat;
+      pi.name = stripExt(baseName(path));
+      pi.id = "file:" + path;
+      out.push_back(pi);
+    }
+    return out;
+  }
+
+  bool loadPreset(const std::string& id, std::string& err) override {
+    if (id.rfind("factory:", 0) == 0) {
+      const SInt32 num = (SInt32)atoi(id.c_str() + 8);
+      AUPreset want = {num, nullptr};
+      CFArrayRef list = nullptr;
+      UInt32 sz = sizeof list;
+      if (AudioUnitGetProperty(unit_, kAudioUnitProperty_FactoryPresets, kAudioUnitScope_Global, 0, &list, &sz) == noErr && list) {
+        for (CFIndex i = 0; i < CFArrayGetCount(list); i++) {
+          auto* p = (const AUPreset*)CFArrayGetValueAtIndex(list, i);
+          if (p && p->presetNumber == num) want.presetName = p->presetName;
+        }
+      }
+      const OSStatus st = AudioUnitSetProperty(unit_, kAudioUnitProperty_PresentPreset, kAudioUnitScope_Global, 0, &want, sizeof want);
+      if (list) CFRelease(list);
+      if (st != noErr) { err = "The Audio Unit could not load the preset (" + std::to_string((int)st) + ")"; return false; }
+      AudioUnitParameter any = {unit_, kAUParameterListener_AnyParameter, kAudioUnitScope_Global, 0};
+      AUParameterListenerNotify(nullptr, nullptr, &any);
+      return true;
+    }
+    if (id.rfind("file:", 0) == 0) {
+      std::vector<uint8_t> data;
+      if (!readFile(id.substr(5), data)) { err = "Could not read the preset file"; return false; }
+      if (!setState(data)) { err = "The Audio Unit rejected the preset"; return false; }
+      return true;
+    }
+    err = "Bad preset id";
+    return false;
+  }
+
+  bool savePreset(const std::string& path, std::string& err) override {
+    CFPropertyListRef plist = nullptr;
+    UInt32 sz = sizeof plist;
+    if (AudioUnitGetProperty(unit_, kAudioUnitProperty_ClassInfo, kAudioUnitScope_Global, 0, &plist, &sz) != noErr || !plist) { err = "The Audio Unit does not save a state"; return false; }
+    CFDataRef data = CFPropertyListCreateData(nullptr, plist, kCFPropertyListXMLFormat_v1_0, 0, nullptr);
+    CFRelease(plist);
+    if (!data) { err = "Could not encode the preset"; return false; }
+    std::vector<uint8_t> bytes(CFDataGetBytePtr(data), CFDataGetBytePtr(data) + CFDataGetLength(data));
+    CFRelease(data);
+    if (!writeFile(path, bytes)) { err = "Could not write " + path; return false; }
+    return true;
+  }
+
   bool hasEditor() override { return true; }  // a custom Cocoa view, or the generic parameter view
 
   bool openEditor(std::string& err) override {
@@ -329,6 +450,16 @@ class AuInstance : public PluginInstance {
     return noErr;
   }
 
+  static OSStatus renderSidechain(void* self, AudioUnitRenderActionFlags*, const AudioTimeStamp*, UInt32, UInt32 frames, AudioBufferList* io) {
+    auto* s = static_cast<AuInstance*>(self);
+    for (UInt32 c = 0; c < io->mNumberBuffers; c++) {
+      const float* src = s->curSc_ && s->curNumSc_ ? s->curSc_[std::min<uint32_t>(c, s->curNumSc_ - 1)] : s->silence_.data();
+      if (!io->mBuffers[c].mData) io->mBuffers[c].mData = const_cast<float*>(src);
+      else std::memcpy(io->mBuffers[c].mData, src, sizeof(float) * std::min<UInt32>(frames, (UInt32)s->silence_.size()));
+    }
+    return noErr;
+  }
+
   static void onEvent(void* self, void*, const AudioUnitEvent* e, UInt64, AudioUnitParameterValue v) {
     auto* s = static_cast<AuInstance*>(self);
     auto l = s->listener();
@@ -345,7 +476,9 @@ class AuInstance : public PluginInstance {
   bool playing_ = false;
   uint64_t samplePos_ = 0;
   const float* const* curIn_ = nullptr;
-  uint32_t curNumIn_ = 0, curFrames_ = 0;
+  const float* const* curSc_ = nullptr;
+  uint32_t curNumIn_ = 0, curNumSc_ = 0, curFrames_ = 0, scChannels_ = 0, maxFrames_ = 0;
+  std::vector<UInt32> outCh_ = {2};
   std::vector<uint8_t> abl_;
   std::vector<float> silence_, scratch_;
   void* window_ = nullptr;

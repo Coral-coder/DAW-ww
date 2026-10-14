@@ -130,6 +130,18 @@ struct Server {
           insts[iid] = inst;
         }
         r.set("ok", true).set("info", instInfo(*inst));
+      } else if (cmd == "setSampleRate") {
+        // the device rate changed: re-activate every instance at the new rate (state and parameters are kept)
+        sampleRate = m["sampleRate"].num(sampleRate);
+        const uint32_t mf = (uint32_t)m["maxFrames"].num(h ? h->maxFrames : 1024);
+        Json lat = Json::object(), failed = Json::array();
+        std::lock_guard<std::mutex> g(instM);
+        for (auto& kv : insts) {
+          std::string e;
+          if (kv.second->activate(sampleRate, std::min<uint32_t>(mf, h ? h->maxFrames : mf), e)) lat.set(std::to_string(kv.first), kv.second->latency());
+          else failed.push(Json::object().set("inst", kv.first).set("error", e));
+        }
+        r.set("ok", true).set("sampleRate", sampleRate).set("latency", lat).set("failed", failed);
       } else if (cmd == "unload") {
         std::shared_ptr<PluginInstance> p;
         {
@@ -169,6 +181,21 @@ struct Server {
         } else if (cmd == "closeEditor") {
           p->closeEditor();
           r.set("ok", true);
+        } else if (cmd == "presets") {
+          Json arr = Json::array();
+          for (auto& pr : p->presets()) arr.push(pr.toJson());
+          r.set("ok", true).set("presets", arr);
+        } else if (cmd == "loadPreset") {
+          bool ok;
+          {
+            std::lock_guard<std::mutex> g(instM);
+            ok = p->loadPreset(m["preset"].str(), err);
+          }
+          if (!ok) throw std::runtime_error(err.empty() ? "Could not load the preset" : err);
+          r.set("ok", true).set("info", instInfo(*p));
+        } else if (cmd == "savePreset") {
+          if (!p->savePreset(m["path"].str(), err)) throw std::runtime_error(err);
+          r.set("ok", true);
         } else if (cmd == "setOffline") {
           std::lock_guard<std::mutex> g(instM);
           p->setOffline(m["offline"].boolean());
@@ -189,7 +216,7 @@ struct Server {
     outParams.reserve(kMaxParamEvents);
     std::vector<MidiEvt> midi(kMaxMidi);
     std::vector<ParamEvt> params(kMaxParamEvents);
-    std::vector<float*> ins(h->maxChannels), outs(h->maxChannels);
+    std::vector<float*> ins(h->maxChannels), outs(h->maxChannels), scs(h->maxChannels);
     while (!quit.load()) {
       if (!req.wait(250)) continue;
       const uint64_t seq = h->reqSeq.load(std::memory_order_acquire);
@@ -197,6 +224,7 @@ struct Server {
       last = seq;
       const uint32_t nframes = std::min(h->nframes, h->maxFrames);
       const uint32_t nin = std::min(h->numIn, h->maxChannels), nout = std::min(h->numOut, h->maxChannels);
+      const uint32_t nsc = std::min(h->numSc, h->maxChannels - nin);
       for (uint32_t c = 0; c < h->maxChannels; c++) {
         ins[c] = shmIn(h) + (size_t)c * h->maxFrames;
         outs[c] = shmOut(h) + (size_t)c * h->maxFrames;
@@ -211,6 +239,9 @@ struct Server {
       b.numOut = nout;
       b.in = ins.data();
       b.out = outs.data();
+      for (uint32_t c = 0; c < nsc; c++) scs[c] = ins[nin + c];
+      b.sc = nsc ? scs.data() : nullptr;
+      b.numSc = nsc;
       b.midi = midi.data();
       b.midiCount = mc;
       b.params = params.data();

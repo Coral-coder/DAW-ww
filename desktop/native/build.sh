@@ -2,6 +2,7 @@
 # Builds daW³'s native layer into desktop/native/build/:
 #   daw3_audio.node  N-API addon (device I/O + plugin-host client), loaded by the app's audio server
 #   daw3-plughost    out-of-process plugin host (CLAP / VST3 / AU)
+#   daw3-link        Ableton Link as a separate process (JSON lines; desktop/link-server.cjs serves it to the app)
 #   native_tests     C++ unit tests        test plugins: daW3TestGain.clap, daW3TestGain.vst3
 # macOS: universal (arm64 + x86_64) unless ARCHS is set, e.g. ARCHS="arm64". Linux works too (null
 # audio backend for the tests, no editors / AU). Usage: sh desktop/native/build.sh [--test]
@@ -68,6 +69,15 @@ for s in src/host/plugin.cpp src/host/clap_host.cpp src/host/vst3_host.cpp $HOST
 HMAIN="$(obj src/host/host_main.cpp)"
 $CXX $COMMON -o "$OUT/daw3-plughost" "$HMAIN" $HOSTOBJS $VST3_BASE $HOST_LIBS
 
+echo "[native] Ableton Link process (GPL-2.0-or-later Link SDK, see third_party/fetch.sh)"
+LINK_INC="-I$HERE/third_party/link/include -I$HERE/third_party/link/modules/asio-standalone/asio/include"
+if [ "$OS" = "Darwin" ]; then LINK_DEFS="-DLINK_PLATFORM_MACOSX=1 -DLINK_PLATFORM_UNIX=1"; LINK_LIBS=""; else LINK_DEFS="-DLINK_PLATFORM_LINUX=1 -DLINK_PLATFORM_UNIX=1"; LINK_LIBS="-lpthread -latomic"; fi
+LO="$OBJ/link_main.o"
+if [ ! -f "$LO" ] || [ src/link/link_main.cpp -nt "$LO" ] || [ src/host/json.h -nt "$LO" ]; then
+  $CXX $CXXSTD $COMMON -Wno-unused-variable -Wno-multichar $LINK_DEFS $LINK_INC -c src/link/link_main.cpp -o "$LO"
+fi
+$CXX $COMMON -o "$OUT/daw3-link" "$LO" $LINK_LIBS
+
 echo "[native] test plugins"
 bundle() { # bundle <name> <ext> <object files...>
   name="$1"; ext="$2"; shift 2
@@ -107,6 +117,6 @@ $CXX $COMMON -o "$OUT/native_tests" $TESTOBJS $ENG $MA $HOSTOBJS $VST3_BASE $AUD
 
 if [ "${1:-}" = "--test" ]; then
   echo "[native] running native_tests"
-  "$OUT/native_tests" "$OUT/daW3TestGain.clap" "$OUT/daW3TestGain.vst3"
+  "$OUT/native_tests" "$OUT/daW3TestGain.clap" "$OUT/daW3TestGain.vst3" "$OUT/daw3-link"
 fi
 echo "[native] done -> $OUT"

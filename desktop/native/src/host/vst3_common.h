@@ -117,5 +117,58 @@ inline bool parseTuid(const std::string& s, TUID out) {
   return true;
 }
 
+
+// ---- .vstpreset files (Steinberg's preset file format, little-endian):
+//   'VST3' int32 version(1) char classId[32] (ASCII hex) int64 chunkListOffset | chunks… |
+//   'List' int32 count { char id[4] int64 offset int64 size }*   chunks: 'Comp' component state, 'Cont' controller state
+inline void putLE(std::vector<uint8_t>& o, uint64_t v, int bytes) { for (int i = 0; i < bytes; i++) o.push_back((uint8_t)(v >> (8 * i))); }
+inline uint64_t getLE(const std::vector<uint8_t>& d, size_t at, int bytes) {
+  uint64_t v = 0;
+  for (int i = 0; i < bytes; i++) v |= (uint64_t)d[at + i] << (8 * i);
+  return v;
+}
+
+inline std::vector<uint8_t> makeVstPreset(const std::string& classIdHex, const std::vector<uint8_t>& comp, const std::vector<uint8_t>& cont) {
+  std::vector<uint8_t> o = {'V', 'S', 'T', '3'};
+  putLE(o, 1, 4);
+  for (size_t i = 0; i < 32; i++) o.push_back(i < classIdHex.size() ? (uint8_t)classIdHex[i] : (uint8_t)'0');
+  const size_t listAt = o.size();
+  putLE(o, 0, 8);
+  struct E { char id[4]; uint64_t off, size; };
+  std::vector<E> entries;
+  entries.push_back({{'C', 'o', 'm', 'p'}, o.size(), comp.size()});
+  o.insert(o.end(), comp.begin(), comp.end());
+  if (!cont.empty()) {
+    entries.push_back({{'C', 'o', 'n', 't'}, o.size(), cont.size()});
+    o.insert(o.end(), cont.begin(), cont.end());
+  }
+  const uint64_t list = o.size();
+  for (int i = 0; i < 8; i++) o[listAt + i] = (uint8_t)(list >> (8 * i));
+  o.insert(o.end(), {'L', 'i', 's', 't'});
+  putLE(o, entries.size(), 4);
+  for (auto& e : entries) { o.insert(o.end(), e.id, e.id + 4); putLE(o, e.off, 8); putLE(o, e.size, 8); }
+  return o;
+}
+
+/** Parse a .vstpreset: class id (hex) + component / controller state chunks. */
+inline bool parseVstPreset(const std::vector<uint8_t>& d, std::string& classId, std::vector<uint8_t>& comp, std::vector<uint8_t>& cont) {
+  if (d.size() < 48 || std::memcmp(d.data(), "VST3", 4) != 0) return false;
+  classId.assign((const char*)d.data() + 8, 32);
+  const uint64_t list = getLE(d, 40, 8);
+  if (list + 8 > d.size() || std::memcmp(d.data() + list, "List", 4) != 0) return false;
+  const uint64_t n = getLE(d, list + 4, 4);
+  comp.clear();
+  cont.clear();
+  for (uint64_t i = 0; i < n && i < 64; i++) {
+    const size_t at = (size_t)(list + 8 + i * 20);
+    if (at + 20 > d.size()) return false;
+    const uint64_t off = getLE(d, at + 4, 8), size = getLE(d, at + 12, 8);
+    if (off > d.size() || size > d.size() - off) return false;
+    std::vector<uint8_t>* dst = !std::memcmp(d.data() + at, "Comp", 4) ? &comp : !std::memcmp(d.data() + at, "Cont", 4) ? &cont : nullptr;
+    if (dst) dst->assign(d.begin() + (long)off, d.begin() + (long)(off + size));
+  }
+  return true;
+}
+
 }  // namespace v3
 }  // namespace daw3

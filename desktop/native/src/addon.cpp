@@ -310,8 +310,9 @@ napi_value hostDestroy(napi_env env, napi_callback_info info) {
 }
 
 // hostProcess(hostId, { inst, nframes, numIn, numOut, input: Float32Array (planar numIn*nframes),
-//   midi: Float64Array [offset, status, d1, d2]*, params: Float64Array
-//   [offset, id, value]*, playing, tempo, ppq, timeoutMs }) -> { output: Float32Array (planar), status, outParams } | null
+//   numSc, sidechain: Float32Array (planar numSc*nframes, the aux input bus),
+//   midi: Float64Array [offset, status, d1, d2]*, params: Float64Array [offset, id, value]* (sample-accurate,
+//   sorted by offset here), playing, tempo, ppq, timeoutMs }) -> { output: Float32Array (planar), status, outParams } | null
 napi_value hostProcess(napi_env env, napi_callback_info info) {
   auto a = args(env, info, 2);
   double hid = 0;
@@ -324,11 +325,13 @@ napi_value hostProcess(napi_env env, napi_callback_info info) {
   const uint32_t nframes = std::min<uint32_t>((uint32_t)getNum(env, o, "nframes", 128), h->maxFrames);
   const uint32_t numIn = std::min<uint32_t>((uint32_t)getNum(env, o, "numIn", 2), h->maxChannels);
   const uint32_t numOut = std::min<uint32_t>((uint32_t)getNum(env, o, "numOut", 2), h->maxChannels);
+  const uint32_t numSc = std::min<uint32_t>((uint32_t)getNum(env, o, "numSc", 0), h->maxChannels - numIn);
   const int timeoutMs = (int)getNum(env, o, "timeoutMs", 200);
   h->instId = (uint32_t)getNum(env, o, "inst", 0);
   h->nframes = nframes;
   h->numIn = numIn;
   h->numOut = numOut;
+  h->numSc = numSc;
   h->playing = getBool(env, o, "playing", false) ? 1 : 0;
   h->tempo = getNum(env, o, "tempo", 120);
   h->ppqPos = getNum(env, o, "ppq", 0);
@@ -347,6 +350,17 @@ napi_value hostProcess(napi_env env, napi_callback_info info) {
     }
   } else {
     for (uint32_t ch = 0; ch < numIn; ch++) std::memset(shmIn(h) + (size_t)ch * h->maxFrames, 0, nframes * sizeof(float));
+  }
+  // sidechain (aux input bus): input channels numIn..numIn+numSc
+  float* sc;
+  size_t scLen = 0;
+  const bool haveSc = numSc && napi_has_named_property(env, o, "sidechain", &has) == napi_ok && has && napi_get_named_property(env, o, "sidechain", &v) == napi_ok &&
+                      typedArray(env, v, napi_float32_array, &sc, &scLen);
+  for (uint32_t ch = 0; ch < numSc; ch++) {
+    float* dst = shmIn(h) + (size_t)(numIn + ch) * h->maxFrames;
+    const size_t off = (size_t)ch * nframes;
+    if (haveSc && off + nframes <= scLen) std::memcpy(dst, sc + off, nframes * sizeof(float));
+    else std::memset(dst, 0, nframes * sizeof(float));
   }
   // midi events
   h->midiCount = 0;
@@ -368,7 +382,9 @@ napi_value hostProcess(napi_env env, napi_callback_info info) {
   if (napi_has_named_property(env, o, "params", &has) == napi_ok && has && napi_get_named_property(env, o, "params", &v) == napi_ok &&
       typedArray(env, v, napi_float64_array, &pd, &plen)) {
     for (size_t i = 0; i + 2 < plen && h->paramCount < kMaxParamEvents; i += 3)
-      h->params[h->paramCount++] = {(uint32_t)pd[i], (uint32_t)pd[i + 1], pd[i + 2]};
+      h->params[h->paramCount++] = {(uint32_t)std::min<double>(std::max(0.0, pd[i]), nframes ? nframes - 1 : 0), (uint32_t)pd[i + 1], pd[i + 2]};
+    // plugins expect each parameter's points in time order (VST3 queues, CLAP event lists)
+    std::stable_sort(h->params, h->params + h->paramCount, [](const ShmParam& a, const ShmParam& b) { return a.offset < b.offset; });
   }
   h->status = kShmError;
   h->outParamCount = 0;

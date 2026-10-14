@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 
 namespace daw3 {
@@ -14,7 +15,18 @@ Json PluginDesc::toJson() const {
   Json j = Json::object();
   j.set("key", key()).set("format", format).set("uid", uid).set("name", name).set("vendor", vendor).set("version", version)
       .set("category", category).set("path", path).set("instrument", instrument).set("numInputs", numInputs)
-      .set("numOutputs", numOutputs).set("midiInput", midiInput);
+      .set("numOutputs", numOutputs).set("midiInput", midiInput).set("sidechain", sidechainChannels);
+  Json buses = Json::array();
+  if (outputBuses.empty()) buses.push(Json::object().set("name", "Main").set("channels", numOutputs));
+  for (auto& b : outputBuses) buses.push(Json::object().set("name", b.name).set("channels", b.channels));
+  j.set("outputBuses", buses).set("totalOutputs", totalOutputs());
+  return j;
+}
+
+Json PresetInfo::toJson() const {
+  Json j = Json::object();
+  j.set("id", id).set("name", name).set("category", category).set("kind", kind);
+  if (!path.empty()) j.set("path", path);
   return j;
 }
 
@@ -93,6 +105,79 @@ std::vector<std::string> PluginFormat::findBundles(const std::vector<std::string
   std::sort(out.begin(), out.end());
   out.erase(std::unique(out.begin(), out.end()), out.end());
   return out;
+}
+
+static std::string safeSegment(std::string s) {
+  for (auto& c : s) if (c == '/' || c == ':' || c == '\\') c = '_';
+  return s;
+}
+
+std::vector<std::string> presetFolders(const PluginDesc& d) {
+  std::vector<std::string> roots;
+  if (const char* env = getenv("DAW3_PRESET_DIRS")) {
+    std::string s = env;
+    size_t a = 0;
+    while (a <= s.size()) {
+      size_t b = s.find(':', a);
+      if (b == std::string::npos) b = s.size();
+      if (b > a) roots.push_back(s.substr(a, b - a));
+      a = b + 1;
+    }
+  }
+#ifdef __APPLE__
+  roots.push_back(homeDir() + "/Library/Audio/Presets");
+  roots.push_back("/Library/Audio/Presets");
+#else
+  roots.push_back(homeDir() + "/.vst3/presets");
+#endif
+  std::vector<std::string> out;
+  for (auto& r : roots) {
+    out.push_back(r + "/" + safeSegment(d.vendor) + "/" + safeSegment(d.name));
+    // AU presets also live under the plugin name alone (Logic's habit)
+    if (d.format == "au") out.push_back(r + "/" + safeSegment(d.name));
+  }
+  return out;
+}
+
+static void findFilesRec(const std::string& dir, const std::string& rel, const std::string& ext, int depth, std::vector<std::pair<std::string, std::string>>& out) {
+  if (depth > 4 || out.size() > 2000) return;
+  for (auto& n : listDir(dir)) {
+    if (n[0] == '.') continue;
+    std::string p = dir + "/" + n;
+    if (endsWithI(n, ext)) out.emplace_back(p, rel);
+    else if (isDirectory(p)) findFilesRec(p, rel.empty() ? n : rel + "/" + n, ext, depth + 1, out);
+  }
+}
+
+std::vector<std::pair<std::string, std::string>> findPresetFiles(const std::vector<std::string>& dirs, const std::string& ext) {
+  std::vector<std::pair<std::string, std::string>> out;
+  for (auto& d : dirs) if (isDirectory(d)) findFilesRec(d, "", ext, 0, out);
+  std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
+  return out;
+}
+
+bool readFile(const std::string& path, std::vector<uint8_t>& out) {
+  FILE* f = fopen(path.c_str(), "rb");
+  if (!f) return false;
+  out.clear();
+  uint8_t buf[65536];
+  size_t n;
+  while ((n = fread(buf, 1, sizeof buf, f)) > 0) {
+    out.insert(out.end(), buf, buf + n);
+    if (out.size() > (size_t)64 * 1024 * 1024) { fclose(f); return false; }
+  }
+  fclose(f);
+  return true;
+}
+
+bool writeFile(const std::string& path, const std::vector<uint8_t>& data) {
+  // create missing parent folders
+  for (size_t k = 1; (k = path.find('/', k)) != std::string::npos; k++) mkdir(path.substr(0, k).c_str(), 0755);
+  FILE* f = fopen(path.c_str(), "wb");
+  if (!f) return false;
+  const bool ok = fwrite(data.data(), 1, data.size(), f) == data.size();
+  return fclose(f) == 0 && ok;
 }
 
 std::string bundleBinary(const std::string& bundle, const std::string& ext) {

@@ -1,5 +1,7 @@
 // AU hosting tests against Apple's built-in Audio Units (present on every Mac, incl. CI runners).
 #include <cmath>
+#include <cstdlib>
+#include <unistd.h>
 #include <string>
 #include <vector>
 
@@ -62,6 +64,40 @@ void testAu() {
     }
     CHECK(delay->latency() == 0);
     CHECK(delay->hasEditor());
+  }
+
+  // presets: factory presets (where Apple ships them) and a .aupreset file round trip
+  if (delay) {
+    char tmpl[] = "/tmp/daw3-au-presets-XXXXXX";
+    const std::string root = mkdtemp(tmpl) ? tmpl : "/tmp";
+    setenv("DAW3_PRESET_DIRS", root.c_str(), 1);
+    delay->setParam(0, 21);
+    const std::string file = presetFolders(delay->desc())[0] + "/Mine/Dry-ish.aupreset";
+    CHECK(delay->savePreset(file, err));
+    delay->setParam(0, 80);
+    auto list = delay->presets();
+    std::string id;
+    for (auto& p : list) if (p.kind == "file" && p.name == "Dry-ish") { id = p.id; CHECK(p.category == "Mine"); }
+    CHECK(!id.empty());
+    CHECK(delay->loadPreset(id, err));
+    CHECK_NEAR(delay->getParam(0), 21, 1e-3);
+    unsetenv("DAW3_PRESET_DIRS");
+    for (auto& p : list) {
+      if (p.kind != "factory") continue;
+      CHECK(delay->loadPreset(p.id, err));  // every listed factory preset loads
+      break;
+    }
+  }
+  auto reverb = make(*f, all, "aufx:mrev:appl");
+  if (reverb) {
+    CHECK(reverb->activate(48000, 512, err));
+    auto list = reverb->presets();
+    int factory = 0;
+    for (auto& p : list) factory += p.kind == "factory";
+    CHECK(factory > 0);  // AUMatrixReverb ships room / hall presets
+    for (auto& p : list) if (p.kind == "factory") { CHECK(reverb->loadPreset(p.id, err)); break; }
+    for (int i = 0; i < 3; i++) runBlock(*reverb, 256, {}, nullptr);
+    CHECK(reverb->desc().outputBuses.size() >= 1);
   }
 
   // DLSMusicDevice (General MIDI synth): silent, then sound after a note-on

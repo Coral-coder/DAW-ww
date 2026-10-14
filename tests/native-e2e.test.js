@@ -64,15 +64,16 @@ test('native e2e: scan, load, process, params, state, latency (CLAP + VST3 throu
     const { plugins, failed } = await server.handle('plugins.list');
     assert.equal(scan.count, plugins.length);
     const names = plugins.map((p) => `${p.format}:${p.name}`).sort();
-    assert.deepEqual(names, ['clap:daW3 Test Gain', 'clap:daW3 Test Tone', 'vst3:daW3 Test Gain (VST3)']);
+    assert.deepEqual(names, ['clap:daW3 Test Duck', 'clap:daW3 Test Gain', 'clap:daW3 Test Tone', 'vst3:daW3 Test Duck (VST3)', 'vst3:daW3 Test Gain (VST3)']);
     assert.equal(failed.length, 1, 'the broken bundle is reported, not fatal');
     assert.match(failed[0].path, /Broken\.clap$/);
     assert.ok(events.some((e) => e.event === 'scan-progress'));
 
     for (const [format, unity, double, latency] of [['clap', 1, 2, 64], ['vst3', 0.5, 1, 32]]) {
-      const desc = plugins.find((p) => p.format === format && !p.instrument);
+      const desc = plugins.find((p) => p.format === format && /Gain/.test(p.name));
       const info = await server.handle('plugins.load', [{ key: desc.key, sampleRate: 48000 }]);
       assert.equal(info.latency, latency, `${format} latency reported`);
+      info.params = info.params.filter((p) => !(p.flags & 4)); // VST3: the hidden program-change parameter
       assert.equal(info.params.length, 1);
       assert.equal(info.params[0].name, 'Gain');
       assert.equal(info.values[String(info.params[0].id)], unity);

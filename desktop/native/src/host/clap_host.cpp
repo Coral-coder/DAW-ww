@@ -6,6 +6,7 @@
 #include <cstring>
 #include <map>
 #include <thread>
+#include <tuple>
 
 #include "clap/clap.h"
 #include "plugin.h"
@@ -125,6 +126,8 @@ class ClapInstance : public PluginInstance {
     hGui_.request_show = [](const clap_host_t*) { return true; };
     hGui_.request_hide = [](const clap_host_t*) { return true; };
     hGui_.closed = [](const clap_host_t* h, bool) { ClapInstance* s = self(h); runOnMain([s, alive = s->alive_]() { if (*alive) s->closeEditor(); }); };
+    hPresetLoad_.on_error = [](const clap_host_t* h, uint32_t, const char*, const char*, int32_t, const char* msg) { self(h)->presetError_ = msg ? msg : "preset error"; };
+    hPresetLoad_.loaded = [](const clap_host_t* h, uint32_t, const char*, const char*) { auto l = self(h)->listener(); if (l.paramsRescanned) l.paramsRescanned(); };
     outEv_.out.ctx = &outEv_;
     outEv_.inst = this;
     outEv_.out.try_push = [](const clap_output_events_t* l, const clap_event_header_t* e) -> bool {
@@ -149,7 +152,9 @@ class ClapInstance : public PluginInstance {
     }
   }
 
-  bool init(const clap_plugin_factory_t* f, std::string& err) {
+  bool init(const ClapModule* mod, std::string& err) {
+    mod_ = mod;
+    const clap_plugin_factory_t* f = mod->factory;
     plugin_ = f->create_plugin(f, &host_, desc_.uid.c_str());
     if (!plugin_) { err = "create_plugin failed"; return false; }
     if (!plugin_->init(plugin_)) { err = "plugin init failed"; plugin_->destroy(plugin_); plugin_ = nullptr; return false; }
@@ -159,13 +164,7 @@ class ClapInstance : public PluginInstance {
     tail_ = (const clap_plugin_tail_t*)plugin_->get_extension(plugin_, CLAP_EXT_TAIL);
     gui_ = (const clap_plugin_gui_t*)plugin_->get_extension(plugin_, CLAP_EXT_GUI);
     render_ = (const clap_plugin_render_t*)plugin_->get_extension(plugin_, CLAP_EXT_RENDER);
-    auto* ports = (const clap_plugin_audio_ports_t*)plugin_->get_extension(plugin_, CLAP_EXT_AUDIO_PORTS);
-    desc_.numInputs = desc_.numOutputs = 0;
-    if (ports) {
-      clap_audio_port_info_t info;
-      if (ports->count(plugin_, true) > 0 && ports->get(plugin_, 0, true, &info)) desc_.numInputs = (int)info.channel_count;
-      if (ports->count(plugin_, false) > 0 && ports->get(plugin_, 0, false, &info)) desc_.numOutputs = (int)info.channel_count;
-    }
+    readPorts();
     auto* notes = (const clap_plugin_note_ports_t*)plugin_->get_extension(plugin_, CLAP_EXT_NOTE_PORTS);
     if (notes && notes->count(plugin_, true) > 0) {
       clap_note_port_info_t ni;
@@ -178,6 +177,42 @@ class ClapInstance : public PluginInstance {
     return true;
   }
 
+  /** Audio ports -> main input, sidechain (first non-main input port), every output port. */
+  void readPorts() {
+    inCh_.clear();
+    outCh_.clear();
+    mainIn_ = scIn_ = -1;
+    desc_.numInputs = desc_.numOutputs = 0;
+    desc_.sidechainChannels = 0;
+    desc_.outputBuses.clear();
+    auto* ports = (const clap_plugin_audio_ports_t*)plugin_->get_extension(plugin_, CLAP_EXT_AUDIO_PORTS);
+    if (!ports) return;
+    clap_audio_port_info_t info;
+    const uint32_t ni = std::min<uint32_t>(ports->count(plugin_, true), 8);
+    for (uint32_t i = 0; i < ni; i++) {
+      if (!ports->get(plugin_, i, true, &info)) { inCh_.push_back(0); continue; }
+      inCh_.push_back(std::min<uint32_t>(info.channel_count, 8));
+      if (mainIn_ < 0 && (info.flags & CLAP_AUDIO_PORT_IS_MAIN)) mainIn_ = (int)i;
+    }
+    if (mainIn_ < 0 && ni > 0) mainIn_ = 0;
+    for (uint32_t i = 0; i < ni; i++) if ((int)i != mainIn_ && inCh_[i] > 0) { scIn_ = (int)i; break; }
+    if (mainIn_ >= 0) desc_.numInputs = (int)inCh_[mainIn_];
+    if (scIn_ >= 0) desc_.sidechainChannels = (int)inCh_[scIn_];
+    const uint32_t no = std::min<uint32_t>(ports->count(plugin_, false), 16);
+    for (uint32_t i = 0; i < no; i++) {
+      AudioBus bus;
+      bus.channels = 0;
+      if (ports->get(plugin_, i, false, &info)) {
+        bus.channels = (int)std::min<uint32_t>(info.channel_count, 8);
+        bus.name = info.name;
+      }
+      if (bus.name.empty()) bus.name = i == 0 ? "Main" : "Out " + std::to_string(i + 1);
+      outCh_.push_back((uint32_t)bus.channels);
+      desc_.outputBuses.push_back(bus);
+    }
+    if (!outCh_.empty()) desc_.numOutputs = (int)outCh_[0];
+  }
+
   const PluginDesc& desc() const override { return desc_; }
 
   bool activate(double sr, uint32_t maxFrames, std::string& err) override {
@@ -185,10 +220,16 @@ class ClapInstance : public PluginInstance {
     if (!plugin_->activate(plugin_, sr, 1, maxFrames)) { err = "plugin activate failed"; return false; }
     active_ = true;
     startedProcessing_ = false;
-    inBuf_.assign(std::max(1, desc_.numInputs), nullptr);
-    outBuf_.assign(std::max(1, desc_.numOutputs), nullptr);
+    sr_ = sr;
+    maxFrames_ = maxFrames;
+    inPtrs_.assign(inCh_.size(), {});
+    for (size_t i = 0; i < inCh_.size(); i++) inPtrs_[i].assign(std::max<uint32_t>(1, inCh_[i]), nullptr);
+    outPtrs_.assign(outCh_.size(), {});
+    for (size_t i = 0; i < outCh_.size(); i++) outPtrs_[i].assign(std::max<uint32_t>(1, outCh_[i]), nullptr);
+    inBufs_.assign(inCh_.size(), clap_audio_buffer_t{});
+    outBufs_.assign(outCh_.size(), clap_audio_buffer_t{});
     silence_.assign(maxFrames, 0.f);
-    scratch_.assign((size_t)maxFrames * std::max(1, desc_.numOutputs), 0.f);
+    scratch_.assign((size_t)maxFrames * std::max(1, desc_.totalOutputs()), 0.f);
     return true;
   }
 
@@ -225,29 +266,37 @@ class ClapInstance : public PluginInstance {
     tr.tempo = b.tempo;
     tr.song_pos_beats = (clap_beattime)llround(b.ppqPos * (double)CLAP_BEATTIME_FACTOR);
 
-    // channel pointers: missing input channels read silence, extra outputs go to scratch
-    const int nin = std::max(0, desc_.numInputs), nout = std::max(0, desc_.numOutputs);
-    for (int c = 0; c < nin; c++) inBuf_[c] = const_cast<float*>((uint32_t)c < b.numIn ? b.in[c] : (b.numIn ? b.in[b.numIn - 1] : silence_.data()));
-    for (int c = 0; c < nout; c++) outBuf_[c] = (uint32_t)c < b.numOut ? b.out[c] : scratch_.data() + (size_t)c * silence_.size();
-    clap_audio_buffer_t ain{}, aout{};
-    ain.data32 = inBuf_.data();
-    ain.channel_count = (uint32_t)nin;
-    aout.data32 = outBuf_.data();
-    aout.channel_count = (uint32_t)nout;
+    // channel pointers: the main port reads the block's input, the sidechain port its key (missing channels
+    // repeat the last one / read silence); outputs map bus after bus onto b.out, the rest goes to scratch
+    for (size_t i = 0; i < inCh_.size(); i++) {
+      const float* const* src = (int)i == mainIn_ ? b.in : (int)i == scIn_ ? b.sc : nullptr;
+      const uint32_t n = (int)i == mainIn_ ? b.numIn : (int)i == scIn_ ? b.numSc : 0;
+      for (uint32_t c = 0; c < inCh_[i]; c++) inPtrs_[i][c] = const_cast<float*>(src && n ? src[std::min(c, n - 1)] : silence_.data());
+      inBufs_[i] = clap_audio_buffer_t{};
+      inBufs_[i].data32 = inPtrs_[i].data();
+      inBufs_[i].channel_count = inCh_[i];
+    }
+    uint32_t oc = 0;
+    for (size_t i = 0; i < outCh_.size(); i++) {
+      for (uint32_t c = 0; c < outCh_[i]; c++, oc++) outPtrs_[i][c] = oc < b.numOut ? b.out[oc] : scratch_.data() + (size_t)oc * maxFrames_;
+      outBufs_[i] = clap_audio_buffer_t{};
+      outBufs_[i].data32 = outPtrs_[i].data();
+      outBufs_[i].channel_count = outCh_[i];
+    }
     clap_process_t p{};
     p.steady_time = (int64_t)steady_;
     p.frames_count = b.nframes;
     p.transport = &tr;
-    p.audio_inputs = nin ? &ain : nullptr;
-    p.audio_inputs_count = nin ? 1 : 0;
-    p.audio_outputs = nout ? &aout : nullptr;
-    p.audio_outputs_count = nout ? 1 : 0;
+    p.audio_inputs = inBufs_.empty() ? nullptr : inBufs_.data();
+    p.audio_inputs_count = (uint32_t)inBufs_.size();
+    p.audio_outputs = outBufs_.empty() ? nullptr : outBufs_.data();
+    p.audio_outputs_count = (uint32_t)outBufs_.size();
     p.in_events = &events_.in;
     outEv_.sink = b.outParams;
     p.out_events = &outEv_.out;
     plugin_->process(plugin_, &p);
     // a mono plugin feeds both sides of a stereo bus
-    if (nout == 1 && b.numOut > 1) std::memcpy(b.out[1], b.out[0], sizeof(float) * b.nframes);
+    if (outCh_.size() == 1 && outCh_[0] == 1 && b.numOut > 1) std::memcpy(b.out[1], b.out[0], sizeof(float) * b.nframes);
     steady_ += b.nframes;
     tAudioThread = false;
   }
@@ -326,6 +375,112 @@ class ClapInstance : public PluginInstance {
   bool supportsOffline() override { return !(render_ && render_->has_hard_realtime_requirement(plugin_)); }
   void setOffline(bool off) override { if (render_) render_->set(plugin_, off ? CLAP_RENDER_OFFLINE : CLAP_RENDER_REALTIME); }
 
+  // ---- presets: the preset-discovery factory of the module + the plugin's preset-load extension
+  std::vector<PresetInfo> presets() override {
+    std::vector<PresetInfo> out;
+    if (!mod_ || !mod_->entry) return out;
+    auto* pf = (const clap_preset_discovery_factory_t*)mod_->entry->get_factory(CLAP_PRESET_DISCOVERY_FACTORY_ID);
+    if (!pf) pf = (const clap_preset_discovery_factory_t*)mod_->entry->get_factory(CLAP_PRESET_DISCOVERY_FACTORY_ID_COMPAT);
+    if (!pf) return out;
+    struct Decl {
+      std::vector<std::string> exts;
+      std::vector<std::tuple<uint32_t, std::string, std::string, uint32_t>> locs;  // kind, location, name, flags
+    } decl;
+    clap_preset_discovery_indexer_t ix{};
+    ix.clap_version = CLAP_VERSION;
+    ix.name = "daW3";
+    ix.vendor = "Coral-coder";
+    ix.indexer_data = &decl;
+    ix.declare_filetype = [](const clap_preset_discovery_indexer_t* i, const clap_preset_discovery_filetype_t* ft) {
+      if (ft) static_cast<Decl*>(i->indexer_data)->exts.push_back(ft->file_extension ? ft->file_extension : "");
+      return true;
+    };
+    ix.declare_location = [](const clap_preset_discovery_indexer_t* i, const clap_preset_discovery_location_t* l) {
+      if (l) static_cast<Decl*>(i->indexer_data)->locs.emplace_back(l->kind, l->location ? l->location : "", l->name ? l->name : "", l->flags);
+      return true;
+    };
+    ix.declare_soundpack = [](const clap_preset_discovery_indexer_t*, const clap_preset_discovery_soundpack_t*) { return true; };
+    ix.get_extension = [](const clap_preset_discovery_indexer_t*, const char*) -> const void* { return nullptr; };
+
+    struct Found { std::string name, key; bool ours = false, anyId = false; };
+    struct Recv { std::vector<Found> list; std::string uid; } rc;
+    rc.uid = desc_.uid;
+    clap_preset_discovery_metadata_receiver_t mr{};
+    mr.receiver_data = &rc;
+    mr.on_error = [](const clap_preset_discovery_metadata_receiver_t*, int32_t, const char* msg) { if (msg) fprintf(stderr, "[clap presets] %s\n", msg); };
+    mr.begin_preset = [](const clap_preset_discovery_metadata_receiver_t* r, const char* name, const char* key) {
+      auto* s = static_cast<Recv*>(r->receiver_data);
+      s->list.push_back({name ? name : "", key ? key : ""});
+      return s->list.size() < 4000;
+    };
+    mr.add_plugin_id = [](const clap_preset_discovery_metadata_receiver_t* r, const clap_universal_plugin_id_t* id) {
+      auto* s = static_cast<Recv*>(r->receiver_data);
+      if (s->list.empty() || !id) return;
+      s->list.back().anyId = true;
+      if (id->abi && id->id && !strcmp(id->abi, "clap") && s->uid == id->id) s->list.back().ours = true;
+    };
+    mr.set_soundpack_id = [](const clap_preset_discovery_metadata_receiver_t*, const char*) {};
+    mr.set_flags = [](const clap_preset_discovery_metadata_receiver_t*, uint32_t) {};
+    mr.add_creator = [](const clap_preset_discovery_metadata_receiver_t*, const char*) {};
+    mr.set_description = [](const clap_preset_discovery_metadata_receiver_t*, const char*) {};
+    mr.set_timestamps = [](const clap_preset_discovery_metadata_receiver_t*, clap_timestamp, clap_timestamp) {};
+    mr.add_feature = [](const clap_preset_discovery_metadata_receiver_t*, const char*) {};
+    mr.add_extra_info = [](const clap_preset_discovery_metadata_receiver_t*, const char*, const char*) {};
+
+    const uint32_t np = pf->count(pf);
+    for (uint32_t pi = 0; pi < np && pi < 16; pi++) {
+      const clap_preset_discovery_provider_descriptor_t* pd = pf->get_descriptor(pf, pi);
+      if (!pd || !pd->id) continue;
+      decl = Decl{};
+      const clap_preset_discovery_provider_t* prov = pf->create(pf, &ix, pd->id);
+      if (!prov) continue;
+      if (prov->init(prov)) {
+        auto collect = [&](uint32_t kind, const std::string& loc, const std::string& category) {
+          rc.list.clear();
+          if (!prov->get_metadata(prov, kind, kind == CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN ? nullptr : loc.c_str(), &mr)) return;
+          for (auto& f : rc.list) {
+            if (f.anyId && !f.ours) continue;  // a preset of another plugin of this provider
+            PresetInfo p;
+            p.kind = kind == CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN ? "factory" : "file";
+            p.path = kind == CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN ? "" : loc;
+            p.name = !f.name.empty() ? f.name : stripExt(baseName(loc));
+            p.category = category;
+            p.id = std::to_string(kind) + "\x1f" + loc + "\x1f" + f.key;
+            out.push_back(p);
+          }
+        };
+        for (auto& [kind, loc, name, flags] : decl.locs) {
+          if (kind == CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN) { collect(kind, "", name); continue; }
+          if (!isDirectory(loc)) { if (!loc.empty()) collect(kind, loc, name); continue; }
+          std::vector<std::pair<std::string, std::string>> files;
+          for (auto& ext : decl.exts) {
+            auto f = findPresetFiles({loc}, ext.empty() ? "" : (ext[0] == '.' ? ext : "." + ext));
+            files.insert(files.end(), f.begin(), f.end());
+          }
+          for (auto& [path, cat] : files) collect(kind, path, cat.empty() ? name : cat);
+        }
+      }
+      prov->destroy(prov);
+    }
+    return out;
+  }
+
+  bool loadPreset(const std::string& id, std::string& err) override {
+    const size_t a = id.find('\x1f'), b = a == std::string::npos ? a : id.find('\x1f', a + 1);
+    if (b == std::string::npos) { err = "Bad preset id"; return false; }
+    const uint32_t kind = (uint32_t)atoi(id.substr(0, a).c_str());
+    const std::string loc = id.substr(a + 1, b - a - 1), key = id.substr(b + 1);
+    auto* pl = (const clap_plugin_preset_load_t*)plugin_->get_extension(plugin_, CLAP_EXT_PRESET_LOAD);
+    if (!pl) pl = (const clap_plugin_preset_load_t*)plugin_->get_extension(plugin_, CLAP_EXT_PRESET_LOAD_COMPAT);
+    if (!pl) { err = "This plugin cannot load presets"; return false; }
+    presetError_.clear();
+    if (!pl->from_location(plugin_, kind, kind == CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN ? nullptr : loc.c_str(), key.empty() ? nullptr : key.c_str())) {
+      err = presetError_.empty() ? "The plugin could not load the preset" : presetError_;
+      return false;
+    }
+    return true;
+  }
+
   bool hasEditor() override {
 #ifdef __APPLE__
     return gui_ && gui_->is_api_supported(plugin_, CLAP_WINDOW_API_COCOA, false);
@@ -377,6 +532,7 @@ class ClapInstance : public PluginInstance {
     if (!strcmp(id, CLAP_EXT_LOG)) return &hLog_;
     if (!strcmp(id, CLAP_EXT_THREAD_CHECK)) return &hThread_;
     if (!strcmp(id, CLAP_EXT_GUI)) return &hGui_;
+    if (!strcmp(id, CLAP_EXT_PRESET_LOAD) || !strcmp(id, CLAP_EXT_PRESET_LOAD_COMPAT)) return &hPresetLoad_;
     return nullptr;
   }
 
@@ -425,6 +581,15 @@ class ClapInstance : public PluginInstance {
   clap_host_log_t hLog_{};
   clap_host_thread_check_t hThread_{};
   clap_host_gui_t hGui_{};
+  clap_host_preset_load_t hPresetLoad_{};
+  const ClapModule* mod_ = nullptr;
+  std::string presetError_;
+  std::vector<uint32_t> inCh_, outCh_;
+  int mainIn_ = -1, scIn_ = -1;
+  std::vector<std::vector<float*>> inPtrs_, outPtrs_;
+  std::vector<clap_audio_buffer_t> inBufs_, outBufs_;
+  double sr_ = 48000;
+  uint32_t maxFrames_ = 0;
   const clap_plugin_t* plugin_ = nullptr;
   const clap_plugin_params_t* params_ = nullptr;
   const clap_plugin_state_t* state_ = nullptr;
@@ -443,7 +608,6 @@ class ClapInstance : public PluginInstance {
   OutEvents outEv_;
   std::mutex pendingM_;
   std::vector<std::pair<uint32_t, double>> pending_;
-  std::vector<float*> inBuf_, outBuf_;
   std::vector<float> silence_, scratch_;
   uint64_t steady_ = 0;
 };
@@ -505,7 +669,7 @@ class ClapFormat : public PluginFormat {
     const ClapModule* m = loadModule(d.path, err);
     if (!m) return nullptr;
     auto inst = std::make_unique<ClapInstance>(d);
-    if (!inst->init(m->factory, err)) return nullptr;
+    if (!inst->init(m, err)) return nullptr;
     return inst;
   }
 };

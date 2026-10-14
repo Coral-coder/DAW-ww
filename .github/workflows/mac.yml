@@ -14,7 +14,8 @@ jobs:
         with:
           node-version: 22
       # Native audio engine + plugin host: compile (universal arm64/x86_64) and run the C++ unit tests
-      # (ring buffer, engine on the null backend, CLAP / VST3 test plugins, Apple's AUs) first — fast failures.
+      # (ring buffer, engine on the null backend + rate renegotiation, CLAP / VST3 test plugins: sample-accurate
+      # params, sidechain + multi-out buses, presets; Apple's AUs; the Ableton Link process) first — fast failures.
       - name: Native layer + native tests
         run: sh desktop/native/build.sh --test
       # JS tests; with the native build present they also drive the real addon + plugin host end to end.
@@ -36,9 +37,10 @@ jobs:
           for app in $(find dist -maxdepth 2 -name 'daW3.app'); do
             n="$app/Contents/Resources/native"
             ls -la "$n"
-            lipo -info "$n/daw3-plughost" "$n/daw3_audio.node"
+            lipo -info "$n/daw3-plughost" "$n/daw3_audio.node" "$n/daw3-link"
             test -f "$app/Contents/Resources/app.asar.unpacked/src/native/protocol.js"
             "$n/daw3-plughost" --describe au all | head -c 400; echo
+            "$n/daw3-link" --version
           done
       - name: Pack .dmg files
         run: sh scripts/make-dmg.sh

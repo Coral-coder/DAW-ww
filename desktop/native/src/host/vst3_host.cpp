@@ -5,6 +5,7 @@
 #include <array>
 #include <map>
 #include <mutex>
+#include <strings.h>
 
 #include "pluginterfaces/base/ipluginbase.h"
 #include "pluginterfaces/gui/iplugview.h"
@@ -17,6 +18,7 @@
 #include "pluginterfaces/vst/ivstmidicontrollers.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include "pluginterfaces/vst/ivstprocesscontext.h"
+#include "pluginterfaces/vst/ivstunits.h"
 #include "pluginterfaces/vst/vstspeaker.h"
 #include "plugin.h"
 #include "vst3_common.h"
@@ -41,6 +43,7 @@ DEF_CLASS_IID(IEventList)
 DEF_CLASS_IID(IMessage)
 DEF_CLASS_IID(IAttributeList)
 DEF_CLASS_IID(IMidiMapping)
+DEF_CLASS_IID(IUnitInfo)
 }  // namespace Vst
 }  // namespace Steinberg
 
@@ -186,7 +189,7 @@ class ParamQueue : public IParamValueQueue {
   }
   ParamID id = 0;
   size_t n = 0;
-  std::array<std::pair<int32, ParamValue>, 64> pts;
+  std::array<std::pair<int32, ParamValue>, 512> pts;
 };
 
 class ParamChanges : public IParameterChanges {
@@ -243,6 +246,7 @@ class Vst3Instance : public PluginInstance, public IComponentHandler, public IPl
     if (compCP_) compCP_->release();
     if (ctrlCP_) ctrlCP_->release();
     if (midiMap_) midiMap_->release();
+    if (units_) units_->release();
     if (ctrl_) { ctrl_->setComponentHandler(nullptr); if (!singleComponent_) ctrl_->terminate(); ctrl_->release(); }
     if (proc_) proc_->release();
     if (comp_) { comp_->terminate(); comp_->release(); }
@@ -263,6 +267,7 @@ class Vst3Instance : public PluginInstance, public IComponentHandler, public IPl
       }
     }
     if (ctrl_) {
+      ctrl_->queryInterface(IUnitInfo::iid, (void**)&units_);
       ctrl_->setComponentHandler(this);
       if (!singleComponent_ && comp_->queryInterface(IConnectionPoint::iid, (void**)&compCP_) == kResultOk &&
           ctrl_->queryInterface(IConnectionPoint::iid, (void**)&ctrlCP_) == kResultOk) {
@@ -273,40 +278,74 @@ class Vst3Instance : public PluginInstance, public IComponentHandler, public IPl
       if (comp_->getState(&s) == kResultOk) { s.rewind(); ctrl_->setComponentState(&s); }
       ctrl_->queryInterface(IMidiMapping::iid, (void**)&midiMap_);
     }
-    BusInfo bi;
-    desc_.numInputs = desc_.numOutputs = 0;
-    if (comp_->getBusCount(kAudio, kInput) > 0 && comp_->getBusInfo(kAudio, kInput, 0, bi) == kResultOk) desc_.numInputs = bi.channelCount;
-    if (comp_->getBusCount(kAudio, kOutput) > 0 && comp_->getBusInfo(kAudio, kOutput, 0, bi) == kResultOk) desc_.numOutputs = bi.channelCount;
+    readBuses();
     desc_.midiInput = comp_->getBusCount(kEvent, kInput) > 0;
     return true;
+  }
+
+  /** Audio buses -> main input, sidechain (first aux input bus), every output bus. */
+  void readBuses() {
+    inCh_.clear();
+    outCh_.clear();
+    mainIn_ = scIn_ = -1;
+    desc_.numInputs = desc_.numOutputs = 0;
+    desc_.sidechainChannels = 0;
+    desc_.outputBuses.clear();
+    BusInfo bi;
+    const int32 ni = std::min<int32>(comp_->getBusCount(kAudio, kInput), 8);
+    for (int32 i = 0; i < ni; i++) {
+      if (comp_->getBusInfo(kAudio, kInput, i, bi) != kResultOk) { inCh_.push_back(0); continue; }
+      inCh_.push_back(std::min<int32>(bi.channelCount, 8));
+      if (bi.busType == kMain && mainIn_ < 0) mainIn_ = i;
+      else if (bi.busType == kAux && scIn_ < 0) scIn_ = i;
+    }
+    if (mainIn_ < 0 && ni > 0 && scIn_ != 0) mainIn_ = 0;
+    if (mainIn_ >= 0) desc_.numInputs = inCh_[mainIn_];
+    if (scIn_ >= 0) desc_.sidechainChannels = inCh_[scIn_];
+    const int32 no = std::min<int32>(comp_->getBusCount(kAudio, kOutput), 16);
+    for (int32 i = 0; i < no; i++) {
+      AudioBus bus;
+      bus.channels = 0;
+      if (comp_->getBusInfo(kAudio, kOutput, i, bi) == kResultOk) { bus.channels = std::min<int32>(bi.channelCount, 8); bus.name = v3::utf8(bi.name); }
+      if (bus.name.empty()) bus.name = i == 0 ? "Main" : "Out " + std::to_string(i + 1);
+      outCh_.push_back(bus.channels);
+      desc_.outputBuses.push_back(bus);
+    }
+    if (!outCh_.empty()) desc_.numOutputs = outCh_[0];
   }
 
   const PluginDesc& desc() const override { return desc_; }
 
   bool activate(double sr, uint32_t maxFrames, std::string& err) override {
     deactivate();
-    SpeakerArrangement inArr = desc_.numInputs == 1 ? SpeakerArr::kMono : SpeakerArr::kStereo;
-    SpeakerArrangement outArr = desc_.numOutputs == 1 ? SpeakerArr::kMono : SpeakerArr::kStereo;
-    proc_->setBusArrangements(desc_.numInputs ? &inArr : nullptr, desc_.numInputs ? 1 : 0, desc_.numOutputs ? &outArr : nullptr, desc_.numOutputs ? 1 : 0);
-    BusInfo bi;
-    if (comp_->getBusCount(kAudio, kInput) > 0 && comp_->getBusInfo(kAudio, kInput, 0, bi) == kResultOk) desc_.numInputs = bi.channelCount;
-    if (comp_->getBusCount(kAudio, kOutput) > 0 && comp_->getBusInfo(kAudio, kOutput, 0, bi) == kResultOk) desc_.numOutputs = bi.channelCount;
-    // only the main buses are used: activate them, deactivate the rest
+    // mono / stereo main buses, the plugin's own arrangement for the others
+    auto arrOf = (SpeakerArrangement(*)(int))[](int ch) { return ch == 1 ? SpeakerArr::kMono : SpeakerArr::kStereo; };
+    std::vector<SpeakerArrangement> ia(inCh_.size()), oa(outCh_.size());
+    for (size_t i = 0; i < ia.size(); i++) { if (proc_->getBusArrangement(kInput, (int32)i, ia[i]) != kResultOk || inCh_[i] <= 2) ia[i] = arrOf(inCh_[i]); }
+    for (size_t i = 0; i < oa.size(); i++) { if (proc_->getBusArrangement(kOutput, (int32)i, oa[i]) != kResultOk || outCh_[i] <= 2) oa[i] = arrOf(outCh_[i]); }
+    proc_->setBusArrangements(ia.empty() ? nullptr : ia.data(), (int32)ia.size(), oa.empty() ? nullptr : oa.data(), (int32)oa.size());
+    readBuses();
+    // main input, the sidechain bus and every output bus are used; the first event input
     for (int dir = 0; dir < 2; dir++) {
       const int32 na = comp_->getBusCount(kAudio, dir), ne = comp_->getBusCount(kEvent, dir);
-      for (int32 i = 0; i < na; i++) comp_->activateBus(kAudio, dir, i, i == 0);
+      for (int32 i = 0; i < na; i++) comp_->activateBus(kAudio, dir, i, dir == kOutput ? i < 16 : (i == mainIn_ || i == scIn_));
       for (int32 i = 0; i < ne; i++) comp_->activateBus(kEvent, dir, i, i == 0 && dir == kInput);
     }
     ProcessSetup ps{offline_ ? kOffline : kRealtime, kSample32, (int32)maxFrames, sr};
     if (proc_->setupProcessing(ps) != kResultOk) { err = "VST3 setupProcessing failed"; return false; }
     if (comp_->setActive(true) != kResultOk) { err = "VST3 setActive failed"; return false; }
     sr_ = sr;
+    maxFrames_ = maxFrames;
     active_ = true;
     processing_ = false;
-    inPtrs_.assign(std::max(1, desc_.numInputs), nullptr);
-    outPtrs_.assign(std::max(1, desc_.numOutputs), nullptr);
+    inPtrs_.assign(inCh_.size(), {});
+    for (size_t i = 0; i < inCh_.size(); i++) inPtrs_[i].assign(std::max(1, inCh_[i]), nullptr);
+    outPtrs_.assign(outCh_.size(), {});
+    for (size_t i = 0; i < outCh_.size(); i++) outPtrs_[i].assign(std::max(1, outCh_[i]), nullptr);
+    inBufs_.assign(inCh_.size(), AudioBusBuffers{});
+    outBufs_.assign(outCh_.size(), AudioBusBuffers{});
     silence_.assign(maxFrames, 0.f);
-    scratch_.assign((size_t)maxFrames * std::max(1, desc_.numOutputs), 0.f);
+    scratch_.assign((size_t)maxFrames * std::max(1, desc_.totalOutputs()), 0.f);
     return true;
   }
 
@@ -330,14 +369,23 @@ class Vst3Instance : public PluginInstance, public IComponentHandler, public IPl
     }
     for (uint32_t i = 0; i < b.paramCount; i++) inChanges_.add(b.params[i].id, (int32)std::min(b.params[i].offset, b.nframes - 1), b.params[i].value);
     for (uint32_t i = 0; i < b.midiCount; i++) addMidi(b.midi[i], b.nframes);
-    const int nin = desc_.numInputs, nout = desc_.numOutputs;
-    for (int c = 0; c < nin; c++) inPtrs_[c] = const_cast<float*>((uint32_t)c < b.numIn ? b.in[c] : (b.numIn ? b.in[b.numIn - 1] : silence_.data()));
-    for (int c = 0; c < nout; c++) outPtrs_[c] = (uint32_t)c < b.numOut ? b.out[c] : scratch_.data() + (size_t)c * silence_.size();
-    AudioBusBuffers in{}, out{};
-    in.numChannels = nin;
-    in.channelBuffers32 = inPtrs_.data();
-    out.numChannels = nout;
-    out.channelBuffers32 = outPtrs_.data();
+    // every bus gets buffers: main in = the block's input, sidechain = its key, other inputs silence;
+    // outputs map bus after bus onto b.out (the rest -> scratch)
+    for (size_t i = 0; i < inCh_.size(); i++) {
+      const float* const* src = (int)i == mainIn_ ? b.in : (int)i == scIn_ ? b.sc : nullptr;
+      const uint32_t n = (int)i == mainIn_ ? b.numIn : (int)i == scIn_ ? b.numSc : 0;
+      for (int c = 0; c < inCh_[i]; c++) inPtrs_[i][c] = const_cast<float*>(src && n ? src[std::min<uint32_t>((uint32_t)c, n - 1)] : silence_.data());
+      inBufs_[i] = AudioBusBuffers{};
+      inBufs_[i].numChannels = inCh_[i];
+      inBufs_[i].channelBuffers32 = inPtrs_[i].data();
+    }
+    uint32_t oc = 0;
+    for (size_t i = 0; i < outCh_.size(); i++) {
+      for (int c = 0; c < outCh_[i]; c++, oc++) outPtrs_[i][c] = oc < b.numOut ? b.out[oc] : scratch_.data() + (size_t)oc * maxFrames_;
+      outBufs_[i] = AudioBusBuffers{};
+      outBufs_[i].numChannels = outCh_[i];
+      outBufs_[i].channelBuffers32 = outPtrs_[i].data();
+    }
     ProcessContext ctx{};
     ctx.state = ProcessContext::kTempoValid | ProcessContext::kProjectTimeMusicValid | (b.playing ? ProcessContext::kPlaying : 0);
     ctx.sampleRate = sr_;
@@ -348,16 +396,16 @@ class Vst3Instance : public PluginInstance, public IComponentHandler, public IPl
     d.processMode = offline_ ? kOffline : kRealtime;
     d.symbolicSampleSize = kSample32;
     d.numSamples = (int32)b.nframes;
-    d.numInputs = nin ? 1 : 0;
-    d.numOutputs = nout ? 1 : 0;
-    d.inputs = nin ? &in : nullptr;
-    d.outputs = nout ? &out : nullptr;
+    d.numInputs = (int32)inBufs_.size();
+    d.numOutputs = (int32)outBufs_.size();
+    d.inputs = inBufs_.empty() ? nullptr : inBufs_.data();
+    d.outputs = outBufs_.empty() ? nullptr : outBufs_.data();
     d.inputParameterChanges = &inChanges_;
     d.outputParameterChanges = &outChanges_;
     d.inputEvents = desc_.midiInput ? &events_ : nullptr;
     d.processContext = &ctx;
     proc_->process(d);
-    if (nout == 1 && b.numOut > 1) std::memcpy(b.out[1], b.out[0], sizeof(float) * b.nframes);
+    if (outCh_.size() == 1 && outCh_[0] == 1 && b.numOut > 1) std::memcpy(b.out[1], b.out[0], sizeof(float) * b.nframes);
     samplePos_ += b.nframes;
     if (b.outParams) {
       for (int32 i = 0; i < outChanges_.getParameterCount(); i++) {
@@ -391,6 +439,7 @@ class Vst3Instance : public PluginInstance, public IComponentHandler, public IPl
       if (pi.flags & Vst::ParameterInfo::kIsHidden) p.flags |= kParamHidden;
       if (pi.flags & Vst::ParameterInfo::kIsReadOnly) p.flags |= kParamReadOnly;
       if (pi.flags & Vst::ParameterInfo::kIsBypass) p.flags |= kParamBypass;
+      if (pi.flags & Vst::ParameterInfo::kIsProgramChange) p.flags |= kParamHidden | kParamStepped;  // presets pick programs
       out.push_back(p);
     }
     return out;
@@ -435,6 +484,11 @@ class Vst3Instance : public PluginInstance, public IComponentHandler, public IPl
     };
     std::vector<uint8_t> c, k;
     if (!take(c) || !take(k)) return false;
+    return applyStates(c, k);
+  }
+
+  /** Component state (+ controller state, may be empty) into the plugin. */
+  bool applyStates(const std::vector<uint8_t>& c, const std::vector<uint8_t>& k) {
     v3::MemoryStream cs(c);
     if (comp_->setState(&cs) != kResultOk) return false;
     if (ctrl_) {
@@ -442,6 +496,107 @@ class Vst3Instance : public PluginInstance, public IComponentHandler, public IPl
       ctrl_->setComponentState(&cs2);
       if (!k.empty()) { v3::MemoryStream ks(k); ctrl_->setState(&ks); }
     }
+    return true;
+  }
+
+  // ---- presets: program lists (IUnitInfo + the program-change parameter) and .vstpreset files
+  static bool readVstPreset(const std::string& path, std::string& cls, std::vector<uint8_t>& c, std::vector<uint8_t>& k) {
+    std::vector<uint8_t> d;
+    return readFile(path, d) && v3::parseVstPreset(d, cls, c, k);
+  }
+
+  struct ProgramList { ProgramListID id; int32 count; std::string name; ParamID param; };
+  std::vector<ProgramList> programLists() {
+    std::vector<ProgramList> out;
+    if (!units_ || !ctrl_) return out;
+    // unit -> program list, and the program-change parameter of each unit
+    std::map<UnitID, ProgramListID> unitList;
+    for (int32 i = 0; i < units_->getUnitCount(); i++) {
+      UnitInfo ui{};
+      if (units_->getUnitInfo(i, ui) == kResultOk && ui.programListId != kNoProgramListId) unitList[ui.id] = ui.programListId;
+    }
+    std::map<ProgramListID, ParamID> listParam;
+    for (int32 i = 0; i < ctrl_->getParameterCount(); i++) {
+      Vst::ParameterInfo pi{};
+      if (ctrl_->getParameterInfo(i, pi) != kResultOk || !(pi.flags & Vst::ParameterInfo::kIsProgramChange)) continue;
+      auto it = unitList.find(pi.unitId);
+      const ProgramListID lid = it != unitList.end() ? it->second : (unitList.empty() ? kNoProgramListId : unitList.begin()->second);
+      if (!listParam.count(lid)) listParam[lid] = pi.id;
+    }
+    for (int32 i = 0; i < units_->getProgramListCount(); i++) {
+      ProgramListInfo li{};
+      if (units_->getProgramListInfo(i, li) != kResultOk || li.programCount <= 0) continue;
+      auto it = listParam.find(li.id);
+      if (it == listParam.end()) continue;  // no parameter selects it: not loadable from the host side
+      out.push_back({li.id, li.programCount, v3::utf8(li.name), it->second});
+    }
+    return out;
+  }
+
+  std::vector<PresetInfo> presets() override {
+    std::vector<PresetInfo> out;
+    for (auto& pl : programLists()) {
+      for (int32 k = 0; k < pl.count && k < 1024; k++) {
+        String128 nm{};
+        PresetInfo p;
+        p.kind = "factory";
+        p.category = pl.name;
+        p.name = units_->getProgramName(pl.id, k, nm) == kResultOk ? v3::utf8(nm) : "Program " + std::to_string(k + 1);
+        p.id = "program:" + std::to_string(pl.id) + ":" + std::to_string(k);
+        out.push_back(p);
+      }
+    }
+    for (auto& [path, cat] : findPresetFiles(presetFolders(desc_), ".vstpreset")) {
+      std::vector<uint8_t> c, k;
+      std::string cls;
+      if (!readVstPreset(path, cls, c, k) || strcasecmp(cls.c_str(), desc_.uid.c_str()) != 0) continue;  // another plugin's preset
+      PresetInfo p;
+      p.kind = "file";
+      p.path = path;
+      p.category = cat;
+      p.name = stripExt(baseName(path));
+      p.id = "file:" + path;
+      out.push_back(p);
+    }
+    return out;
+  }
+
+  bool loadPreset(const std::string& id, std::string& err) override {
+    if (id.rfind("program:", 0) == 0) {
+      const size_t a = id.find(':', 8);
+      if (a == std::string::npos) { err = "Bad preset id"; return false; }
+      const ProgramListID lid = (ProgramListID)atol(id.substr(8, a - 8).c_str());
+      const int32 k = (int32)atol(id.substr(a + 1).c_str());
+      for (auto& pl : programLists()) {
+        if (pl.id != lid) continue;
+        if (k < 0 || k >= pl.count) break;
+        setParam(pl.param, pl.count > 1 ? (double)k / (pl.count - 1) : 0.0);
+        auto l = listener();
+        if (l.paramsRescanned) l.paramsRescanned();
+        return true;
+      }
+      err = "No such program";
+      return false;
+    }
+    if (id.rfind("file:", 0) == 0) {
+      std::vector<uint8_t> c, k;
+      std::string cls;
+      if (!readVstPreset(id.substr(5), cls, c, k)) { err = "Not a VST3 preset file"; return false; }
+      if (strcasecmp(cls.c_str(), desc_.uid.c_str()) != 0) { err = "The preset belongs to another plugin"; return false; }
+      if (c.empty() || !applyStates(c, k)) { err = "The plugin rejected the preset"; return false; }
+      auto l = listener();
+      if (l.paramsRescanned) l.paramsRescanned();
+      return true;
+    }
+    err = "Bad preset id";
+    return false;
+  }
+
+  bool savePreset(const std::string& path, std::string& err) override {
+    v3::MemoryStream cs, ks;
+    if (comp_->getState(&cs) != kResultOk) { err = "The plugin does not save a state"; return false; }
+    if (ctrl_ && !singleComponent_) ctrl_->getState(&ks);
+    if (!writeFile(path, v3::makeVstPreset(desc_.uid, cs.data(), ks.data()))) { err = "Could not write " + path; return false; }
     return true;
   }
 
@@ -548,6 +703,12 @@ class Vst3Instance : public PluginInstance, public IComponentHandler, public IPl
   IEditController* ctrl_ = nullptr;
   IConnectionPoint *compCP_ = nullptr, *ctrlCP_ = nullptr;
   IMidiMapping* midiMap_ = nullptr;
+  IUnitInfo* units_ = nullptr;
+  std::vector<int> inCh_, outCh_;
+  int mainIn_ = -1, scIn_ = -1;
+  uint32_t maxFrames_ = 0;
+  std::vector<std::vector<float*>> inPtrs_, outPtrs_;
+  std::vector<AudioBusBuffers> inBufs_, outBufs_;
   IPlugView* view_ = nullptr;
   void* window_ = nullptr;
   bool singleComponent_ = false, active_ = false, processing_ = false, offline_ = false;
@@ -557,7 +718,6 @@ class Vst3Instance : public PluginInstance, public IComponentHandler, public IPl
   Events events_;
   std::mutex pendingM_;
   std::vector<std::pair<ParamID, double>> pending_;
-  std::vector<float*> inPtrs_, outPtrs_;
   std::vector<float> silence_, scratch_;
   std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 };
