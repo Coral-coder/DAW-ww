@@ -12,6 +12,10 @@
 //               split/mix junctions as unity GainNodes, 'in' = input, 'out' = post.
 // Bus strip:    input -> fx -> pan -> volume -> mute -> master input
 // Master:       input -> fx -> volume -> analyser -> destination  (metronome joins after master fx)
+// PDC:          (see latency.js) every strip reports its insert (+ instrument) latency; MixGraph.updatePdc()
+//               puts compensation DelayNodes on the track -> master links and on each send link so all routes
+//               reach the master input together. `graph.latency` (seconds) is the resulting overall delay:
+//               the realtime scheduler pre-rolls events by it, the offline renderer trims it off the head.
 import { createEffect } from './effects.js';
 import { createInstrument } from './instruments.js';
 import * as codeInstrumentModule from './code-instrument.js';
@@ -25,6 +29,8 @@ import { INSTRUMENT_DEFS } from './defs.js';
 import { EFFECT_DEFS } from './effect-defs.js';
 import { resolveInstrument } from './instruments.js';
 import { sanitizePatch, patchStructureKey, topoOrder, resolveKeyLinks, PATCH_IN, PATCH_OUT } from '../core/patch.js';
+import { computePdc, faderOffsets } from './latency.js';
+import { frozenMode, bypassesInserts, bypassesFader, frozenLaneFilter } from '../core/freeze.js';
 
 const TC = 0.012;
 
@@ -99,6 +105,44 @@ export function noteExtra(ev, durSec) {
   return out;
 }
 
+/**
+ * A connection src -> dst that can carry a compensation delay. The DelayNode is only created once a delay
+ * is needed (most links never get one) and kept afterwards (set to 0) to avoid rewiring clicks.
+ */
+export class DelayLink {
+  constructor(ctx, src, dst) {
+    this.ctx = ctx;
+    this.src = src;
+    this.dst = dst;
+    this.node = null;
+    this.sec = 0;
+    src.connect(dst);
+  }
+  set(sec) {
+    sec = Math.max(0, Number(sec) || 0);
+    if (sec === this.sec) return;
+    this.sec = sec;
+    if (sec > 0 && (!this.node || sec > this.node._max)) {
+      const max = Math.max(0.5, sec * 2);
+      const n = this.ctx.createDelay(max);
+      n._max = max;
+      n.delayTime.value = sec;
+      n.connect(this.dst);
+      if (this.node) { try { this.src.disconnect(this.node); } catch { /* */ } try { this.node.disconnect(); } catch { /* */ } }
+      else { try { this.src.disconnect(this.dst); } catch { /* */ } }
+      this.src.connect(n);
+      this.node = n;
+    } else if (this.node) {
+      this.node.delayTime.value = sec;
+    }
+  }
+  dispose() {
+    try { this.src.disconnect(this.node || this.dst); } catch { /* */ }
+    try { this.node?.disconnect(); } catch { /* */ }
+    this.node = null;
+  }
+}
+
 export class ChannelStrip {
   /**
    * @param {BaseAudioContext} ctx
@@ -116,7 +160,10 @@ export class ChannelStrip {
     this.output = this.muteGain;
     this.panner.connect(this.volume);
     this.volume.connect(this.muteGain);
-    if (opts.destination) this.muteGain.connect(opts.destination);
+    this.outLink = opts.destination ? new DelayLink(ctx, this.muteGain, opts.destination) : null; // PDC on the main output
+    this.sendLinks = new Map(); // busId -> DelayLink (send gain -> bus input, PDC per send)
+    this.sendComp = {}; // busId -> compensation (s)
+    this.onLatency = opts.onLatency || null; // called when an effect reports a new latency (plugins, once loaded)
     this.input.connect(this.post);
     this.post.connect(this.panner);
     this.effects = []; // [{ id, type, fx }]
@@ -169,7 +216,9 @@ export class ChannelStrip {
           old.delete(def.id);
         } else {
           try {
-            e = { id: def.id, type: def.type, fx: createEffect(this.ctx, def, this.env) };
+            e = { id: def.id, type: def.type, fx: (this.env.createEffect || createEffect)(this.ctx, def, this.env) };
+            const fx = e.fx;
+            if (fx.ready && typeof fx.ready.then === 'function') fx.ready.then(() => { if (fx.refreshLatency?.()) this.onLatency?.(); }, () => {});
           } catch (err) {
             this.onError(err);
             continue;
@@ -193,6 +242,7 @@ export class ChannelStrip {
         this._wirePatch(sp, next);
       }
       this.effects = next;
+      this._sp = sp;
     }
     if (sp) {
       for (const c of sp.cables) {
@@ -237,6 +287,47 @@ export class ChannelStrip {
       g.connect(dst);
       this.cables.set(c.id, g);
     }
+  }
+
+  /**
+   * Latency (s) of the insert section, input -> post: the sum of the serial chain, or with a plugboard patch
+   * the longest path from 'in' to 'out' (parallel branches are not aligned against each other).
+   */
+  get insertLatency() {
+    const lat = (fx) => { const l = Number(fx?.latency); return Number.isFinite(l) && l > 0 ? l : 0; };
+    if (!this._sp) return this.effects.reduce((a, e) => a + lat(e.fx), 0);
+    const sp = this._sp;
+    const fxOf = new Map(this.effects.map((e) => [e.id, e.fx]));
+    const nodeLat = new Map(sp.nodes.map((n) => [n.id, n.kind === 'fx' ? lat(fxOf.get(n.fxId)) : 0]));
+    const incoming = new Map();
+    for (const c of sp.cables) {
+      if ((c.to.port || 0) !== 0) continue; // port 1 = sidechain key, not part of the audio path
+      if (!incoming.has(c.to.node)) incoming.set(c.to.node, []);
+      incoming.get(c.to.node).push(c.from.node);
+    }
+    const memo = new Map();
+    const arrive = (id, depth = 0) => { // latency at the node's input; -Infinity = unreachable from 'in'
+      if (id === PATCH_IN) return 0;
+      if (memo.has(id)) return memo.get(id);
+      if (depth > 256) return -Infinity;
+      memo.set(id, -Infinity); // cycle guard
+      let best = -Infinity;
+      for (const from of incoming.get(id) || []) {
+        const a = arrive(from, depth + 1);
+        if (a > -Infinity) best = Math.max(best, a + (from === PATCH_IN ? 0 : nodeLat.get(from) || 0));
+      }
+      memo.set(id, best);
+      return best;
+    };
+    const l = arrive(PATCH_OUT);
+    return l > 0 ? l : 0;
+  }
+
+  /** PDC: compensation delays (s) for the main output and per send ({busId: s}). */
+  setCompensation(outSec = 0, sends = {}) {
+    this.outLink?.set(outSec);
+    this.sendComp = { ...sends };
+    for (const [busId, link] of this.sendLinks) link.set(sends[busId] || 0);
   }
 
   /** Automation overrides for insert fx: map {fxId: {key: value}} | null (null = back to static). */
@@ -331,10 +422,22 @@ export class ChannelStrip {
       g = this.ctx.createGain();
       g.gain.value = 0;
       this.muteGain.connect(g);
-      g.connect(bus.input);
+      const link = new DelayLink(this.ctx, g, bus.input);
+      link.set(this.sendComp[busId] || 0);
+      this.sendLinks.set(busId, link);
       this.sends.set(busId, g);
+      this.onLatency?.(); // a new route: the compensation plan may change
     }
     return g;
+  }
+
+  _dropSend(busId) {
+    const g = this.sends.get(busId);
+    try { this.muteGain.disconnect(g); } catch { /* */ }
+    this.sendLinks.get(busId)?.dispose();
+    try { g?.disconnect(); } catch { /* */ }
+    this.sendLinks.delete(busId);
+    this.sends.delete(busId);
   }
 
   /** volume (linear), pan (-1..1), muted (bool). */
@@ -348,23 +451,13 @@ export class ChannelStrip {
   /** sends: {busId: 0..1}; busStrips: Map(busId -> ChannelStrip). Post-fader, post-mute. */
   setSends(sends = {}, busStrips, immediate = false) {
     this.sendVals = { ...sends };
-    for (const [busId, g] of this.sends) {
-      if (!busStrips.has(busId) || (!(sends[busId] > 0) && !this.auto.sends.has(busId))) {
-        try { g.disconnect(); this.muteGain.disconnect(g); } catch { /* */ }
-        this.sends.delete(busId);
-      }
+    for (const busId of [...this.sends.keys()]) {
+      if (!busStrips.has(busId) || (!(sends[busId] > 0) && !this.auto.sends.has(busId))) this._dropSend(busId);
     }
     for (const [busId, amt] of Object.entries(sends)) {
       const bus = busStrips.get(busId);
       if (!bus || !(amt > 0)) continue;
-      let g = this.sends.get(busId);
-      if (!g) {
-        g = this.ctx.createGain();
-        g.gain.value = 0;
-        this.muteGain.connect(g);
-        g.connect(bus.input);
-        this.sends.set(busId, g);
-      }
+      const g = this._ensureSend(busId, busStrips);
       if (!this.auto.sends.has(busId)) smooth(g.gain, Math.min(1, amt), this.ctx, immediate);
     }
   }
@@ -392,10 +485,13 @@ export class ChannelStrip {
   dispose() {
     for (const e of this.effects) e.fx.dispose();
     this.effects = [];
+    for (const l of this.sendLinks.values()) l.dispose();
+    this.outLink?.dispose();
     for (const n of [this.input, this.post, this.panner, this.volume, this.muteGain, this.splitter, ...this.sends.values(), ...this.patchNodes, ...this.cables.values()]) {
       try { n?.disconnect(); } catch { /* */ }
     }
     this.sends.clear();
+    this.sendLinks.clear();
   }
 }
 
@@ -408,14 +504,16 @@ export class MixGraph {
     this.ctx = ctx;
     this.o = opts;
     this.onError = opts.onError || ((e) => console.error(e));
-    this.env = { getBpm: opts.getBpm, getBeatAt: opts.getBeatAt };
+    this.env = { getBpm: opts.getBpm, getBeatAt: opts.getBeatAt, ...(opts.createEffect ? { createEffect: opts.createEffect } : {}) };
+    this.pdc = computePdc({ sampleRate: ctx.sampleRate, tracks: [], buses: [], master: 0 });
+    this._onLatency = () => { if (!this._syncing) this.updatePdc(); };
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 2048;
     this.analyser.smoothingTimeConstant = 0.8;
     this.out = ctx.createGain(); // post master volume
     this.out.connect(this.analyser);
     this.out.connect(opts.destination);
-    this.master = new ChannelStrip(ctx, { destination: this.out, env: this.env, onError: this.onError, meter: opts.meters !== false });
+    this.master = new ChannelStrip(ctx, { destination: this.out, env: this.env, onError: this.onError, meter: opts.meters !== false, onLatency: this._onLatency });
     this.clickOut = ctx.createGain();
     this.clickOut.connect(this.out);
     this.buses = new Map(); // id -> ChannelStrip
@@ -426,6 +524,13 @@ export class MixGraph {
   }
 
   sync(project) {
+    this._syncing = true;
+    try { this._sync(project); } finally { this._syncing = false; }
+    this.updatePdc(project);
+  }
+
+  _sync(project) {
+    this._project = project;
     const im = this.firstSync;
     this.firstSync = false;
     if (this.bpm !== project.bpm) {
@@ -442,7 +547,7 @@ export class MixGraph {
       busIds.add(bus.id);
       let s = this.buses.get(bus.id);
       if (!s) {
-        s = new ChannelStrip(this.ctx, { destination: this.master.input, env: this.env, onError: this.onError, meter: this.o.meters !== false });
+        s = new ChannelStrip(this.ctx, { destination: this.master.input, env: this.env, onError: this.onError, meter: this.o.meters !== false, onLatency: this._onLatency });
         this.buses.set(bus.id, s);
       }
       s.setFx(bus.fx || []);
@@ -456,16 +561,20 @@ export class MixGraph {
       let e = this.tracks.get(track.id);
       if (!e) {
         e = {
-          strip: new ChannelStrip(this.ctx, { destination: this.master.input, env: this.env, onError: this.onError, meter: this.o.meters !== false }),
+          strip: new ChannelStrip(this.ctx, { destination: this.master.input, env: this.env, onError: this.onError, meter: this.o.meters !== false, onLatency: this._onLatency }),
           type: track.type, instrument: null, instType: null, instJson: null, code: null,
         };
         this.tracks.set(track.id, e);
       }
       if (e.type !== track.type) { this._disposeSources(e); e.type = track.type; }
-      e.strip.setFx(track.fx || [], track.patch);
-      e.strip.setMix({ volume: track.volume ?? 0.8, pan: track.pan || 0, muted: !isTrackAudible(project, track) }, im);
+      // frozen tracks (core/freeze.js): no instrument / code source, and no inserts or fader when baked in
+      const fz = frozenMode(project, track);
+      e.frozen = fz;
+      e.strip.setFx(fz && bypassesInserts(fz) ? [] : (track.fx || []), fz && bypassesInserts(fz) ? null : track.patch);
+      const fader = fz && bypassesFader(fz);
+      e.strip.setMix({ volume: fader ? 1 : (track.volume ?? 0.8), pan: fader ? 0 : (track.pan || 0), muted: !isTrackAudible(project, track) }, im);
       e.strip.setSends(track.sends || {}, this.buses, im);
-      this._syncSource(e, track);
+      if (fz) { if (e.instrument || e.code) this._disposeSources(e); } else this._syncSource(e, track);
     }
     for (const [id, e] of this.tracks) {
       if (!trackIds.has(id)) { this._disposeSources(e); e.strip.dispose(); this.tracks.delete(id); }
@@ -504,6 +613,34 @@ export class MixGraph {
     }
   }
 
+  // ---------------------------------------------------------------- PDC
+  /**
+   * Recompute plugin delay compensation from the strips' current latencies (see latency.js) and set every
+   * compensation delay. Called after each sync and whenever a plugin reports its latency.
+   */
+  updatePdc(project = this._project) {
+    const tracks = [];
+    for (const [id, e] of this.tracks) {
+      const inst = Number(e.instrument?.latency);
+      tracks.push({ id, latency: e.strip.insertLatency + (Number.isFinite(inst) && inst > 0 ? inst : 0), sends: [...e.strip.sends.keys()] });
+    }
+    const buses = [...this.buses].map(([id, s]) => ({ id, latency: s.insertLatency }));
+    const prev = this.pdc?.total;
+    this.pdc = computePdc({ sampleRate: this.ctx.sampleRate, enabled: project?.pdc !== false, tracks, buses, master: this.master.insertLatency });
+    for (const [id, e] of this.tracks) e.strip.setCompensation(this.pdc.trackOut[id], this.pdc.trackSend[id]);
+    if (prev !== this.pdc.total) this.o.onLatency?.(this.pdc);
+    return this.pdc;
+  }
+
+  /** Overall output delay (s) of the compensated graph: events must be dispatched this much early. */
+  get latency() { return this.pdc?.enabled ? this.pdc.total : 0; }
+
+  /** Per-track / bus / master latency report for UIs: {total, tracks:{id: s}, buses:{id: s}, master}. */
+  latencyReport() {
+    const p = this.pdc || {};
+    return { enabled: !!p.enabled, total: this.latency, align: p.align || 0, tracks: { ...(p.trackLatency || {}) }, buses: { ...(p.busLatency || {}) }, master: p.master || 0 };
+  }
+
   _syncSource(e, track) {
     if (track.type === 'instrument' && track.instrument) {
       const def = track.instrument;
@@ -516,6 +653,9 @@ export class MixGraph {
           e.instType = def.type;
           e.instJson = JSON.stringify(def);
           e.instOv = null;
+          const inst = e.instrument;
+          const rd = inst.ready;
+          if (rd && typeof rd.then === 'function') rd.then(() => { if (e.instrument === inst && inst.latency > 0) this._onLatency(); }, () => {});
         } catch (err) {
           e.instrument = null;
           e.instType = null;
@@ -581,18 +721,22 @@ export class MixGraph {
    */
   automateMixer(project, b0, b1, t0, spb, jump) {
     if (!(b1 > b0)) return;
-    try { this.master.automate(MixGraph.mixerLanes(project.master, false, false), b0, b1, t0, spb, jump, this.buses); } catch (err) { this.onError(err); }
+    // t0 = when the events of beat b0 are dispatched; each fader hears them after its route's latency (PDC)
+    const off = this.pdc?.enabled ? faderOffsets(this.pdc) : { tracks: {}, bus: 0, master: 0 };
+    try { this.master.automate(MixGraph.mixerLanes(project.master, false, false), b0, b1, t0 + off.master, spb, jump, this.buses); } catch (err) { this.onError(err); }
     for (const bus of project.buses || []) {
       const s = this.buses.get(bus.id);
       if (!s) continue;
-      try { s.automate(MixGraph.mixerLanes(bus, false), b0, b1, t0, spb, jump, this.buses); } catch (err) { this.onError(err); }
+      try { s.automate(MixGraph.mixerLanes(bus, false), b0, b1, t0 + off.bus, spb, jump, this.buses); } catch (err) { this.onError(err); }
     }
     const anySolo = project.tracks.some((t) => t.solo);
     for (const track of project.tracks) {
       const e = this.tracks.get(track.id);
       if (!e) continue;
+      // frozen post-fader: volume / pan automation is baked into the audio
+      const owner = e.frozen ? { ...track, automation: (track.automation || []).filter(frozenLaneFilter(e.frozen)) } : track;
       // a track silenced by another track's solo stays silent whatever its mute lane says
-      try { e.strip.automate(MixGraph.mixerLanes(track, true, !(anySolo && !track.solo)), b0, b1, t0, spb, jump, this.buses); } catch (err) { this.onError(err); }
+      try { e.strip.automate(MixGraph.mixerLanes(owner, true, !(anySolo && !track.solo)), b0, b1, t0 + (off.tracks[track.id] || 0), spb, jump, this.buses); } catch (err) { this.onError(err); }
     }
   }
 
@@ -655,7 +799,8 @@ export class MixGraph {
 
   /** Play a collected event (see scheduler.collectEvents) at ctx time `time`. */
   playEvent(ev, time, spb) {
-    if (ev.type === 'click') { scheduleClick(this.ctx, this.clickOut, time, ev.accent); return; }
+    // the click joins after the master section: it skips the compensated mix latency
+    if (ev.type === 'click') { scheduleClick(this.ctx, this.clickOut, time + this.latency, ev.accent); return; }
     const e = this.tracks.get(ev.trackId);
     if (!e) return;
     if (ev.type === 'note') {

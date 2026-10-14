@@ -11,6 +11,7 @@
 import * as strudel from '../code/strudel.js';
 import { beatsPerBar } from '../core/model.js';
 import { hasMuteLane } from '../core/automation.js';
+import { frozenMode, frozenClip } from '../core/freeze.js';
 
 export const EPS = 1e-7;
 const inWin = (x, b0, b1) => x >= b0 - EPS && x < b1 - EPS;
@@ -128,7 +129,9 @@ export function collectEvents(project, b0, b1, opts = {}) {
   for (const track of project.tracks) {
     if (!isTrackPlayable(project, track, mode)) continue;
     try {
-      if (track.type === 'code') {
+      if (track.frozen && frozenMode(project, track, mode)) {
+        collectFrozen(out, track, mode, b0, b1, opts);
+      } else if (track.type === 'code') {
         collectCode(out, project, track, b0, b1, bpb, opts);
       } else if (mode === 'pattern') {
         if (track.type !== 'instrument') continue;
@@ -164,6 +167,32 @@ export function collectEvents(project, b0, b1, opts = {}) {
     }
   }
   return out;
+}
+
+/**
+ * Frozen track (core/freeze.js): song mode plays the render as one audio clip; pattern mode loops the one-cycle
+ * render every `loop` beats (from beat 0, like the patterns it replaces).
+ */
+function collectFrozen(out, track, mode, b0, b1, opts) {
+  const clip = frozenClip(track);
+  if (mode !== 'pattern') {
+    const cs = clip.start, ce = clip.start + clip.length;
+    if (ce <= b0 + EPS || cs >= b1 - EPS) return;
+    if (inWin(cs, b0, b1)) out.push({ type: 'audio', trackId: track.id, beat: cs, clip, offset: 0, dur: clip.length });
+    else if (opts.jump && cs < b0 - EPS && ce > b0 + EPS) out.push({ type: 'audio', trackId: track.id, beat: b0, clip, offset: b0 - cs, dur: ce - b0 });
+    return;
+  }
+  const L = track.frozen.loop;
+  if (!(L > 0)) return;
+  const loopClip = { ...clip, length: L };
+  let k = Math.ceil((b0 - EPS) / L);
+  if (opts.jump) {
+    const cur = Math.floor((b0 + EPS) / L) * L;
+    if (cur < b0 - EPS) out.push({ type: 'audio', trackId: track.id, beat: b0, clip: loopClip, offset: b0 - cur, dur: cur + L - b0 });
+  }
+  for (let s = k * L; s < b1 - EPS; k++, s = k * L) {
+    if (inWin(s, b0, b1)) out.push({ type: 'audio', trackId: track.id, beat: s, clip: loopClip, offset: 0, dur: L });
+  }
 }
 
 function collectCode(out, project, track, b0, b1, bpb, opts) {
@@ -208,9 +237,12 @@ export function defaultEndBeat(project, mode = project.mode) {
  * playhead is exact across tempo changes and loop wraps.
  *
  * opts: { ctx, getProject, dispatch(event, time, spb), onWrap?(time), onError?, interval=25, lookahead=0.12,
- *         onWindow?(project, b0, b1, t0, spb, jump), onTick?(project, now) }
+ *         onWindow?(project, b0, b1, t0, spb, jump, preroll), onTick?(project, now), getPreroll?() }
  *   onWindow is called for every scheduled window before its events are dispatched
  *   (jump: 'seek' after play/seek/drop-out, 'wrap' after a loop wrap, else null) — automation hook.
+ *   getPreroll(): seconds every event is dispatched ahead of the time it must be HEARD (the mixer's plugin
+ *   delay compensation, MixGraph.latency). Anchors / beatAt() / getPosition() / onWindow's t0 stay in heard
+ *   (output) time; `dispatch` receives `time - preroll`.
  */
 export class Scheduler {
   constructor(opts) {
@@ -225,10 +257,16 @@ export class Scheduler {
     this._tick = () => this.tick();
   }
 
+  /** Current pre-roll (s), see getPreroll. */
+  get preroll() {
+    const p = Number(this.o.getPreroll?.());
+    return Number.isFinite(p) && p > 0 ? p : 0;
+  }
+
   start(beat, startDelay = 0.06) {
     this.stopTimer();
     this.playing = true;
-    this._resetAt(beat, this.ctx.currentTime + startDelay);
+    this._resetAt(beat, this.ctx.currentTime + startDelay + this.preroll);
     this.timer = setInterval(this._tick, this.o.interval);
     this.tick();
     return this.nextTimeStart;
@@ -237,7 +275,7 @@ export class Scheduler {
   /** Re-anchor while playing (seek). Returns the ctx time at which `beat` will sound. */
   seek(beat, delay = 0.03) {
     if (!this.playing) return null;
-    this._resetAt(beat, this.ctx.currentTime + delay);
+    this._resetAt(beat, this.ctx.currentTime + delay + this.preroll);
     this.tick();
     return this.nextTimeStart;
   }
@@ -286,18 +324,21 @@ export class Scheduler {
     const ctx = this.ctx;
     const now = ctx.currentTime;
     const hidden = typeof document !== 'undefined' && document.hidden;
-    const horizon = now + (hidden ? 1.5 : this.o.lookahead);
+    const pre = this.preroll;
+    const horizon = now + pre + (hidden ? 1.5 : this.o.lookahead);
+    this.lateness = Math.max(0, now - (this.nextTime - pre)); // > 0: this tick came late for its window (metrics)
 
     // Fell behind (e.g. main thread blocked): skip ahead instead of bursting late notes.
-    if (this.nextTime < now - 0.05) {
-      const skip = now + 0.02 - this.nextTime;
+    if (this.nextTime - pre < now - 0.05) {
+      this.dropouts = (this.dropouts || 0) + 1;
+      const skip = now + pre + 0.02 - this.nextTime;
       let b = this.nextBeat + (skip * project.bpm) / 60;
       const lp = project.loop;
       if (project.mode === 'song' && lp?.enabled && lp.end - lp.start >= 0.25 && this.nextBeat < lp.end && b >= lp.end) {
         b = lp.start + ((b - lp.start) % (lp.end - lp.start));
       }
       this.nextBeat = b;
-      this.nextTime = now + 0.02;
+      this.nextTime = now + pre + 0.02;
       this.jump = true;
       this.jumpKind = 'seek';
       this.anchors.push({ time: this.nextTime, beat: b, bpm: project.bpm });
@@ -321,7 +362,7 @@ export class Scheduler {
         this.anchors.push({ time: t0, beat: b0, bpm });
       }
       if (this.o.onWindow) {
-        try { this.o.onWindow(project, b0, b1, t0, spb, this.jump ? (this.jumpKind || 'seek') : null); } catch (e) { this.o.onError?.(e); }
+        try { this.o.onWindow(project, b0, b1, t0, spb, this.jump ? (this.jumpKind || 'seek') : null, pre); } catch (e) { this.o.onError?.(e); }
       }
       let events = [];
       try {
@@ -332,7 +373,8 @@ export class Scheduler {
         this.o.onError?.(e);
       }
       for (const ev of events) {
-        const time = t0 + (ev.beat - b0) * spb;
+        const time = t0 + (ev.beat - b0) * spb - pre;
+        if (time < now - 1e-4) this.lateEvents = (this.lateEvents || 0) + 1;
         try {
           this.o.dispatch(ev, Math.max(time, now), spb);
         } catch (e) {

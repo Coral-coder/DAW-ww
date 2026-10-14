@@ -12,6 +12,7 @@
 import { EFFECT_DEFS, resolveEffectParams, divisionToBeats } from './effect-defs.js';
 import { clamp, dbToGain, createRng } from '../core/util.js';
 import { pluginEffectBuilder, PLUGIN_EFFECT_TYPES } from './plugin-fx.js';
+import { effectLatencyFrames, lookaheadTime, COMPRESSOR_LOOKAHEAD } from './latency.js';
 
 const TC = 0.015; // smoothing time-constant for parameter changes
 
@@ -419,7 +420,7 @@ const BUILDERS = {
     const comp = ctx.createDynamicsCompressor();
     const makeup = ctx.createGain();
     const dryDelay = ctx.createDelay(0.05);
-    dryDelay.delayTime.value = 0.006; // DynamicsCompressor look-ahead -> keep parallel mix phase-aligned
+    dryDelay.delayTime.value = lookaheadTime(COMPRESSOR_LOOKAHEAD, ctx.sampleRate); // DynamicsCompressor look-ahead -> keep parallel mix phase-aligned
     try { sh.fxIn.disconnect(sh.dry); } catch { /* */ }
     sh.fxIn.connect(dryDelay); dryDelay.connect(sh.dry);
     sh.fxIn.connect(comp); comp.connect(makeup); makeup.connect(sh.wet);
@@ -484,7 +485,7 @@ const BUILDERS = {
     const thresh = ctx.createWaveShaper();
     const smooth = ctx.createBiquadFilter(); smooth.type = 'lowpass'; smooth.Q.value = 0.5;
     const vca = ctx.createGain(); vca.gain.value = 0;
-    const look = ctx.createDelay(0.05); look.delayTime.value = 0.004;
+    const look = ctx.createDelay(0.05); look.delayTime.value = lookaheadTime(0.004, ctx.sampleRate);
     sh.fxIn.connect(detMono); detMono.connect(det); det.connect(env); env.connect(thresh); thresh.connect(smooth);
     smooth.connect(vca.gain);
     sh.fxIn.connect(look); look.connect(vca); vca.connect(sh.wet);
@@ -654,7 +655,7 @@ const BUILDERS = {
     const shaper = ctx.createWaveShaper(); shaper.oversample = '2x';
     const tone = ctx.createBiquadFilter(); tone.type = 'lowpass'; tone.Q.value = 0.6;
     const head = ctx.createBiquadFilter(); head.type = 'peaking'; head.frequency.value = 110; head.gain.value = 1.5; head.Q.value = 0.8;
-    const delay = ctx.createDelay(0.1); delay.delayTime.value = 0.012;
+    const delay = ctx.createDelay(0.1); delay.delayTime.value = lookaheadTime(0.012, ctx.sampleRate);
     const wow = new Lfo(ctx, shapeBuffer(ctx, 'sine'));
     const flutter = new Lfo(ctx, shapeBuffer(ctx, 'triangle'));
     flutter.setHz(7.3);
@@ -663,7 +664,7 @@ const BUILDERS = {
     const out = ctx.createGain();
     sh.fxIn.connect(shaper); shaper.connect(head); head.connect(tone); tone.connect(delay); delay.connect(out); out.connect(sh.wet);
     // dry path delayed by the same base delay to avoid comb filtering when mixing
-    const dryDelay = ctx.createDelay(0.1); dryDelay.delayTime.value = 0.012;
+    const dryDelay = ctx.createDelay(0.1); dryDelay.delayTime.value = lookaheadTime(0.012, ctx.sampleRate);
     try { sh.fxIn.disconnect(sh.dry); } catch { /* */ }
     sh.fxIn.connect(dryDelay); dryDelay.connect(sh.dry);
     let key = '';
@@ -1150,6 +1151,29 @@ export function createEffect(ctx, effectDef, opts = {}) {
   let disposed = false;
   let fallbackFx = null;
   let fallbackReady = null;
+  let curDef = effectDef;
+  // PDC: the bypass path is delayed by the effect's latency, so bypassing never shifts the signal in time
+  let thruDelay = null;
+  const setThruLatency = (sec) => {
+    if (!(sec > 0) && !thruDelay) return;
+    if (!thruDelay || sec > thruDelay._max) {
+      const old = thruDelay;
+      thruDelay = ctx.createDelay(Math.max(0.1, sec * 2));
+      thruDelay._max = Math.max(0.1, sec * 2);
+      if (old) { try { sh.input.disconnect(old); } catch { /* */ } try { old.disconnect(); } catch { /* */ } } else { try { sh.input.disconnect(sh.thru); } catch { /* */ } }
+      sh.input.connect(thruDelay);
+      thruDelay.connect(sh.thru);
+    }
+    thruDelay.delayTime.value = Math.max(0, sec);
+  };
+  const latencyNow = () => {
+    if (Number.isFinite(curDef?.latency) && curDef.latency >= 0) return curDef.latency / ctx.sampleRate; // manual (samples)
+    if (fallbackFx) return fallbackFx.latency;
+    if (BUILDERS[type]) return effectLatencyFrames({ type, params: curDef?.params }, ctx.sampleRate) / ctx.sampleRate;
+    const l = Number(impl.latency); // plugins: reported by the plugin once loaded (seconds)
+    return Number.isFinite(l) && l > 0 ? l : 0;
+  };
+  let lastLatency = -1;
 
   const fx = {
     type,
@@ -1157,6 +1181,7 @@ export function createEffect(ctx, effectDef, opts = {}) {
     output: sh.output,
     update(def, immediate = false) {
       if (disposed) return;
+      curDef = def;
       const json = JSON.stringify(def?.params || {});
       if (json !== lastJson) {
         lastJson = json;
@@ -1168,6 +1193,20 @@ export function createEffect(ctx, effectDef, opts = {}) {
         }
       }
       fx.setBypass(def?.enabled === false, immediate);
+      fx.refreshLatency();
+    },
+    /**
+     * Processing latency in seconds (look-ahead, oversampling, plugin-reported, or the def's manual `latency`
+     * in samples). Constant whether bypassed or not (the bypass path is delayed to match).
+     */
+    get latency() { return latencyNow(); },
+    /** Re-read the latency (plugins report theirs once loaded); returns true when it changed. */
+    refreshLatency() {
+      const l = latencyNow();
+      if (l === lastLatency) return false;
+      lastLatency = l;
+      setThruLatency(l);
+      return true;
     },
     setBypass(b, immediate = false) {
       b = !!b;
@@ -1194,6 +1233,7 @@ export function createEffect(ctx, effectDef, opts = {}) {
       try { impl.dispose?.(); } catch { /* */ }
       try { fallbackFx?.dispose(); } catch { /* */ }
       for (const n of Object.values(sh)) { try { n.disconnect(); } catch { /* */ } }
+      try { thruDelay?.disconnect(); } catch { /* */ }
     },
   };
   if (!fx.getReduction) delete fx.getReduction;
@@ -1217,6 +1257,7 @@ export function createEffect(ctx, effectDef, opts = {}) {
       setP(sh.wet.gain, 1, ctx, true);
       setP(sh.dry.gain, 0, ctx, true);
       try { fallbackFx.setTempo(env.getBpm()); } catch { /* */ }
+      fx.refreshLatency();
       return true;
     }, () => false);
   }

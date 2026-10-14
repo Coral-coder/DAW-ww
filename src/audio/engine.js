@@ -83,8 +83,9 @@ export class AudioEngine extends Emitter {
         dispatch: (ev, time, spb) => this.graph.playEvent(ev, time, spb),
         onError: (e) => this._error(e),
         onWrap: (time) => this.graph.syncLfos(time),
-        onWindow: (project, b0, b1, t0, spb, jump) => this._automateWindow(project, b0, b1, t0, spb, jump),
+        onWindow: (project, b0, b1, t0, spb, jump, pre) => this._automateWindow(project, b0, b1, t0 - (pre || 0), spb, jump),
         onTick: (project) => this._automateTick(project),
+        getPreroll: () => this.graph?.latency || 0, // plugin delay compensation (see latency.js)
       });
       try { this.graph.sync(this.project); } catch (e) { this._error(e); }
       for (const [id, e] of this.codeCache.entries) if (this._daw3Code(id)) prefetchCodeSamples(ctx, e.evaluated).catch(() => {});
@@ -201,6 +202,7 @@ export class AudioEngine extends Emitter {
   // Automation plays in SONG mode only. Mixer targets are AudioParam ramps scheduled per
   // scheduler window; instrument params are evaluated at each window start (so the notes of
   // that window get them) and effect params at the audible position on every tick.
+  // t0 = dispatch time of beat b0 (heard time minus the PDC pre-roll)
   _automateWindow(project, b0, b1, t0, spb, jump) {
     if (project.mode !== 'song') { this._endAutomation(project); return; }
     project = this._withoutOverrides(project);
