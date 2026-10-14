@@ -131,7 +131,7 @@ test('tech-house sketch: tracks, kit, sections', () => {
   assert.ok(laneOf(drums, (t) => t?.kind === 'fx' && t.key === 'cutoff'));
 });
 
-test('a live coder–style: setcpm, register(), slider(), duck -> sidechain ducker keyed by the kick', () => {
+test('live-coder helpers: setcpm, register(), slider(), duck -> sidechain ducker keyed by the kick', () => {
   const { p, s, track } = split(fixture('live-helpers'));
   assert.equal(p.bpm, 140);
   assert.deepEqual(p.tracks.filter((t) => t.type === 'instrument').map((t) => t.name), ['Kick', 'Drums', 'Sawtooth bass', 'Supersaw chords']);
