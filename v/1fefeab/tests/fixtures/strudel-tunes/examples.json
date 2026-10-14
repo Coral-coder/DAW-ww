@@ -1,0 +1,2286 @@
+{
+ "license": "AGPL-3.0-or-later",
+ "origin": "Strudel — https://strudel.cc, https://codeberg.org/uzu/strudel (c) Strudel contributors",
+ "tunes": [
+  {
+   "name": "s",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd hh\")"
+  },
+  {
+   "name": "s",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd:0 bd:1 bd:0:0.3 bd:1:1.4\")"
+  },
+  {
+   "name": "wt",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"squelch\").bank(\"wt_digital\").seg(8).note(\"F1\").wt(\"0 0.25 0.5 0.75 1\")"
+  },
+  {
+   "name": "warp",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"basique\").bank(\"wt_digital\").seg(8).note(\"F1\").warp(\"0 0.25 0.5 0.75 1\")\n  .warpmode(\"spin\")"
+  },
+  {
+   "name": "warpmode",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"morgana\").bank(\"wt_digital\").seg(8).note(\"F1\").warp(\"0 0.25 0.5 0.75 1\")\n  .warpmode(\"<asym bendp spin logistic sync wormhole brownian>*2\")"
+  },
+  {
+   "name": "wtphaserand",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"basique\").bank(\"wt_digital\").seg(16).wtphaserand(\"<0 1>\")"
+  },
+  {
+   "name": "n",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd,hh*6\").n(\"<0 1>\")"
+  },
+  {
+   "name": "note",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c a f e\")"
+  },
+  {
+   "name": "note",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c4 a4 f4 e4\")"
+  },
+  {
+   "name": "note",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"60 69 65 64\")"
+  },
+  {
+   "name": "note",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"fbb1 a#0 cbbb-1 e##-2\").sound(\"saw\")"
+  },
+  {
+   "name": "accelerate",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"sax\").accelerate(\"<0 1 2 4 8 16>\").slow(2).osc()"
+  },
+  {
+   "name": "velocity",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"hh*8\")\n.gain(\".4!2 1 .4!2 1 .4 1\")\n.velocity(\".4 1\")"
+  },
+  {
+   "name": "gain",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"hh*8\").gain(\".4!2 1 .4!2 1 .4 1\").fast(2)"
+  },
+  {
+   "name": "postgain",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd,hh*8\")\n.compressor(\"-20:20:10:.002:.02\").postgain(1.5)"
+  },
+  {
+   "name": "amp",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd*8\").amp(\".1*2 .5 .1*2 .5 .1 .5\").osc()"
+  },
+  {
+   "name": "attack",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c3 e3 f3 g3\").attack(\"<0 .1 .5>\")"
+  },
+  {
+   "name": "fmh",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c e g b g e\")\n.fm(4)\n.fmh(\"<1 2 1.5 1.61>\")\n._scope()"
+  },
+  {
+   "name": "fmi",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c e g b g e\")\n.fm(\"<0 1 2 8 32>\")\n._scope()"
+  },
+  {
+   "name": "fmi",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"sine\").note(\"F1\").seg(8)\n .fm(4).fm2(rand.mul(4)).fm3(saw.mul(8).slow(8))\n .fmh(1.06).fmh2(10).fmh3(0.1)"
+  },
+  {
+   "name": "fmenv",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c e g b g e\")\n.fm(4)\n.fmdecay(.2)\n.fmsustain(0)\n.fmenv(\"<exp lin>\")\n._scope()"
+  },
+  {
+   "name": "fmattack",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c e g b g e\")\n.fm(4)\n.fmattack(\"<0 .05 .1 .2>\")\n._scope()"
+  },
+  {
+   "name": "fmwave",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "n(\"0 1 2 3\".fast(4)).scale(\"d:minor\").s(\"sine\").fmwave(\"<sine square sawtooth crackle>\").fm(4).fmh(2.01)"
+  },
+  {
+   "name": "fmwave",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "n(\"0 1 2 3\".fast(4)).chord(\"<Dm Am F G>\").voicing().s(\"sawtooth\").fmwave(\"brown\").fm(.6)"
+  },
+  {
+   "name": "fmdecay",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c e g b g e\")\n.fm(4)\n.fmdecay(\"<.01 .05 .1 .2>\")\n.fmsustain(.4)\n._scope()"
+  },
+  {
+   "name": "fmsustain",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c e g b g e\")\n.fm(4)\n.fmdecay(.1)\n.fmsustain(\"<1 .75 .5 0>\")\n._scope()"
+  },
+  {
+   "name": "bank",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd\").bank('RolandTR909') // = s(\"RolandTR909_bd RolandTR909_sd\")"
+  },
+  {
+   "name": "chorus",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"d d a# a\").s(\"sawtooth\").chorus(.5)"
+  },
+  {
+   "name": "decay",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c3 e3 f3 g3\").decay(\"<.1 .2 .3 .4>\").sustain(0)"
+  },
+  {
+   "name": "sustain",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c3 e3 f3 g3\").decay(.2).sustain(\"<0 .1 .4 .6 1>\")"
+  },
+  {
+   "name": "release",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c3 e3 g3 c4\").release(\"<0 .1 .4 .6 1>/2\")"
+  },
+  {
+   "name": "bpf",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd,hh*6\").bpf(\"<1000 2000 4000 8000>\")"
+  },
+  {
+   "name": "bpq",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd\").bpf(500).bpq(\"<0 1 2 3>\")"
+  },
+  {
+   "name": "begin",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "samples({ rave: 'rave/AREUREADY.wav' }, 'github:tidalcycles/dirt-samples')\ns(\"rave\").begin(\"<0 .25 .5 .75>\").fast(2)"
+  },
+  {
+   "name": "end",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd*2,oh*4\").end(\"<.1 .2 .5 1>\").fast(2)"
+  },
+  {
+   "name": "loop",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"casio\").loop(1)"
+  },
+  {
+   "name": "loopBegin",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"space\").loop(1)\n.loopBegin(\"<0 .125 .25>\")._scope()"
+  },
+  {
+   "name": "loopEnd",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"space\").loop(1)\n.loopEnd(\"<1 .75 .5 .25>\")._scope()"
+  },
+  {
+   "name": "crush",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"<bd sd>,hh*3\").fast(2).crush(\"<16 8 7 6 5 4 3 2>\")"
+  },
+  {
+   "name": "coarse",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd,hh*8\").coarse(\"<1 4 8 16 32>\")"
+  },
+  {
+   "name": "tremolo",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"d d d# d\".fast(4)).s(\"supersaw\").tremolo(\"<3 2 100> \").tremoloskew(\"<.5>\")"
+  },
+  {
+   "name": "tremolosync",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"d d d# d\".fast(4)).s(\"supersaw\").tremolosync(\"4\").tremoloskew(\"<1 .5 0>\")"
+  },
+  {
+   "name": "tremolodepth",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"a1 a1 a#1 a1\".fast(4)).s(\"pulse\").tremsync(4).tremolodepth(\"<1 2 .7>\")"
+  },
+  {
+   "name": "tremoloskew",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"{f a c e}%16\").s(\"sawtooth\").tremsync(4).tremoloskew(\"<.5 0 1>\")"
+  },
+  {
+   "name": "tremolophase",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"{f a c e}%16\").s(\"sawtooth\").tremsync(4).tremolophase(\"<0 .25 .66>\")"
+  },
+  {
+   "name": "tremoloshape",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"{f g c d}%16\").tremsync(4).tremoloshape(\"<sine tri square>\").s(\"sawtooth\")"
+  },
+  {
+   "name": "drive",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"{f g g c d a a#}%16\".sub(17)).s(\"supersaw\").lpenv(8).lpf(150).lpq(.8).ftype('ladder').drive(\"<.5 4>\")"
+  },
+  {
+   "name": "duckorbit",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "$: n(run(16)).scale(\"c:minor:pentatonic\").s(\"sawtooth\").delay(.7).orbit(2)\n$: s(\"bd:4!4\").beat(\"0,4,8,11,14\",16).duckorbit(2).duckattack(0.2).duckdepth(1)"
+  },
+  {
+   "name": "duckorbit",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "$: n(run(16)).scale(\"c:minor:pentatonic\").s(\"sawtooth\").delay(.7).orbit(2)\n$: s(\"hh*16\").orbit(3)\n$: s(\"bd:4!4\").beat(\"0,4,8,11,14\",16).duckorbit(\"2:3\").duckattack(0.2).duckdepth(1)"
+  },
+  {
+   "name": "duckdepth",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "stack( n(run(8)).scale(\"c:minor\").s(\"sawtooth\").delay(.7).orbit(2), s(\"bd:4!4\").beat(\"0,4,8,11,14\",16).duckorbit(2).duckattack(0.2).duckdepth(\"<1 .9 .6 0>\"))"
+  },
+  {
+   "name": "duckdepth",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "$: n(run(16)).scale(\"c:minor:pentatonic\").s(\"sawtooth\").delay(.7).orbit(2)\n$: s(\"hh*16\").orbit(3)\n$: s(\"bd:4!4\").beat(\"0,4,8,11,14\",16).duckorbit(\"2:3\").duckattack(0.2).duckdepth(\"1:0.5\")"
+  },
+  {
+   "name": "duckonset",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "// Clicks\nsound: freq(\"63.2388\").s(\"sine\").orbit(2).gain(4)\nduckerWithClick: s(\"bd*4\").duckorbit(2).duckattack(0.3).duckonset(0).postgain(0)"
+  },
+  {
+   "name": "duckonset",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "// No clicks\nsound: freq(\"63.2388\").s(\"sine\").orbit(2).gain(4)\nduckerWithoutClick: s(\"bd*4\").duckorbit(2).duckattack(0.3).duckonset(0.01).postgain(0)"
+  },
+  {
+   "name": "duckonset",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "// Rhythmic\nnoise: s(\"pink\").distort(\"2:1\").orbit(4) // used rhythmically with 0.3 onset below\nhhat: s(\"hh*16\").orbit(7)\nducker: s(\"bd*4\").bank(\"tr909\").duckorbit(\"4:7\").duckonset(\"0.3:0.003\").duckattack(0.25)"
+  },
+  {
+   "name": "duckattack",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "sound: n(run(8)).scale(\"c:minor\").s(\"sawtooth\").delay(.7).orbit(2)\nducker: s(\"bd:4!4\").beat(\"0,4,8,11,14\",16).duckorbit(2).duckattack(\"<0.2 0 0.4>\").duckdepth(1)"
+  },
+  {
+   "name": "duckattack",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "moreduck: n(run(8)).scale(\"c:minor\").s(\"sawtooth\").delay(.7).orbit(2)\nlessduck: s(\"hh*16\").orbit(5)\nducker: s(\"bd:4!4\").beat(\"0,4,8,11,14\",16).duckorbit(\"2:5\").duckattack(\"0.4:0.1\")"
+  },
+  {
+   "name": "byteBeatExpression",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bytebeat\").bbexpr('t*(t>>15^t>>66)')"
+  },
+  {
+   "name": "byteBeatStartTime",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c3!8\".add(\"{0 0 12 0 7 5 3}%8\")).s(\"bytebeat:5\").bbst(\"<3 1>\".mul(10000))._scope()"
+  },
+  {
+   "name": "channels",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"e a d b g\").channels(\"3:4\")"
+  },
+  {
+   "name": "pw",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"{f a c e}%16\").s(\"pulse\").pw(\".8:1:.2\")"
+  },
+  {
+   "name": "pw",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "n(run(8)).scale(\"D:pentatonic\").s(\"pulse\").pw(\"0 .75 .5 1\")"
+  },
+  {
+   "name": "pwrate",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "n(run(8)).scale(\"D:pentatonic\").s(\"pulse\").pw(\"0.5\").pwrate(\"<5 .1 25>\").pwsweep(\"<0.3 .8>\")"
+  },
+  {
+   "name": "pwsweep",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "n(run(8)).scale(\"D:pentatonic\").s(\"pulse\").pw(\"0.5\").pwrate(\"<5 .1 25>\").pwsweep(\"<0.3 .8>\")"
+  },
+  {
+   "name": "phaser",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "n(run(8)).scale(\"D:pentatonic\").s(\"sawtooth\").release(0.5)\n.phaser(\"<1 2 4 8>\")"
+  },
+  {
+   "name": "phasersweep",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "n(run(8)).scale(\"D:pentatonic\").s(\"sawtooth\").release(0.5)\n.phaser(2).phasersweep(\"<800 2000 4000>\")"
+  },
+  {
+   "name": "phasercenter",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "n(run(8)).scale(\"D:pentatonic\").s(\"sawtooth\").release(0.5)\n.phaser(2).phasercenter(\"<800 2000 4000>\")"
+  },
+  {
+   "name": "phaserdepth",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "n(run(8)).scale(\"D:pentatonic\").s(\"sawtooth\").release(0.5)\n.phaser(2).phaserdepth(\"<0 .5 .75 1>\")"
+  },
+  {
+   "name": "cut",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"[oh hh]*4\").cut(1)"
+  },
+  {
+   "name": "lpf",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd,hh*6\").lpf(\"<4000 2000 1000 500 200 100>\")"
+  },
+  {
+   "name": "lpf",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd*16\").lpf(\"1000:0 1000:10 1000:20 1000:30\")"
+  },
+  {
+   "name": "lpenv",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c2 e2 f2 g2\")\n.sound('sawtooth')\n.lpf(300)\n.lpa(.5)\n.lpenv(\"<4 2 1 0 -1 -2 -4>/4\")"
+  },
+  {
+   "name": "hpenv",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c2 e2 f2 g2\")\n.sound('sawtooth')\n.hpf(500)\n.hpa(.5)\n.hpenv(\"<4 2 1 0 -1 -2 -4>/4\")"
+  },
+  {
+   "name": "bpenv",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c2 e2 f2 g2\")\n.sound('sawtooth')\n.bpf(500)\n.bpa(.5)\n.bpenv(\"<4 2 1 0 -1 -2 -4>/4\")"
+  },
+  {
+   "name": "lpattack",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c2 e2 f2 g2\")\n.sound('sawtooth')\n.lpf(300)\n.lpa(\"<.5 .25 .1 .01>/4\")\n.lpenv(4)"
+  },
+  {
+   "name": "hpattack",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c2 e2 f2 g2\")\n.sound('sawtooth')\n.hpf(500)\n.hpa(\"<.5 .25 .1 .01>/4\")\n.hpenv(4)"
+  },
+  {
+   "name": "bpattack",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c2 e2 f2 g2\")\n.sound('sawtooth')\n.bpf(500)\n.bpa(\"<.5 .25 .1 .01>/4\")\n.bpenv(4)"
+  },
+  {
+   "name": "lpdecay",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c2 e2 f2 g2\")\n.sound('sawtooth')\n.lpf(300)\n.lpd(\"<.5 .25 .1 0>/4\")\n.lpenv(4)"
+  },
+  {
+   "name": "hpdecay",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c2 e2 f2 g2\")\n.sound('sawtooth')\n.hpf(500)\n.hpd(\"<.5 .25 .1 0>/4\")\n.hps(0.2)\n.hpenv(4)"
+  },
+  {
+   "name": "bpdecay",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c2 e2 f2 g2\")\n.sound('sawtooth')\n.bpf(500)\n.bpd(\"<.5 .25 .1 0>/4\")\n.bps(0.2)\n.bpenv(4)"
+  },
+  {
+   "name": "lpsustain",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c2 e2 f2 g2\")\n.sound('sawtooth')\n.lpf(300)\n.lpd(.5)\n.lps(\"<0 .25 .5 1>/4\")\n.lpenv(4)"
+  },
+  {
+   "name": "hpsustain",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c2 e2 f2 g2\")\n.sound('sawtooth')\n.hpf(500)\n.hpd(.5)\n.hps(\"<0 .25 .5 1>/4\")\n.hpenv(4)"
+  },
+  {
+   "name": "bpsustain",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c2 e2 f2 g2\")\n.sound('sawtooth')\n.bpf(500)\n.bpd(.5)\n.bps(\"<0 .25 .5 1>/4\")\n.bpenv(4)"
+  },
+  {
+   "name": "lprelease",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c2 e2 f2 g2\")\n.sound('sawtooth')\n.clip(.5)\n.lpf(300)\n.lpenv(4)\n.lpr(\"<.5 .25 .1 0>/4\")\n.release(.5)"
+  },
+  {
+   "name": "hprelease",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c2 e2 f2 g2\")\n.sound('sawtooth')\n.clip(.5)\n.hpf(500)\n.hpenv(4)\n.hpr(\"<.5 .25 .1 0>/4\")\n.release(.5)"
+  },
+  {
+   "name": "bprelease",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c2 e2 f2 g2\")\n.sound('sawtooth')\n.clip(.5)\n.bpf(500)\n.bpenv(4)\n.bpr(\"<.5 .25 .1 0>/4\")\n.release(.5)"
+  },
+  {
+   "name": "ftype",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"{f g g c d a a#}%8\").s(\"sawtooth\").lpenv(4).lpf(500).ftype(\"<0 1 2>\").lpq(1)"
+  },
+  {
+   "name": "ftype",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c f g g a c d4\").fast(2)\n.sound('sawtooth')\n.lpf(200).fanchor(0)\n.lpenv(3).lpq(1)\n.ftype(\"<ladder 12db 24db>\")"
+  },
+  {
+   "name": "fanchor",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"{f g g c d a a#}%8\").s(\"sawtooth\").lpf(\"{1000}%2\")\n.lpenv(8).fanchor(\"<0 .5 1>\")"
+  },
+  {
+   "name": "hpf",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd,hh*8\").hpf(\"<4000 2000 1000 500 200 100>\")"
+  },
+  {
+   "name": "hpf",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd,hh*8\").hpf(\"<2000 2000:25>\")"
+  },
+  {
+   "name": "lprate",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"<c c c# c c c4>*16\").s(\"sawtooth\").lpf(600).lprate(\"<4 8 2 1>\")"
+  },
+  {
+   "name": "lpsync",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"<c c c# c c c4>*16\").s(\"sawtooth\").lpf(600).lpsync(\"<4 8 2 1>\")"
+  },
+  {
+   "name": "lpdepth",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"<c c c# c c c4>*16\").s(\"sawtooth\").lpf(600).lpdepth(\"<1 .5 1.8 0>\")"
+  },
+  {
+   "name": "lpdepthfrequency",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"<c c c# c c c4>*16\").s(\"sawtooth\").lpf(600).lpdepthfrequency(\"<200 500 100 0>\")"
+  },
+  {
+   "name": "bpdepthfrequency",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"<c c c# c c c4>*16\").s(\"sawtooth\").lpf(600).bpdepthfrequency(\"<200 500 100 0>\")"
+  },
+  {
+   "name": "hpdepthfrequency",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"<c c c# c c c4>*16\").s(\"sawtooth\").lpf(600).hpdepthfrequency(\"<200 500 100 0>\")"
+  },
+  {
+   "name": "vib",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"a e\")\n.vib(\"<.5 1 2 4 8 16>\")\n._scope()"
+  },
+  {
+   "name": "vib",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "// change the modulation depth with \":\"\nnote(\"a e\")\n.vib(\"<.5 1 2 4 8 16>:12\")\n._scope()"
+  },
+  {
+   "name": "noise",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "sound(\"<white pink brown>/2\")"
+  },
+  {
+   "name": "vibmod",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"a e\").vib(4)\n.vibmod(\"<.25 .5 1 2 12>\")\n._scope()"
+  },
+  {
+   "name": "vibmod",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "// change the vibrato frequency with \":\"\nnote(\"a e\")\n.vibmod(\"<.25 .5 1 2 12>:8\")\n._scope()"
+  },
+  {
+   "name": "hpq",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd,hh*8\").hpf(2000).hpq(\"<0 10 20 30>\")"
+  },
+  {
+   "name": "lpq",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd,hh*8\").lpf(2000).lpq(\"<0 10 20 30>\")"
+  },
+  {
+   "name": "djf",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "n(irand(16).seg(8)).scale(\"d:phrygian\").s(\"supersaw\").djf(\"<.5 .3 .2 .75>\")"
+  },
+  {
+   "name": "delay",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd bd\").delay(\"<0 .25 .5 1>\")"
+  },
+  {
+   "name": "delay",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd bd\").delay(\"0.65:0.25:0.9 0.65:0.125:0.7\")"
+  },
+  {
+   "name": "delayfeedback",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd\").delay(.25).delayfeedback(\"<.25 .5 .75 1>\")"
+  },
+  {
+   "name": "delayfeedback",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd\").delay(.25).delayfeedback(\"<.25 .5 .75 1>\")"
+  },
+  {
+   "name": "delayspeed",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"d d a# a\".fast(2)).s(\"sawtooth\").delay(.8).delaytime(1/2).delayspeed(\"<2 .5 -1 -2>\")"
+  },
+  {
+   "name": "delaysync",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd bd\").delay(.25).delaysync(\"<1 2 3 5>\".div(8))"
+  },
+  {
+   "name": "lock",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"sd\").delay().lock(1).osc()"
+  },
+  {
+   "name": "detune",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"d f a a# a d3\").fast(2).s(\"supersaw\").detune(\"<.1 .2 .5 24.1>\")"
+  },
+  {
+   "name": "unison",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"d f a a# a d3\").fast(2).s(\"supersaw\").unison(\"<1 2 7>\")"
+  },
+  {
+   "name": "spread",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"d f a a# a d3\").fast(2).s(\"supersaw\").spread(\"<0 .3 1>\")"
+  },
+  {
+   "name": "dry",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "n(\"[0,3,7](3,8)\").s(\"superpiano\").room(.7).dry(\"<0 .5 .75 1>\").osc()"
+  },
+  {
+   "name": "freq",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "freq(\"220 110 440 110\").s(\"superzow\").osc()"
+  },
+  {
+   "name": "freq",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "freq(\"110\".mul.out(\".5 1.5 .6 [2 3]\")).s(\"superzow\").osc()"
+  },
+  {
+   "name": "pattack",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c eb g bb\").pattack(\"0 .1 .25 .5\").slow(2)"
+  },
+  {
+   "name": "pdecay",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"<c eb g bb>\").pdecay(\"<0 .1 .25 .5>\")"
+  },
+  {
+   "name": "prelease",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"<c eb g bb> ~\")\n.release(.5) // to hear the pitch release\n.prelease(\"<0 .1 .25 .5>\")"
+  },
+  {
+   "name": "penv",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c\")\n.penv(\"<12 7 1 .5 0 -1 -7 -12>\")"
+  },
+  {
+   "name": "pcurve",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"g1*4\")\n.s(\"sine\").pdec(.5)\n.penv(32)\n.pcurve(\"<0 1>\")"
+  },
+  {
+   "name": "panchor",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c c4\").penv(12).panchor(\"<0 .5 1 .5>\")"
+  },
+  {
+   "name": "leslie",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "n(\"0,4,7\").s(\"supersquare\").leslie(\"<0 .4 .6 1>\").osc()"
+  },
+  {
+   "name": "lrate",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "n(\"0,4,7\").s(\"supersquare\").leslie(1).lrate(\"<1 2 4 8>\").osc()"
+  },
+  {
+   "name": "lsize",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "n(\"0,4,7\").s(\"supersquare\").leslie(1).lrate(2).lsize(\"<.1 .5 1>\").osc()"
+  },
+  {
+   "name": "octave",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "n(\"0,4,7\").scale(\"F:minor\").s('supersaw').octave(\"<0 1 2 3>\")"
+  },
+  {
+   "name": "orbit",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "stack(\n  s(\"hh*6\").delay(.5).delaytime(.25).orbit(1),\n  s(\"~ sd ~ sd\").delay(.5).delaytime(.125).orbit(2)\n)"
+  },
+  {
+   "name": "pan",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"[bd hh]*2\").pan(\"<.5 1 .5 0>\")"
+  },
+  {
+   "name": "pan",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd rim sd rim bd ~ cp rim\").pan(sine.slow(2))"
+  },
+  {
+   "name": "chord",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "chord(\"<Am C D F Am E Am E>\").voicing()"
+  },
+  {
+   "name": "dictionary",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "addVoicings('house', {\n'': ['7 12 16', '0 7 16', '4 7 12'],\n'm': ['0 3 7']\n})\nchord(\"<Am C D F Am E Am E>\")\n.dict('house').anchor(66)\n.voicing().room(.5)"
+  },
+  {
+   "name": "anchor",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "anchor(\"<c4 g4 c5 g5>\").chord(\"C\").voicing()"
+  },
+  {
+   "name": "offset",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "chord(\"<Am C D F Am E Am E>\").offset(\"<0 1 2 3 4 5>\") // alter the voicing each time"
+  },
+  {
+   "name": "mode",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "mode(\"<below above duck root>\").chord(\"C\").voicing()"
+  },
+  {
+   "name": "room",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd\").room(\"<0 .2 .4 .6 .8 1>\")"
+  },
+  {
+   "name": "room",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd\").room(\"<0.9:1 0.9:4>\")"
+  },
+  {
+   "name": "roomlp",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd\").room(0.5).rlp(10000)"
+  },
+  {
+   "name": "roomlp",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd\").room(0.5).rlp(5000)"
+  },
+  {
+   "name": "roomdim",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd\").room(0.5).rlp(10000).rdim(8000)"
+  },
+  {
+   "name": "roomdim",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd\").room(0.5).rlp(5000).rdim(400)"
+  },
+  {
+   "name": "roomfade",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd\").room(0.5).rlp(10000).rfade(0.5)"
+  },
+  {
+   "name": "roomfade",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd\").room(0.5).rlp(5000).rfade(4)"
+  },
+  {
+   "name": "iresponse",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd\").room(.8).ir(\"<shaker_large:0 shaker_large:2>\")"
+  },
+  {
+   "name": "roomsize",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd\").room(.8).rsize(1)"
+  },
+  {
+   "name": "roomsize",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd\").room(.8).rsize(4)"
+  },
+  {
+   "name": "shape",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd,hh*8\").shape(\"<0 .2 .4 .6 .8>\")"
+  },
+  {
+   "name": "distort",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd,hh*8\").distort(\"<0 2 3 10:.5>\")"
+  },
+  {
+   "name": "distort",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"d1!8\").s(\"sine\").penv(36).pdecay(.12).decay(.23).distort(\"8:.4\")"
+  },
+  {
+   "name": "distort",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd:4*4\").bank(\"tr808\").distort(\"3:0.5:diode\")"
+  },
+  {
+   "name": "distortvol",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd*4\").bank(\"tr909\").distort(2).distortvol(0.8)"
+  },
+  {
+   "name": "distorttype",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd*4\").bank(\"tr909\").distort(2).distorttype(\"<0 1 2>\")"
+  },
+  {
+   "name": "distorttype",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"sine\").note(\"F1*2\").release(1)\n  .penv(24).pdecay(0.05)\n  .distort(rand.range(1, 8))\n  .distorttype(\"<fold chebyshev scurve diode asym sinefold>\")"
+  },
+  {
+   "name": "compressor",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd [~ bd] sd,hh*8\")\n.compressor(\"-20:20:10:.002:.02\")"
+  },
+  {
+   "name": "speed",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd*6\").speed(\"1 2 4 1 -2 -4\")"
+  },
+  {
+   "name": "speed",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "speed(\"1 1.5*2 [2 1.1]\").s(\"piano\").clip(1)"
+  },
+  {
+   "name": "stretch",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"gm_flute\").stretch(\"1 2 .5\")"
+  },
+  {
+   "name": "unit",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "speed(\"1 2 .5 3\").s(\"bd\").unit(\"c\").osc()"
+  },
+  {
+   "name": "squiz",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "squiz(\"2 4/2 6 [8 16]\").s(\"bd\").osc()"
+  },
+  {
+   "name": "vowel",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"[c2 <eb2 <g2 g1>>]*2\").s('sawtooth')\n.vowel(\"<a e i <o u>>\")"
+  },
+  {
+   "name": "vowel",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd sd mt ht bd [~ cp] ht lt\").vowel(\"[a|e|i|o|u]\")"
+  },
+  {
+   "name": "density",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"crackle*4\").density(\"<0.01 0.04 0.2 0.5>\".slow(4))"
+  },
+  {
+   "name": "clip",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c a f e\").s(\"piano\").clip(\"<.5 1 2>\")"
+  },
+  {
+   "name": "duration",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c a f e\").s(\"piano\").dur(\"<.5 1 2>\")"
+  },
+  {
+   "name": "adsr",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"[c3 bb2 f3 eb3]*2\").sound(\"sawtooth\").lpf(600).adsr(\".1:.1:.5:.2\")"
+  },
+  {
+   "name": "midichan",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c4\").midichan(1).midi()"
+  },
+  {
+   "name": "midiport",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c a f e\").midiport(\"<0 1 2 3>\").midi()"
+  },
+  {
+   "name": "midicmd",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "midicmd(\"clock*48,<start stop>/2\").midi()"
+  },
+  {
+   "name": "nrpnn",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c4\").nrpnn(\"1:8\").nrpv(\"123\").midichan(1).midi()"
+  },
+  {
+   "name": "nrpv",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c4\").nrpnn(\"1:8\").nrpv(\"123\").midichan(1).midi()"
+  },
+  {
+   "name": "progNum",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c4\").progNum(10).midichan(1).midi()"
+  },
+  {
+   "name": "sysex",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c4\").sysex([\"0x77\", \"0x01:0x02:0x03:0x04\"]).midichan(1).midi()"
+  },
+  {
+   "name": "sysexid",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c4\").sysexid(\"0x77\").sysexdata(\"0x01:0x02:0x03:0x04\").midichan(1).midi()"
+  },
+  {
+   "name": "sysexdata",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c4\").sysexid(\"0x77\").sysexdata(\"0x01:0x02:0x03:0x04\").midichan(1).midi()"
+  },
+  {
+   "name": "midibend",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c4\").midibend(sine.slow(4).range(-0.4,0.4)).midi()"
+  },
+  {
+   "name": "miditouch",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c4\").miditouch(sine.slow(4).range(0,1)).midi()"
+  },
+  {
+   "name": "oschost",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c4\").oschost('127.0.0.1').oscport(57120).osc();"
+  },
+  {
+   "name": "oscport",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "note(\"c4\").oschost('127.0.0.1').oscport(57120).osc();"
+  },
+  {
+   "name": "as",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "\"c:.5 a:1 f:.25 e:.8\".as(\"note:clip\")"
+  },
+  {
+   "name": "as",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "\"{0@2 0.25 0 0.5 .3 .5}%8\".as(\"begin\").s(\"sax_vib\").clip(1)"
+  },
+  {
+   "name": "scrub",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "samples('github:yaxu/clean-breaks/main');\ns(\"amen/4\").fit().scrub(\"{0@3 0@2 4@3}%8\".div(16))"
+  },
+  {
+   "name": "lfo",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"saw\").note(\"F1\").lpf(500).lfo()"
+  },
+  {
+   "name": "lfo",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"saw\").lfo().lpf(500).lfo({ s: 0.3 })"
+  },
+  {
+   "name": "lfo",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"saw\").lpf(500).diode(0.3)\n  .lfo({ c: \"lpf\" })"
+  },
+  {
+   "name": "lfo",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"pulse\").lpf(500).lfo()\n  .lfo({ c: \"s\" })\n  .diode(0.3)\n  .sometimes(x => x.lfo({ s: \"8\" }, 1)) // lfo #1 (0-indexed)"
+  },
+  {
+   "name": "lfo",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"pulse\").lpf(500).lfo({ depth: 4 }, 'lpf_mod')\n  .lfo({ c: \"s\" })\n  .diode(0.3)\n  .sometimes(x => x.lfo({ s: \"8\" }, 'lpf_mod'))"
+  },
+  {
+   "name": "env",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"saw\").note(\"F1\").lpf(500).env({ a: 1 })"
+  },
+  {
+   "name": "env",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"saw\").env({ d: 1 }).note(\"F1\")\n  .lpq(4).lpf(50)\n  .env({ a: 0.1, d: 1, ac: 0.8, dc: 0.3, depth: 50 })"
+  },
+  {
+   "name": "env",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"saw\").lpf(500).diode(0.3)\n  .env({ c: \"lpf\", a: 0.5, d: 0.5 })"
+  },
+  {
+   "name": "env",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"pulse\").lpf(500).env({ a: 1 })\n  .env({ c: \"s\", a: 1 })\n  .diode(0.3)\n  .sometimes(x => x.env({ a: \"0.5\" }, 1)) // envelope #1 (0-indexed)"
+  },
+  {
+   "name": "env",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"pulse\").lpf(500).env({ a: 1 }, 'lpf_mod')\n  .env({ c: \"s\", a: 1 })\n  .diode(0.3)\n  .sometimes(x => x.env({ a: \"0.5\" }, 'lpf_mod'))"
+  },
+  {
+   "name": "bmod",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "modulator: s(\"one\").seg(64).gain(slider(0, 0, 1)).bus(1).dry(0)\ncarrier: s(\"saw\").bmod({ b: 1 })"
+  },
+  {
+   "name": "transient",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"bd\").transient(\"<-1 -0.5 0 0.5 1>\")"
+  },
+  {
+   "name": "transient",
+   "source": "strudel-core-1.2.6/controls.mjs",
+   "code": "s(\"hh*16\").bank(\"tr909\").transient(\"<-1:1 1:-1>\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/drawLine.mjs",
+   "code": "const line = drawLine(\"0 [1 2 3]\", 10); // |0--123|0--123\nconsole.log(line);\nsilence;"
+  },
+  {
+   "name": "euclid",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "// The Cuban tresillo pattern.\nnote(\"c3\").euclid(3,8)"
+  },
+  {
+   "name": "euclidRot",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "// A Samba rhythm necklace from Brazil\nnote(\"c3\").euclidRot(3,16,14)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclid(2,5)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclid(3,4)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclidRot(3,5,2)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclid(3,7)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclid(3,8)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclid(4,7)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclid(4,9)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclid(4,11)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclid(5,6)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclid(5,7)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclid(5,8)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclid(5,9)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclid(5,11)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclid(5,12)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclid(5,16)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclid(7,8)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclid(7,12)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclidRot(7,16,14)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclid(9,16)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclidRot(11,24,14)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclidRot(13,24,5)"
+  },
+  {
+   "name": "euclidLegato",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclidLegato(3,8)"
+  },
+  {
+   "name": "euclidLegatoRot",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "note(\"c3\").euclidLegatoRot(3,5,2)"
+  },
+  {
+   "name": "euclidish",
+   "source": "strudel-core-1.2.6/euclid.mjs",
+   "code": "sound(\"hh\").euclidish(7,12,sine.slow(8))\n.pan(sine.slow(8))"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/impure.mjs",
+   "code": "n(\"<0 1 2 3>(3,8)\")\n  .sound(\"num\")\n  // resets the timeline every two cycles, by negating the timeline.\n  // in a lot of cases this will be edited by a human live coder\n  // rather than patterned!\n  .timeline(\"<2 -2>\".slow(2))"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"0 1 2\".withValue(v => v + 10).log()"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "const pattern = sequence('a', ['b', 'c'])\nconst haps = pattern.queryArc(0, 1)\nconsole.log(haps)\nsilence"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"bd*8\").velocity(rand).filterHaps((h) => (h.whole.begin % 1) < h.value.velocity)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "const drums = s(\"bd sd bd sd\")\nkick: drums.filterValues((v) => v.s === 'bd').duck(2)\nsnare: drums.filterValues((v) => v.s === 'sd')\nbass: s(\"saw!4\").note(\"G#1\").lpf(80).lpenv(4).orbit(2)"
+  },
+  {
+   "name": "layer",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"<0 2 4 6 ~ 4 ~ 2 0!3 ~!5>*8\"\n  .layer(x=>x.add(\"0,2\"))\n  .scale('C minor').note()"
+  },
+  {
+   "name": "superimpose",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"<0 2 4 6 ~ 4 ~ 2 0!3 ~!5>*8\"\n  .superimpose(x=>x.add(2))\n  .scale('C minor').note()"
+  },
+  {
+   "name": "log",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"bd sd\").log()"
+  },
+  {
+   "name": "logValues",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"bd sd\").gain(\"0.25 0.5 1\").n(\"2 1 0\").logValues()"
+  },
+  {
+   "name": "into",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "sound(\"bd sd ht lt\").into(\"1 0\", hurry(2))"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(\"<[c,eb,g]!2 [c,f,ab] [d,f,ab]>\")\n.arpWith(haps => haps[2])"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(\"<[c,eb,g]!2 [c,f,ab] [d,f,ab]>\")\n.arp(\"0 [0,2] 1 [0,2]\")"
+  },
+  {
+   "name": "add",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "// Here, the triad 0, 2, 4 is shifted by different amounts\nn(\"0 2 4\".add(\"<0 3 4 0>\")).scale(\"C:major\")\n// Without add, the equivalent would be:\n// n(\"<[0 2 4] [3 5 7] [4 6 8] [0 2 4]>\").scale(\"C:major\")"
+  },
+  {
+   "name": "add",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "// You can also use add with notes:\nnote(\"c3 e3 g3\".add(\"<0 5 7 0>\"))\n// Behind the scenes, the notes are converted to midi numbers:\n// note(\"48 52 55\".add(\"<0 5 7 0>\"))"
+  },
+  {
+   "name": "sub",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "n(\"0 2 4\".sub(\"<0 1 2 3>\")).scale(\"C4:minor\")\n// See add for more information."
+  },
+  {
+   "name": "mul",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"<1 1.5 [1.66, <2 2.33>]>*4\".mul(150).freq()"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(\"c,eb,g\")\n  .struct(\"x ~ x ~ ~ x ~ x ~ ~ ~ x ~ x ~ ~\")\n  .slow(2)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(\"c [eb,g] d [eb,g]\").mask(\"<1 [0 1]>\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"[<bd lt> sd]*2, hh*8\").reset(\"<x@3 x(5,8)>\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"[<bd lt> sd]*2, hh*8\").restart(\"<x@3 x(5,8)>\")"
+  },
+  {
+   "name": "gap",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "gap(3) // \"~@3\""
+  },
+  {
+   "name": "silence",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "silence // \"~\""
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "pure('e4') // \"e4\""
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "stack(\"g3\", \"b3\", [\"e4\", \"d4\"]).note()\n// \"g3,b3,[e4 d4]\".note()"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "// As a chained function:\ns(\"hh*4\").stack(\n  note(\"c4(5,8)\")\n)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "slowcat(\"e5\", \"b4\", [\"d5\", \"c5\"])"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "cat(\"e5\", \"b4\", [\"d5\", \"c5\"]).note()\n// \"<e5 b4 [d5 c5]>\".note()"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "// As a chained function:\ns(\"hh*4\").cat(\n   note(\"c4(5,8)\")\n)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "arrange(\n  [4, \"<c a f e>(3,8)\"],\n  [2, \"<g a>(5,8)\"]\n).note()"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "seqPLoop([0, 2, \"bd(3,8)\"],\n         [1, 3, \"cp(3,8)\"]\n        )\n  .sound()"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "seq(\"e5\", \"b4\", [\"d5\", \"c5\"]).note()\n// \"e5 b4 [d5 c5]\".note()"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "// As a chained function:\ns(\"hh*4\").seq(\n  note(\"c4(5,8)\")\n)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "const vlpf = register('vlpf', (freq, pat) => {\n  return pat.fmap((v) => ({...v, cutoff: freq * (v.velocity ?? 1) }));\n})\ns(\"saw\").seg(8).velocity(rand).vlpf(800)"
+  },
+  {
+   "name": "round",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "n(\"0.5 1.5 2.5\".round()).scale(\"C:major\")"
+  },
+  {
+   "name": "floor",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(\"42 42.1 42.5 43\".floor())"
+  },
+  {
+   "name": "ceil",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(\"42 42.1 42.5 43\".ceil())"
+  },
+  {
+   "name": "range",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"[bd sd]*2,hh*8\")\n.cutoff(sine.range(500,4000))"
+  },
+  {
+   "name": "rangex",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"[bd sd]*2,hh*8\")\n.cutoff(sine.rangex(500,4000))"
+  },
+  {
+   "name": "range2",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"[bd sd]*2,hh*8\")\n.cutoff(sine2.range2(500,4000))"
+  },
+  {
+   "name": "ratio",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "ratio(\"1, 5:4, 3:2\").mul(110)\n.freq().s(\"piano\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "cat(\n  s(\"bd sd\").compress(.25,.75),\n  s(\"~ bd sd ~\")\n)"
+  },
+  {
+   "name": "fastGap",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"bd sd\").fastGap(2)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"bd hh sd hh\").focus(1/4, 3/4)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"bd ~ sd cp\").ply(\"<1 2 3>\")"
+  },
+  {
+   "name": "fast",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"bd hh sd hh\").fast(2) // s(\"[bd hh sd hh]*2\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"bd sd:2\").hurry(\"<1 2 4 3>\").slow(1.5)"
+  },
+  {
+   "name": "slow",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"bd hh sd hh\").slow(2) // s(\"[bd hh sd hh]/2\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"0 1 2 3 4 3 2 1\".inside(4, rev).scale('C major').note()\n// \"0 1 2 3 4 3 2 1\".slow(4).rev().fast(4).scale('C major').note()"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"<[0 1] 2 [3 4] 5>\".outside(4, rev).scale('C major').note()\n// \"<[0 1] 2 [3 4] 5>\".fast(4).rev().slow(4).scale('C major').note()"
+  },
+  {
+   "name": "lastOf",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(\"c3 d3 e3 g3\").lastOf(4, x=>x.rev())"
+  },
+  {
+   "name": "firstOf",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(\"c3 d3 e3 g3\").firstOf(4, x=>x.rev())"
+  },
+  {
+   "name": "every",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(\"c3 d3 e3 g3\").every(4, x=>x.rev())"
+  },
+  {
+   "name": "apply",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"<c3 eb3 g3>\".scale('C minor').apply(scaleTranspose(\"0,2,4\")).note()"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"<bd sd>,hh*2\").cpm(90) // = 90 bpm"
+  },
+  {
+   "name": "early",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"bd ~\".stack(\"hh ~\".early(.1)).s()"
+  },
+  {
+   "name": "late",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"bd ~\".stack(\"hh ~\".late(.1)).s()"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"bd*2 hh*3 [sd bd]*2 perc\").zoom(0.25, 0.75)\n// s(\"hh*3 [sd bd]*2\") // equivalent"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(\"0 1 2 3 4 5 6 7\".scale('c:mixolydian'))\n.bite(4, \"3 2 1 0\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "sound(\"bd - bd bd*2, - sd:6 - sd:5 sd:1 - [- sd:2] -, hh [- cp:7]\")\n  .bank(\"RolandTR909\").speed(1.2)\n  .bite(4, \"0 0 [1 2] <3 2> 0 0 [2 1] 3\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"lt ht mt cp, [hh oh]*2\").linger(\"<1 .5 .25 .125>\")"
+  },
+  {
+   "name": "segment",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(saw.range(40,52).segment(24))"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"hh*8\").swingBy(1/3, 4)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"hh*8\").swing(4)\n// s(\"hh*8\").swingBy(1/3, 4)"
+  },
+  {
+   "name": "invert",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"bd\").struct(\"1 0 0 1 0 0 1 0\".lastOf(4, invert))"
+  },
+  {
+   "name": "when",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"c3 eb3 g3\".when(\"<0 1>/2\", x=>x.sub(\"5\")).note()"
+  },
+  {
+   "name": "off",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"c3 eb3 g3\".off(1/8, x=>x.add(7)).note()"
+  },
+  {
+   "name": "rev",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(\"c d e g\").rev()"
+  },
+  {
+   "name": "revv",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "// This is the same as `<[g e] [d c]>`. If `rev()` is used, you get\n// the same as `<[d c] [g e]>`, where each cycle reverses, but the order of\n// cycles stays the same.\nnote(\"<[c d] [e g]>\").revv()"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "stack(s(\"hh*4\"),\n      s(\"bd mt sd ht\").pressBy(\"<0 0.5 0.25>\")\n     ).slow(2)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "stack(s(\"hh*4\"),\n      s(\"bd mt sd ht\").every(4, press)\n     ).slow(2)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "stack(\n  s(\"bd\").hush(),\n  s(\"hh*3\")\n)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(\"c d e g\").palindrome()"
+  },
+  {
+   "name": "juxBy",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"bd lt [~ ht] mt cp ~ bd hh\").juxBy(\"<0 .5 1>/2\", rev)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"bd lt [~ ht] mt cp ~ bd hh\").jux(rev)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"bd lt [~ ht] mt cp ~ bd hh\").jux(press)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"bd lt [~ ht] mt cp ~ bd hh\").jux(iter(4))"
+  },
+  {
+   "name": "echoWith",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"<0 [2 4]>\"\n.echoWith(4, 1/8, (p,n) => p.add(n*2))\n.scale(\"C:minor\").note()"
+  },
+  {
+   "name": "echo",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"bd sd\").echo(3, 1/6, .8)"
+  },
+  {
+   "name": "stut",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"bd sd\").stut(3, .8, 1/6)"
+  },
+  {
+   "name": "plyWith",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"<0 [2 4]>\"\n.plyWith(4, (p) => p.add(2))\n.scale(\"C:minor\").note()"
+  },
+  {
+   "name": "plyForEach",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"<0 [2 4]>\"\n.plyForEach(4, (p,n) => p.add(n*2))\n.scale(\"C:minor\").note()"
+  },
+  {
+   "name": "iter",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(\"0 1 2 3\".scale('A minor')).iter(4)"
+  },
+  {
+   "name": "iterBack",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(\"0 1 2 3\".scale('A minor')).iterBack(4)"
+  },
+  {
+   "name": "repeatCycles",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(irand(12).add(34)).segment(4).repeatCycles(2).s(\"gm_acoustic_guitar_nylon\")"
+  },
+  {
+   "name": "chunk",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"0 1 2 3\".chunk(4, x=>x.add(7))\n.scale(\"A:minor\").note()"
+  },
+  {
+   "name": "chunkBack",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"0 1 2 3\".chunkBack(4, x=>x.add(7))\n.scale(\"A:minor\").note()"
+  },
+  {
+   "name": "fastChunk",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"<0 8> 1 2 3 4 5 6 7\"\n.scale(\"C2:major\").note()\n.fastChunk(4, x => x.color('red')).slow(2)"
+  },
+  {
+   "name": "chunkInto",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "sound(\"bd sd ht lt bd - cp lt\").chunkInto(4, hurry(2))\n  .bank(\"tr909\")"
+  },
+  {
+   "name": "chunkBackInto",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "sound(\"bd sd ht lt bd - cp lt\").chunkInto(4, hurry(2))\n  .bank(\"tr909\")"
+  },
+  {
+   "name": "ribbon",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(\"<c d e f>\").ribbon(1, 2)"
+  },
+  {
+   "name": "ribbon",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "// Looping a portion of randomness\nn(irand(8).segment(4)).scale(\"c:pentatonic\").ribbon(1337, 2)"
+  },
+  {
+   "name": "ribbon",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "// rhythm generator\ns(\"bd!16?\").ribbon(29,.5)"
+  },
+  {
+   "name": "tag",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"saw!16\").note(\"F1\")\n  .lpf(tri.range(40, 80).slow(4)).lpenv(5).lpq(4).lpd(0.15)\n  .when(rand.late(0.1).gte(0.5), x => x.transpose(\"12\").tag('altered'))\n  .when(rand.late(0.2).gte(0.5), x => x.s(\"square\").tag('altered'))\n  .when(\"<0 1>\", x => x.filter((hap) => hap.hasTag('altered')))"
+  },
+  {
+   "name": "filter",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"hh!7 oh\").filter(hap => hap.value.s === 'hh')"
+  },
+  {
+   "name": "filterWhen",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "oneCycle: s(\"bd*4\").filterWhen((t) => t < 1)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "sound(\"bd sd cp\").pace(4)\n// The same as sound(\"{bd sd cp}%4\") or sound(\"<bd sd cp>*4\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "// The same as note(\"{c eb g, c2 g2}%6\")\npolymeter(\"c eb g\", \"c2 g2\").note()"
+  },
+  {
+   "name": "stepcat",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "stepcat([3,\"e3\"],[1, \"g3\"]).note()\n// the same as \"e3@3 g3\".note()"
+  },
+  {
+   "name": "stepcat",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "stepcat(\"bd sd cp\",\"hh hh\").sound()\n// the same as \"bd sd cp hh hh\".sound()"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "stepalt([\"bd cp\", \"mt\"], \"bd\").sound()\n// The same as \"bd cp bd mt bd\".sound()"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"bd cp ht mt\".take(\"2\").sound()\n// The same as \"bd cp\".sound()"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"bd cp ht mt\".take(\"1 2 3\").sound()\n// The same as \"bd bd cp bd cp ht\".sound()"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"bd cp ht mt\".take(\"-1 -2 -3\").sound()\n// The same as \"mt ht mt cp ht mt\".sound()"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"tha dhi thom nam\".drop(\"1\").sound().bank(\"mridangam\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"tha dhi thom nam\".drop(\"-1\").sound().bank(\"mridangam\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"tha dhi thom nam\".drop(\"0 1 2 3\").sound().bank(\"mridangam\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"tha dhi thom nam\".drop(\"0 -1 -2 -3\").sound().bank(\"mridangam\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "stepcat(\n  sound(\"bd bd - cp\").extend(2),\n  sound(\"bd - sd -\")\n).pace(8)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "stepcat(\n  sound(\"bd bd - cp\").replicate(2),\n  sound(\"bd - sd -\")\n).pace(8)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "sound(\"tha dhi thom nam\").bank(\"mridangam\").expand(\"3 2 1 1 2 3\").pace(8)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "sound(\"tha dhi thom nam\").bank(\"mridangam\").contract(\"3 2 1 1 2 3\").pace(8)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"tha dhi thom nam\".shrink(\"1\").sound()\n.bank(\"mridangam\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"tha dhi thom nam\".shrink(\"-1\").sound()\n.bank(\"mridangam\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"tha dhi thom nam\".shrink(\"1 -1\").sound().bank(\"mridangam\").pace(4)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(\"0 1 2 3 4 5 6 7\".scale(\"C:ritusen\")).sound(\"folkharp\")\n   .shrink(\"1 -1\").pace(8)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"tha dhi thom nam\".grow(\"1\").sound()\n.bank(\"mridangam\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"tha dhi thom nam\".grow(\"-1\").sound()\n.bank(\"mridangam\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"tha dhi thom nam\".grow(\"1 -1\").sound().bank(\"mridangam\").pace(4)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(\"0 1 2 3 4 5 6 7\".scale(\"C:ritusen\")).sound(\"folkharp\")\n   .grow(\"1 -1\").pace(8)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "\"[c g]\".tour(\"e f\", \"e f g\", \"g f e c\").note()\n   .sound(\"folkharp\")\n   .pace(8)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "zip(\"e f\", \"e f g\", \"g [f e] a f4 c\").note()\n   .sound(\"folkharp\")\n   .pace(8)"
+  },
+  {
+   "name": "chop",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "samples({ rhodes: 'https://cdn.freesound.org/previews/132/132051_316502-lq.mp3' })\ns(\"rhodes\")\n .chop(4)\n .rev() // reverse order of chops\n .loopAt(2) // fit sample into 2 cycles"
+  },
+  {
+   "name": "striate",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"numbers:0 numbers:1 numbers:2\").striate(6).slow(3)"
+  },
+  {
+   "name": "loopAt",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "samples({ rhodes: 'https://cdn.freesound.org/previews/132/132051_316502-lq.mp3' })\ns(\"rhodes\").loopAt(2)"
+  },
+  {
+   "name": "slice",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "samples('github:tidalcycles/dirt-samples')\ns(\"breaks165\").slice(8, \"0 1 <2 2*2> 3 [4 0] 5 6 7\".every(3, rev)).slow(0.75)"
+  },
+  {
+   "name": "slice",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "samples('github:tidalcycles/dirt-samples')\ns(\"breaks125\").fit().slice([0,.25,.5,.75], \"0 1 1 <2 3>\")"
+  },
+  {
+   "name": "onTriggerTime",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"bd!8\").onTriggerTime((hap) => {console.log(hap)})"
+  },
+  {
+   "name": "splice",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "samples('github:tidalcycles/dirt-samples')\ns(\"breaks165\")\n.splice(8,  \"0 1 [2 3 0]@2 3 0@2 7\")"
+  },
+  {
+   "name": "fit",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "samples({ rhodes: 'https://cdn.freesound.org/previews/132/132051_316502-lq.mp3' })\ns(\"rhodes/2\").fit()"
+  },
+  {
+   "name": "loopAtCps",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "samples({ rhodes: 'https://cdn.freesound.org/previews/132/132051_316502-lq.mp3' })\ns(\"rhodes\").loopAtCps(4,1.5).cps(1.5)"
+  },
+  {
+   "name": "xfade",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "xfade(s(\"bd*2\"), \"<0 .25 .5 .75 1>\", s(\"hh*8\"))"
+  },
+  {
+   "name": "beat",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"bd\").beat(\"0,7,10\", 16)"
+  },
+  {
+   "name": "beat",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"sd\").beat(\"4,12\", 16)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "sound(\"hh\").struct(morph([1,0,1,0,1,0,1,0], // straight rhythm\n                         [1,1,0,1,0,1,0], // wonky rhythm\n                         0.25 // creates a slightly wonky rhythm\n                        )\n                  )"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "sound(\"hh\").struct(morph(\"1:0:1:0:1:0:1:0\", // straight rhythm\n                         \"1:1:0:1:0:1:0\", // wonky rhythm\n                         sine.slow(8) // slowly morph between the rhythms\n                        )\n                  )"
+  },
+  {
+   "name": "partials",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"user\").seg(16).n(irand(8)).scale(\"A:major\")\n  .partials([1, 0, 1, 0, 0, 1])"
+  },
+  {
+   "name": "partials",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "s(\"saw\").seg(8).n(irand(12)).scale(\"G#:minor\")\n  .partials(binaryL(irand(256).add(\"1\")))"
+  },
+  {
+   "name": "phases",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "// Phase cancellation\ns(\"saw\").seg(8).n(irand(12)).scale(\"G#1:minor\")\n  .partials(partials([1, 1, 1]))\n  .superimpose(x => x.phases([0.5, 0.5, 0.5]))"
+  },
+  {
+   "name": "FX",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "$: s(\"[sbd <hh [bd | lt | oh]>]*4\").dec(.4)\n  .FX(\n    phaser(0.5).gain(2),\n    bpf(800),\n    distort(1.3),\n    room(0.2),\n    delay(0.5).gain(1.25),\n    distort(0.3),\n  ).fxr(1.7) // sets release time of effects (like delay)"
+  },
+  {
+   "name": "FX",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "$: s(\"saw\").fm(0.5)\n  .delay(0.3) // outer effects are applied *last*\n  .FX(coarse(4)) // first coarse\n  .FX(lpf(500).lpe(4).lpa(1).lpd(2)) // then lpf\n  .FX(distort(1)) // then distort"
+  },
+  {
+   "name": "K",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "note(\"A c e\".fast(4)).transpose(\"<0 2 4 6 8>\")\n  .scale(\"F:minor\").transpose(\"12\")\n  .s(\"saw\")\n  .K(\n    // audioin().mul(sGate.adsr(0.001, 0.3, 0, 0.2)) // as effect\n    saw(saw(sFreq / \"2!3 16\").mul(8).add(sFreq).lag(\"0!3 0.1\")).mul(0.3) // as source\n    .mul(sGate.adsr(0, 0.15, 0.5, \"0.1!3 1\"))\n    .lpf(sGate.adsr(0, 0.2, 0.3, 0.2).mul(1).add(0))\n    .add(x => x.delay(S(\"0.3 0.2\".fast(2))).mul(0.7))\n    .add(x => x.delay(\"0.03 [0.08 0.01] 0.01 0.013\").mul(0.77)).mul(0.7)\n    .add(x => x.delay(.13).mul(0.7))\n    .out()\n  )"
+  },
+  {
+   "name": "K",
+   "source": "strudel-core-1.2.6/pattern.mjs",
+   "code": "n(\"<0 1 <2 3 2 4>>*16\")\n  .scale(\"G#2:minor\").sometimes(x => x.transpose(\"12 | 24\"))\n  .K(() => {\n    const att = S(rand.range(0, 0.05))\n    const dec = S(rand.range(0.05, 0.2))\n    let f = n(sFreq);\n    const mod = sine(f).mul(\"0.1 | 0.2 | 0.3\")\n      .add(\"[[1.5 1] | 1 | 2 | 4 | [6 4@3]]*2\")\n    saw(f.mul(mod))\n    .mul(sGate.ad(att, dec))\n    .add(x => x.delay(0.4).mul(0.3))\n    .out()\n  }).fxr(1).room(0.3)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pick.mjs",
+   "code": "note(\"<0 1 2!2 3>\".pick([\"g a\", \"e f\", \"f g f g\" , \"g c d\"]))"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pick.mjs",
+   "code": "sound(\"<0 1 [2,0]>\".pick([\"bd sd\", \"cp cp\", \"hh hh\"]))"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pick.mjs",
+   "code": "sound(\"<0!2 [0,1] 1>\".pick([\"bd(3,8)\", \"sd sd\"]))"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pick.mjs",
+   "code": "s(\"<a!2 [a,b] b>\".pick({a: \"bd(3,8)\", b: \"sd sd\"}))"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pick.mjs",
+   "code": "s(\"bd [rim hh]\").pickF(\"<0 1 2>\", [rev,jux(rev),fast(2)])"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pick.mjs",
+   "code": "note(\"<c2 d2>(3,8)\").s(\"square\")\n    .pickF(\"<0 2> 1\", [jux(rev),fast(2),x=>x.lpf(800)])"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pick.mjs",
+   "code": "\"<a@2 b@2 c@2 d@2>\".pickRestart({\n        a: n(\"0 1 2 0\"),\n        b: n(\"2 3 4 ~\"),\n        c: n(\"[4 5] [4 3] 2 0\"),\n        d: n(\"0 -3 0 ~\")\n      }).scale(\"C:major\").s(\"piano\")"
+  },
+  {
+   "name": "inhabit",
+   "source": "strudel-core-1.2.6/pick.mjs",
+   "code": "\"<a b [a,b]>\".inhabit({a: s(\"bd(3,8)\"),\n                            b: s(\"cp sd\")\n                           })"
+  },
+  {
+   "name": "inhabit",
+   "source": "strudel-core-1.2.6/pick.mjs",
+   "code": "s(\"a@2 [a b] a\".inhabit({a: \"bd(3,8)\", b: \"sd sd\"})).slow(4)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/pick.mjs",
+   "code": "note(squeeze(\"<0@2 [1!2] 2>\", [\"g a\", \"f g f g\" , \"g a c d\"]))"
+  },
+  {
+   "name": "setcpm",
+   "source": "strudel-core-1.2.6/repl.mjs",
+   "code": "setcpm(140/4) // =140 bpm in 4/4\n$: s(\"bd*4,[- sd]*2\").bank('tr707')"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "note(\"<c3 [eb3,g3] g2 [g3,bb3]>*8\")\n.clip(saw.slow(2))"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "n(saw.range(0,8).segment(8))\n.scale('C major')"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "note(\"<c3 [eb3,g3] g2 [g3,bb3]>*8\")\n.clip(isaw.slow(2))"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "n(isaw.range(0,8).segment(8))\n.scale('C major')"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "n(sine.segment(16).range(0,15))\n.scale(\"C:minor\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "n(stack(sine,cosine).segment(16).range(0,15))\n.scale(\"C:minor\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "n(square.segment(4).range(0,7)).scale(\"C:minor\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "n(tri.segment(8).range(0,7)).scale(\"C:minor\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "n(itri.segment(8).range(0,7)).scale(\"C:minor\")"
+  },
+  {
+   "name": "mousex",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "n(mousex.segment(4).range(0,7)).scale(\"C:minor\")"
+  },
+  {
+   "name": "mousey",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "n(mousey.segment(4).range(0,7)).scale(\"C:minor\")"
+  },
+  {
+   "name": "useRNG",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "useRNG('legacy')\n// Repeats every 300 cycles\n$: n(irand(50)).seg(16).scale(\"C:minor\").ribbon(88, 32)\n$: n(irand(50)).seg(16).scale(\"C:minor\").ribbon(388, 32)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "n(run(4)).scale(\"C4:pentatonic\")\n// n(\"0 1 2 3\").scale(\"C4:pentatonic\")"
+  },
+  {
+   "name": "binary",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "\"hh\".s().struct(binary(5))\n// \"hh\".s().struct(\"1 0 1\")"
+  },
+  {
+   "name": "binaryN",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "\"hh\".s().struct(binaryN(55532, 16))\n// \"hh\".s().struct(\"1 1 0 1 1 0 0 0 1 1 1 0 1 1 0 0\")"
+  },
+  {
+   "name": "randL",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"saw\").seg(16).n(irand(12)).scale(\"F1:minor\")\n  .partials(randL(8))"
+  },
+  {
+   "name": "shuffle",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "note(\"c d e f\").sound(\"piano\").shuffle(4)"
+  },
+  {
+   "name": "shuffle",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "seq(\"c d e f\".shuffle(4), \"g\").note().sound(\"piano\")"
+  },
+  {
+   "name": "scramble",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "note(\"c d e f\").sound(\"piano\").scramble(4)"
+  },
+  {
+   "name": "scramble",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "seq(\"c d e f\".scramble(4), \"g\").note().sound(\"piano\")"
+  },
+  {
+   "name": "seed",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "$: s(\"hh*4\").degrade();\n$: s(\"bd*4\").degrade().seed(1); // Will degrade different events from the hi-hat"
+  },
+  {
+   "name": "rand",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "// randomly change the cutoff\ns(\"bd*4,hh*8\").cutoff(rand.range(500,8000))"
+  },
+  {
+   "name": "brandBy",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"hh*10\").pan(brandBy(0.2))"
+  },
+  {
+   "name": "brand",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"hh*10\").pan(brand)"
+  },
+  {
+   "name": "irand",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "// randomly select scale notes from 0 - 7 (= C to C)\nn(irand(8)).struct(\"x x*2 x x*3\").scale(\"C:minor\")"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "note(\"c2 g2!2 d2 f1\").s(chooseWith(sine.fast(2), [\"sawtooth\", \"triangle\", \"bd:6\"]))"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "note(\"c2 g2!2 d2 f1\").s(choose(\"sine\", \"triangle\", \"bd:6\"))"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "chooseCycles(\"bd\", \"hh\", \"sd\").s().fast(8)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"bd | hh | sd\").fast(8)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "note(\"c2 g2!2 d2 f1\").s(wchoose([\"sine\",10], [\"triangle\",1], [\"bd:6\",1]))"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "wchooseCycles([\"bd\",10], [\"hh\",1], [\"sd\",1]).s().fast(8)"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "wchooseCycles([\"c c c\",5], [\"a a a\",3], [\"f f f\",1]).fast(4).note()"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "// The probability can itself be a pattern\nwchooseCycles([\"bd(3,8)\",\"<5 0>\"], [\"hh hh hh\",3]).fast(4).s()"
+  },
+  {
+   "name": "perlin",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "// randomly change the cutoff\ns(\"bd*4,hh*8\").cutoff(perlin.range(500,8000))"
+  },
+  {
+   "name": "berlin",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "// ascending arpeggios\nn(\"0!16\".add(berlin.fast(4).mul(14))).scale(\"d:minor\")"
+  },
+  {
+   "name": "degradeBy",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"hh*8\").degradeBy(0.2)"
+  },
+  {
+   "name": "degradeBy",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"[hh?0.2]*8\")"
+  },
+  {
+   "name": "degradeBy",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "//beat generator\ns(\"bd\").segment(16).degradeBy(.5).ribbon(16,1)"
+  },
+  {
+   "name": "degrade",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"hh*8\").degrade()"
+  },
+  {
+   "name": "degrade",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"[hh?]*8\")"
+  },
+  {
+   "name": "undegradeBy",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"hh*8\").undegradeBy(0.2)"
+  },
+  {
+   "name": "undegradeBy",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"hh*10\").layer(\n  x => x.degradeBy(0.2).pan(0),\n  x => x.undegradeBy(0.8).pan(1)\n)"
+  },
+  {
+   "name": "undegrade",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"hh*8\").undegrade()"
+  },
+  {
+   "name": "undegrade",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"hh*10\").layer(\n  x => x.degrade().pan(0),\n  x => x.undegrade().pan(1)\n)"
+  },
+  {
+   "name": "sometimesBy",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"hh*8\").sometimesBy(.4, x=>x.speed(\"0.5\"))"
+  },
+  {
+   "name": "sometimes",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"hh*8\").sometimes(x=>x.speed(\"0.5\"))"
+  },
+  {
+   "name": "someCyclesBy",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"bd,hh*8\").someCyclesBy(.3, x=>x.speed(\"0.5\"))"
+  },
+  {
+   "name": "someCycles",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"bd,hh*8\").someCycles(x=>x.speed(\"0.5\"))"
+  },
+  {
+   "name": "often",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"hh*8\").often(x=>x.speed(\"0.5\"))"
+  },
+  {
+   "name": "rarely",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"hh*8\").rarely(x=>x.speed(\"0.5\"))"
+  },
+  {
+   "name": "almostNever",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"hh*8\").almostNever(x=>x.speed(\"0.5\"))"
+  },
+  {
+   "name": "almostAlways",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"hh*8\").almostAlways(x=>x.speed(\"0.5\"))"
+  },
+  {
+   "name": "never",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"hh*8\").never(x=>x.speed(\"0.5\"))"
+  },
+  {
+   "name": "always",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"hh*8\").always(x=>x.speed(\"0.5\"))"
+  },
+  {
+   "name": "whenKey",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "s(\"bd(5,8)\").whenKey(\"Control:j\", x => x.segment(16).color(\"red\")).whenKey(\"Control:i\", x => x.fast(2).color(\"blue\"))"
+  },
+  {
+   "name": "keyDown",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "keyDown(\"Control:j\").pick([s(\"bd(5,8)\"), s(\"cp(3,8)\")])"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "// Shorter events are lower in pitch\nsound(\"saw saw [saw saw] saw\")\n  .note(cyclesPer.range(50, 100))"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "sound(\"bd sd [bd bd] sd*4 [- sd] [bd [bd bd]]\")\n  .note(cyclesPer.add(20))"
+  },
+  {
+   "name": "?",
+   "source": "strudel-core-1.2.6/signal.mjs",
+   "code": "// Shorter events are more distorted\nn(\"0 0*2 0 0*2 0 [0 0 0]@2\").sound(\"bd\")\n .distort(per.div(2))"
+  },
+  {
+   "name": "pianoroll",
+   "source": "strudel-draw-1.2.6/pianoroll.mjs",
+   "code": "note(\"c2 a2 eb2\")\n.euclid(5,8)\n.s('sawtooth')\n.lpenv(4).lpf(300)\n.pianoroll({ labels: 1 })"
+  },
+  {
+   "name": "pitchwheel",
+   "source": "strudel-draw-1.2.6/pitchwheel.mjs",
+   "code": "n(\"0 .. 12\").scale(\"C:chromatic\")\n.s(\"sawtooth\")\n.lpf(500)\n._pitchwheel()"
+  },
+  {
+   "name": "spiral",
+   "source": "strudel-draw-1.2.6/spiral.mjs",
+   "code": "note(\"c2 a2 eb2\")\n.euclid(5,8)\n.s('sawtooth')\n.lpenv(4).lpf(300)\n._spiral({ steady: .96 })"
+  },
+  {
+   "name": "transpose",
+   "source": "strudel-tonal-1.2.6/tonal.mjs",
+   "code": "\"c2 c3\".fast(2).transpose(\"<0 -2 5 3>\".slow(2)).note()"
+  },
+  {
+   "name": "transpose",
+   "source": "strudel-tonal-1.2.6/tonal.mjs",
+   "code": "\"c2 c3\".fast(2).transpose(\"<1P -2M 4P 3m>\".slow(2)).note()"
+  },
+  {
+   "name": "scaleTranspose",
+   "source": "strudel-tonal-1.2.6/tonal.mjs",
+   "code": "\"-8 [2,4,6]\"\n.scale('C4 bebop major')\n.scaleTranspose(\"<0 -1 -2 -3 -4 -5 -6 -4>\")\n.note()"
+  },
+  {
+   "name": "scale",
+   "source": "strudel-tonal-1.2.6/tonal.mjs",
+   "code": "n(\"0 2 4 6 4 2\").scale(\"C:major\")"
+  },
+  {
+   "name": "scale",
+   "source": "strudel-tonal-1.2.6/tonal.mjs",
+   "code": "n(\"[0,7] 4 [2,7] 4\")\n.scale(\"C:<major minor>/2\")\n.s(\"piano\")"
+  },
+  {
+   "name": "scale",
+   "source": "strudel-tonal-1.2.6/tonal.mjs",
+   "code": "n(rand.range(0,12).segment(8))\n.scale(\"C:ritusen\")\n.s(\"piano\")"
+  },
+  {
+   "name": "scale",
+   "source": "strudel-tonal-1.2.6/tonal.mjs",
+   "code": "n(\"<[0,7b] [-4# -4] [-2,7##] 4 [0,7] [-4# -4b] [-2,7###] 4b>*4\")\n.scale(\"C:<major minor>/2\")\n.s(\"piano\")"
+  },
+  {
+   "name": "scale",
+   "source": "strudel-tonal-1.2.6/tonal.mjs",
+   "code": "note(\"C1*16\").transpose(irand(36)).scale('Cb2 major').scaleTranspose(3)"
+  },
+  {
+   "name": "scale",
+   "source": "strudel-tonal-1.2.6/tonal.mjs",
+   "code": "n(\"[0 0] [1 2] [3 4] [5 6]\").scale(\"C:major:blues\")"
+  },
+  {
+   "name": "addVoicings",
+   "source": "strudel-tonal-1.2.6/voicings.mjs",
+   "code": "addVoicings('cookie', {\n  7: ['3M 7m 9M 12P 15P', '7m 10M 13M 16M 19P'],\n  '^7': ['3M 6M 9M 12P 14M', '7M 10M 13M 16M 19P'],\n  m7: ['8P 11P 14m 17m 19P', '5P 8P 11P 14m 17m'],\n  m7b5: ['3m 5d 8P 11P 14m', '5d 8P 11P 14m 17m'],\n  o7: ['3m 6M 9M 11A 15P'],\n  '7alt': ['3M 7m 10m 13m 15P'],\n  '7#11': ['7m 10m 13m 15P 17m'],\n}, ['C3', 'C6'])\n\"<C^7 A7 Dm7 G7>\".voicings('cookie').note()"
+  },
+  {
+   "name": "voicings",
+   "source": "strudel-tonal-1.2.6/voicings.mjs",
+   "code": "stack(\"<C^7 A7 Dm7 G7>\".voicings('lefthand'), \"<C3 A2 D3 G2>\").note()"
+  },
+  {
+   "name": "rootNotes",
+   "source": "strudel-tonal-1.2.6/voicings.mjs",
+   "code": "\"<C^7 A7 Dm7 G7>\".rootNotes(2).note()"
+  },
+  {
+   "name": "voicing",
+   "source": "strudel-tonal-1.2.6/voicings.mjs",
+   "code": "n(\"0 1 2 3\").chord(\"<C Am F G>\").voicing()"
+  },
+  {
+   "name": "fscope",
+   "source": "strudel-webaudio-1.3.0/scope.mjs",
+   "code": "s(\"sawtooth\").fscope()"
+  },
+  {
+   "name": "scope",
+   "source": "strudel-webaudio-1.3.0/scope.mjs",
+   "code": "s(\"sawtooth\")._scope()"
+  },
+  {
+   "name": "spectrum",
+   "source": "strudel-webaudio-1.3.0/spectrum.mjs",
+   "code": "n(\"<0 4 <2 3> 1>*3\")\n.off(1/8, add(n(5)))\n.off(1/5, add(n(7)))\n.scale(\"d3:minor:pentatonic\")\n.s('sine')\n.dec(.3).room(.5)\n._spectrum()"
+  },
+  {
+   "name": "?",
+   "source": "superdough-1.3.0/sampler.mjs",
+   "code": "samples('github:tidalcycles/dirt-samples');\ns(\"[bd ~]*2, [~ hh]*2, ~ sd\")"
+  },
+  {
+   "name": "?",
+   "source": "superdough-1.3.0/sampler.mjs",
+   "code": "samples({\n bd: '808bd/BD0000.WAV',\n sd: '808sd/SD0010.WAV'\n }, 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/');\ns(\"[bd ~]*2, [~ hh]*2, ~ sd\")"
+  },
+  {
+   "name": "setMaxPolyphony",
+   "source": "superdough-1.3.0/superdough.mjs",
+   "code": "setMaxPolyphony(4)\nn(irand(24).seg(8)).scale(\"C#3:minor\").room(1).release(4).gain(0.5)"
+  },
+  {
+   "name": "setGainCurve",
+   "source": "superdough-1.3.0/superdough.mjs",
+   "code": "setGainCurve((x) => x * x) // quadratic gain\ns(\"bd*4\").gain(0.5) // equivalent to 0.25 gain normally"
+  }
+ ]
+}

@@ -1,0 +1,6 @@
+// consts combined in one stack
+const kick = s("bd*4").bank("RolandTR808")
+const hats = s("[~ hh]*4").bank("RolandTR808").pan(sine.range(.2, .8))
+const bass = note("<c2 c2 eb2 g1>*4").s("square").lpf(600).shape(.4)
+const lead = n("<0 2 4 7>*2").scale("C4:minor").s("triangle").delay(.5).delaytime(.25).delayfeedback(.5)
+stack(kick, hats, bass, lead.mask("<0 1>"))

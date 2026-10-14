@@ -1,0 +1,157 @@
+{
+  "name": "daw3",
+  "version": "1.0.0",
+  "description": "it was always here.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node scripts/serve.js",
+    "test": "node --test tests/*.test.js",
+    "desktop:dev": "electron .",
+    "mac:dev": "electron .",
+    "mac:build": "sh desktop/native/build.sh && electron-builder --mac --publish never && bash scripts/make-dmg.sh",
+    "win:build": "sh desktop/native/build.sh && electron-builder --win --x64 --publish never",
+    "linux:build": "sh desktop/native/build.sh && electron-builder --linux --x64 --publish never",
+    "smoke": "node scripts/smoke-electron.mjs",
+    "mac:icon": "node scripts/make-icon.mjs",
+    "native:build": "sh desktop/native/build.sh",
+    "native:test": "sh desktop/native/build.sh --test"
+  },
+  "license": "AGPL-3.0-or-later",
+  "main": "desktop/main.cjs",
+  "author": "Coral-coder",
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.coralcoder.daw3",
+    "productName": "daW3",
+    "copyright": "AGPL-3.0-or-later",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "index.html",
+      "src/**/*",
+      "styles/**/*",
+      "vendor/**/*",
+      "desktop/**/*",
+      "build/icon.png",
+      "LICENSE",
+      "package.json",
+      "!desktop/native/**"
+    ],
+    "asar": true,
+    "mac": {
+      "category": "public.app-category.music",
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "darkModeSupport": true,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "daW³ uses the microphone (or your audio interface) to record audio into your project.",
+        "NSRequiresAquaSystemAppearance": false
+      }
+    },
+    "dmg": {
+      "title": "daW3 ${version}",
+      "artifactName": "daW3-${version}-${arch}.dmg"
+    },
+    "fileAssociations": [
+      {
+        "ext": "daW3",
+        "name": "daW³ Project",
+        "description": "daW³ project",
+        "role": "Editor",
+        "mimeType": "application/x-daw3"
+      }
+    ],
+    "extraResources": [
+      {
+        "from": "desktop/native/build",
+        "to": "native",
+        "filter": [
+          "daw3_audio.node",
+          "daw3-plughost",
+          "daw3-link",
+          "daw3-plughost.exe",
+          "daw3-link.exe"
+        ]
+      }
+    ],
+    "asarUnpack": [
+      "src/native/**"
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis"
+        },
+        {
+          "target": "zip"
+        }
+      ],
+      "artifactName": "daW3-${version}-win-${arch}.${ext}",
+      "signAndEditExecutable": true
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "daW3",
+      "uninstallDisplayName": "daW3 ${version}",
+      "artifactName": "daW3-Setup-${version}-${arch}.${ext}",
+      "deleteAppDataOnUninstall": false
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Audio",
+      "executableName": "daw3",
+      "synopsis": "daW³ — a digital audio workstation (web app + native audio, CLAP / VST3 plugins)",
+      "description": "daW³: multi-track sequencing, synths, drum machines, sampling, generative composition and Strudel live coding, with native audio (ALSA / PulseAudio / JACK) and CLAP / VST3 plugin hosting.",
+      "maintainer": "Coral-coder <Coral-coder@users.noreply.github.com>",
+      "vendor": "Coral-coder",
+      "desktop": {
+        "Name": "daW³",
+        "GenericName": "Digital Audio Workstation",
+        "Comment": "Make music: sequencer, synths, samples, live coding",
+        "Keywords": "music;audio;daw;sequencer;synth;midi;"
+      },
+      "target": [
+        {
+          "target": "AppImage"
+        },
+        {
+          "target": "deb"
+        },
+        {
+          "target": "tar.gz"
+        }
+      ],
+      "artifactName": "daW3-${version}-linux-${arch}.${ext}"
+    },
+    "deb": {
+      "artifactName": "daw3_${version}_${arch}.${ext}"
+    }
+  },
+  "homepage": "https://github.com/Coral-coder/daw3",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Coral-coder/daw3.git"
+  }
+}
