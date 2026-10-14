@@ -1732,6 +1732,13 @@ export function createPianoView(app) {
       raf = 0;
       hover = null;
     },
+    // geometry for collaboration overlays (src/collab/overlay.js)
+    collabGeom: () => ({
+      kind: 'piano', scroller, ppb: ppb(), rowH: rowH(), patternId: cur.pat?.id || null,
+      rowOfPitch: (pitch) => rows.findIndex((r) => r.pitch === pitch),
+      pitchAt: (y) => rows[clamp(Math.floor(y / rowH()), 0, rows.length - 1)]?.pitch ?? null,
+      selected: () => [...selected],
+    }),
   };
 }
 

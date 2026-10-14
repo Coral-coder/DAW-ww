@@ -281,3 +281,36 @@ test('reconcile keeps identities and matches the source', () => {
   assert.deepEqual(target, { a: 2, list: [{ id: 'y', v: 3 }, { id: 'x', v: 1 }, { id: 'z', v: 0 }], o: { k: 2 } });
   assert.equal(target.list[1], x);
 });
+
+test('relay: room join, peer list and signal forwarding', { skip: typeof WebSocket !== 'function' }, async () => {
+  const { spawn } = await import('node:child_process');
+  const srv = spawn(process.execPath, [new URL('../tools/collab-relay/server.js', import.meta.url).pathname], { env: { ...process.env, PORT: '0' } });
+  try {
+    const port = await new Promise((res, rej) => {
+      srv.stdout.on('data', (d) => { const m = /:(\d+)/.exec(String(d)); if (m) res(+m[1]); });
+      srv.on('exit', () => rej(new Error('relay exited')));
+    });
+    const open = (id) => new Promise((res) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/?room=r1&id=${id}`);
+      ws.msgs = [];
+      ws.onmessage = (e) => ws.msgs.push(JSON.parse(e.data));
+      ws.onopen = () => res(ws);
+    });
+    const until = async (fn) => { for (let i = 0; i < 100 && !fn(); i++) await new Promise((r) => setTimeout(r, 20)); assert.ok(fn()); };
+    const a = await open('alice');
+    await until(() => a.msgs.length);
+    assert.deepEqual(a.msgs[0], { type: 'peers', peers: [] });
+    const b = await open('bob');
+    await until(() => b.msgs.length && a.msgs.length > 1);
+    assert.deepEqual(b.msgs[0], { type: 'peers', peers: ['alice'] });
+    assert.deepEqual(a.msgs[1], { type: 'join', id: 'bob' });
+    const big = 'x'.repeat(70000); // exercises 64-bit / 16-bit frame lengths
+    b.send(JSON.stringify({ type: 'signal', to: 'alice', data: { t: 'offer', sdp: big } }));
+    await until(() => a.msgs.length > 2);
+    assert.equal(a.msgs[2].from, 'bob');
+    assert.equal(a.msgs[2].data.sdp.length, 70000);
+    b.close();
+    await until(() => a.msgs.some((m) => m.type === 'leave' && m.id === 'bob'));
+    a.close();
+  } finally { srv.kill(); }
+});

@@ -179,6 +179,9 @@ export async function createApp(rootEl) {
     device: await mountPanel(deviceEl, './panels/device.js', 'createDevicePanel', 'Device panel'),
   };
 
+  // Real-time collaboration + versions (src/collab) — optional, never blocks startup.
+  try { (await import('../collab/ui.js')).installCollab(app); } catch (e) { console.warn('[collab]', e); }
+
   // Restore last session (autosave) or offer the welcome screen.
   await app.actions.boot();
   updateStatus();
