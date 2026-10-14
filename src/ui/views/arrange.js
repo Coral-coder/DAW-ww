@@ -435,7 +435,8 @@ export function createArrangeView(app) {
     const tracksEnd = y;
     y += ADD_ROW_H;
     const extra = [];
-    for (const id of [...(p.buses || []).map((b) => b.id), 'master']) {
+    // VCA faders (core/mixer-model.js): their level lanes multiply with every member's own automation
+    for (const id of [...(p.mixer?.vcas || []).map((v) => v.id), ...(p.buses || []).map((b) => b.id), 'master']) {
       const o = ownerView(p, id);
       if (!o) continue;
       const r = { t: o, i: -1, y, auto: [], extra: true };
@@ -664,7 +665,7 @@ export function createArrangeView(app) {
       ctx.fillStyle = theme.text3;
       ctx.font = `10.5px ${theme.font}`;
       ctx.textBaseline = 'middle';
-      if (!r.auto.length) ctx.fillText(`${r.t.kind === 'master' ? 'Master' : 'Return bus'} ${r.t.name} — click “A” on the left to show its automation lanes`, 10, y0 + OWNER_H / 2);
+      if (!r.auto.length) ctx.fillText(r.t.kind === 'vca' ? `VCA ${r.t.name} (${(r.t.members || []).length} member${(r.t.members || []).length === 1 ? '' : 's'}) — click “A” on the left to draw its level automation` : `${r.t.kind === 'master' ? 'Master' : 'Return bus'} ${r.t.name} — click “A” on the left to show its automation lanes`, 10, y0 + OWNER_H / 2);
       if (r.auto.length) { ctx.fillStyle = theme.autoBg; ctx.fillRect(0, y0 + OWNER_H, W, r.h - OWNER_H); }
       ctx.fillStyle = theme.line;
       ctx.fillRect(0, y0 + r.h - 1, W, 1);
@@ -1094,6 +1095,7 @@ export function createArrangeView(app) {
     if (!t) return [];
     const have = new Set((t.automation || []).map((l) => l.target));
     const item = (it) => ({ label: `${have.has(it.target) ? '● ' : ''}${it.label}`, onClick: () => addLane(trackId, it.target) });
+    if (t.kind === 'vca') return targetGroups(t).flatMap((g) => g.items.map(item)); // VCAs: their level only
     const out = [];
     const fxGroups = [];
     for (const g of targetGroups(t)) {
@@ -1317,7 +1319,8 @@ export function createArrangeView(app) {
         el.style.height = OWNER_H + 'px';
         el.style.setProperty('--tc', r.t.color);
         if (name.textContent !== r.t.name) name.textContent = r.t.name;
-        kind.textContent = r.t.kind === 'master' ? 'MASTER' : 'BUS';
+        kind.textContent = r.t.kind === 'master' ? 'MASTER' : r.t.kind === 'vca' ? 'VCA' : 'BUS';
+        el.title = r.t.kind === 'vca' ? 'VCA: its level lane scales every member (adds in dB to their own fader / automation)' : '';
         autoBtn.setValue(autoOpen.has(id));
         autoBtn.classList.toggle('has', (r.t.automation || []).some((l) => l.points?.length));
       },

@@ -1196,6 +1196,9 @@ export function createActions(app) {
       h('p', 'Code tracks run ', link('https://strudel.cc', 'Strudel'), ' — the JavaScript port of TidalCycles by Felix Roos, Alex McLean and the Strudel contributors (',
         link('https://codeberg.org/uzu/strudel', 'codeberg.org/uzu/strudel'), ', AGPL-3.0-or-later). daW³ ships Strudel’s pattern engine, mini-notation, tonal functions, transpiler and its sound engine superdough unmodified (one documented node-pool patch), see ',
         h('code', 'vendor/strudel/VERSION'), ' for the exact versions and licenses.'),
+      h('h4', 'MP3 encoder'),
+      h('p', 'MP3 export uses ', link('https://github.com/zhuker/lamejs', 'lamejs'), ' (a JavaScript port of ', link('https://lame.sourceforge.io', 'LAME'), ', LGPL-3.0), loaded only when you export MP3; see ',
+        h('code', 'vendor/lamejs/README.txt'), ' for its license and daW³’s small changes.'),
       h('h4', 'Sounds'),
       h('p', 'Samples are loaded at runtime from their public homes: Dirt-Samples (TidalCycles), tidal-drum-machines, VCSL (CC0), Salamander Grand Piano by Alexander Holm (CC-BY 3.0), dough-samples, the webaudiofont General MIDI soundfonts. See docs/SAMPLES.md.'));
     modal({ title: 'About daW³', body, width: 640, actions: [{ label: 'Close', primary: true }] });
