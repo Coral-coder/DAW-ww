@@ -3,7 +3,7 @@
 // an export report (LUFS, true peak, LRA, duration) after the render. The work is done by src/audio/export.js.
 import { h, clear } from './dom.js';
 import { modal, button, toast } from './components.js';
-import { EXPORT_FORMATS, EXPORT_SAMPLE_RATES, DITHER_OPTIONS, EXPORT_DEFAULTS, resolveRange, clipSpan, formatFileName, stemTargets } from '../io/export-plan.js';
+import { EXPORT_FORMATS, EXPORT_SAMPLE_RATES, DITHER_OPTIONS, EXPORT_DEFAULTS, resolveRange, clipSpan, formatFileName, stemTargets, rangeSeconds } from '../io/export-plan.js';
 import { LOUDNESS_PRESETS } from '../audio/dsp/loudness.js';
 import { downloadBlob } from '../io/project-file.js';
 import { groupSelection } from '../core/mixer-model.js';
@@ -84,7 +84,7 @@ export async function openExportDialog(app, { stems = false } = {}) {
         row('Range', sel([{ value: 'song', label: 'Whole song' }, { value: 'loop', label: 'Loop region' }, { value: 'selection', label: selection ? 'Selected clips' : 'Selected clips (none)', disabled: !selection }, { value: 'custom', label: 'Custom bars…' }], o.range, (v) => set('range', v))),
         o.range === 'custom' ? row('Bars', num(o.custom?.start ?? 1, (v) => { o.custom = { ...(o.custom || { end: 9 }), start: Math.max(1, Math.round(v)) }; save(o); updSummary(); }, { step: 1, min: 1, width: 56 }), h('span.muted', 'to'), num(o.custom?.end ?? 9, (v) => { o.custom = { ...(o.custom || { start: 1 }), end: Math.max(2, Math.round(v)) }; save(o); updSummary(); }, { step: 1, min: 2, width: 56 })) : null,
         row('Tail', sel([{ value: 'auto', label: 'Auto (detect reverb / delay tail)' }, { value: 'none', label: 'None (cut at the end)' }, { value: '2', label: '2 s' }, { value: '5', label: '5 s' }], String(o.tail), (v) => set('tail', v))),
-        h('div.xp-hint', `${r.label}: beats ${+r.startBeat.toFixed(2)}–${+r.endBeat.toFixed(2)} (${((r.endBeat - r.startBeat) * 60 / p.bpm).toFixed(1)} s) · ${r.mode} mode`),
+        h('div.xp-hint', `${r.label}: beats ${+r.startBeat.toFixed(2)}–${+r.endBeat.toFixed(2)} (${rangeSeconds(p, r).toFixed(1)} s) · ${r.mode} mode`),
       ),
       h('div.xp-section', h('h3', 'Stems'),
         row('Mixdown', check('stereo mix', o.mixdown !== false, (v) => set('mixdown', v))),

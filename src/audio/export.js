@@ -9,6 +9,7 @@
 import { encodeWav } from '../io/wav.js';
 import { addWavMetadata } from '../io/wav-meta.js';
 import { measureLoudness, normalizeLoudness } from './dsp/loudness.js';
+import { tempoMapFor } from '../time/tempo-map.js';
 import {
   EXPORT_FORMATS, DITHER_OPTIONS, resolveRange, detectTail, fadeOutTail, stemTargets, stemProject, formatFileName, uniqueNames, reportRows, reportText,
 } from '../io/export-plan.js';
@@ -92,8 +93,8 @@ export async function runExport({ project, render, opts, onProgress = () => {} }
   const o = { ...opts };
   const sr = Number(o.sampleRate) || 48000;
   const rng = resolveRange(project, { range: o.range, selection: o.selection, custom: o.custom });
-  const spb = 60 / project.bpm;
-  const musicFrames = Math.round((rng.endBeat - rng.startBeat) * spb * sr);
+  // musical length through the tempo map (tempo / meter changes), exactly like render.js times the render
+  const musicFrames = Math.round(tempoMapFor(project, rng.mode).span(rng.startBeat, rng.endBeat) * sr);
   const tailSec = o.tail === 'none' ? 0 : o.tail === 'auto' ? Number(o.tailMax) || 10 : Math.max(0, Number(o.tail) || 0);
   const rOpts = { startBeat: rng.startBeat, endBeat: rng.endBeat, mode: rng.mode, sampleRate: sr, tail: tailSec };
   const targets = o.stems && o.stems !== 'none' ? stemTargets(project, { which: o.stems, selectedIds: o.selectedIds || [] }) : [];

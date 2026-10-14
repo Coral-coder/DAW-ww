@@ -142,3 +142,18 @@ test('runExport: normalised mixdown hits −14 LUFS / ≤ −1 dBTP, stems share
   assert.equal(readWavMetadata(files[0].data).info.IART, 'Ada');
   assert.match(report.text, /Integrated\s+-14\.0 LUFS/);
 });
+
+test('export follows the tempo / meter map: range seconds, custom bars, mixdown length', async () => {
+  const { runExport } = await import('../src/audio/export.js');
+  const { rangeSeconds } = await import('../src/io/export-plan.js');
+  const p = song();
+  p.bpm = 120;
+  p.tempoMap = [{ beat: 0, bpm: 120 }, { beat: 16, bpm: 60, curve: 'jump' }];
+  const r = resolveRange(p, { range: 'custom', custom: { start: 1, end: 9 } }); // beats 0..32
+  assert.ok(r.startBeat === 0 && r.endBeat === 32);
+  assert.ok(Math.abs(rangeSeconds(p, r) - (16 * 0.5 + 16 * 1)) < 1e-6, `${rangeSeconds(p, r)}`);
+  const sr = 8000;
+  const fake = (proj, ro) => { const n = Math.round((24 + ro.tail) * sr); const ch = [new Float32Array(n).fill(0.1), new Float32Array(n).fill(0.1)]; return { numberOfChannels: 2, sampleRate: sr, length: n, getChannelData: (c) => ch[c] }; };
+  const { files } = await runExport({ project: p, render: fake, opts: { format: 'wav16', sampleRate: sr, range: 'custom', custom: { start: 1, end: 9 }, tail: 'none', normalize: 'off', stems: 'none' } });
+  assert.equal(decodeWav(files[0].data).channels[0].length, 24 * sr);
+});

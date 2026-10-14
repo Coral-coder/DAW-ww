@@ -3,6 +3,7 @@
 import { uid } from './util.js';
 import { normalizeLane } from './automation.js';
 import { normalizePatch } from './patch.js';
+import { migrateLegacyTempo } from '../time/convert.js';
 
 export const PROJECT_FORMAT = 'daw3-project';
 export const PROJECT_VERSION = 1;
@@ -157,16 +158,20 @@ export function normalizeProject(p) {
   out.buses = (p.buses || base.buses).map((b) => ({ ...b, fx: b.fx || [], automation: Array.isArray(b.automation) ? b.automation.map(normalizeLane) : [] }));
   out.samples = p.samples || {};
   out.markers = p.markers || [];
+  // tempo map / meter changes (src/time): optional; legacy DAWproject fields migrate into them
+  migrateLegacyTempo(out);
   return out;
 }
 
+/** Beats per bar of the FIRST meter (bar 0). Meter changes: src/time/tempo-map.js (tempoMapFor(project).barAt(beat)). */
 export const beatsPerBar = (project) => project.timeSig[0] * (4 / project.timeSig[1]);
 export const secondsPerBeat = (project) => 60 / project.bpm;
 
 /** Song length in beats: end of last clip, rounded up to a whole bar (min 1 bar). */
 export function songLengthBeats(project) {
   const bpb = beatsPerBar(project);
-  const end = project.clips.reduce((m, c) => Math.max(m, c.start + c.length), 0);
+  let end = project.clips.reduce((m, c) => Math.max(m, c.start + c.length), 0);
+  for (const t of project.tracks) for (const sg of t.comp || []) end = Math.max(end, sg.end); // take-lane comps (src/record)
   return Math.max(bpb, Math.ceil(end / bpb) * bpb);
 }
 

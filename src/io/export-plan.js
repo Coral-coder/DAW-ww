@@ -5,6 +5,7 @@ import { beatsPerBar, songLengthBeats } from '../core/model.js';
 import { keySourcesFor } from '../core/patch.js';
 import { mixerOf, busesFedBy, outputOf } from '../core/mixer-model.js';
 import { defaultEndBeat } from '../audio/scheduler.js';
+import { tempoMapFor } from '../time/tempo-map.js';
 
 export const EXPORT_FORMATS = [
   { id: 'wav16', label: 'WAV 16-bit', ext: 'wav', bitDepth: 16 },
@@ -41,12 +42,18 @@ export function resolveRange(project, { range = 'song', selection = null, custom
   if (range === 'loop' && project.loop && project.loop.end > project.loop.start) { start = project.loop.start; end = project.loop.end; label = 'Loop'; }
   else if (range === 'selection' && selection && selection.end > selection.start) { start = selection.start; end = selection.end; label = 'Selection'; }
   else if (range === 'custom' && custom) {
-    start = Math.max(0, ((Number(custom.start) || 1) - 1) * bpb);
-    end = Math.max(start + bpb, ((Number(custom.end) || 1) - 1) * bpb);
+    // bars through the meter map (meter changes move bar lines); constant meter = (bar − 1) × beats per bar
+    const map = tempoMapFor(project, m);
+    const barBeat = (bar) => (typeof map.barStart === 'function' ? map.barStart(bar) : bar * bpb);
+    start = Math.max(0, barBeat((Number(custom.start) || 1) - 1));
+    end = Math.max(start + bpb, barBeat((Number(custom.end) || 1) - 1));
     label = `Bars ${custom.start}–${custom.end}`;
   }
   return { startBeat: start, endBeat: end, mode: m, label };
 }
+
+/** Seconds of a beat range through the project's tempo map. */
+export function rangeSeconds(project, r) { return tempoMapFor(project, r.mode).span(r.startBeat, r.endBeat); }
 
 /** Beat span of the given clips (selection range), or null. */
 export function clipSpan(project, clipIds = []) {

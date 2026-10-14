@@ -21,11 +21,22 @@ export class MidiClockOut {
     this.running = false;
     this.anchorTime = 0; this.anchorBeat = 0; this.msPerBeat = 500; this.nextTick = 0;
   }
-  tickTime(k) { return this.anchorTime + (k / PPQN - this.anchorBeat) * this.msPerBeat; }
-  beatAt(t) { return this.anchorBeat + (t - this.anchorTime) / this.msPerBeat; }
+  // With a tempo map (src/time/tempo-map.js, song mode) ticks follow it exactly: tick k sounds at
+  // anchorTime + (map.secAt(k/24) − map.secAt(anchorBeat))·1000 — ramps make the tick spacing glide.
+  tickTime(k) {
+    const m = this.map;
+    if (m && !m.isConstant) return this.anchorTime + (m.secAt(k / PPQN) - m.secAt(this.anchorBeat)) * 1000;
+    return this.anchorTime + (k / PPQN - this.anchorBeat) * this.msPerBeat;
+  }
+  beatAt(t) {
+    const m = this.map;
+    if (m && !m.isConstant) return m.beatAt(m.secAt(this.anchorBeat) + (t - this.anchorTime) / 1000);
+    return this.anchorBeat + (t - this.anchorTime) / this.msPerBeat;
+  }
 
-  /** Start at `beat`, audible at time t0 (ms). From 0: Start; elsewhere: SPP + Continue (aligned to the 16th). */
-  start(beat, bpm, t0) {
+  /** Start at `beat`, audible at time t0 (ms). From 0: Start; elsewhere: SPP + Continue (aligned to the 16th). map: optional TempoMap. */
+  start(beat, bpm, t0, map = null) {
+    this.map = map;
     this.msPerBeat = 60000 / bpm;
     this.anchorBeat = beat;
     this.anchorTime = t0;
@@ -36,11 +47,13 @@ export class MidiClockOut {
     this.nextTick = Math.round(sppBeat * PPQN);
     this.running = true;
   }
-  /** Tempo change at time t (keeps the phase). */
-  setTempo(bpm, t) {
-    if (!this.running) { this.msPerBeat = 60000 / bpm; return; }
+  /** Tempo change at time t (keeps the phase). map: the new TempoMap (or null for a constant tempo). */
+  setTempo(bpm, t, map) {
+    if (!this.running) { this.msPerBeat = 60000 / bpm; if (map !== undefined) this.map = map; return; }
     const b = this.beatAt(t);
     this.anchorBeat = b; this.anchorTime = t; this.msPerBeat = 60000 / bpm;
+    if (map !== undefined) this.map = map;
+    // next tick: the first one not yet sent stays (its time is recomputed from the new anchor)
   }
   /** Queue every tick due before now + lookahead. Returns the number of ticks sent. */
   pump(now) {

@@ -35,8 +35,11 @@ import { EFFECT_DEFS } from './effect-defs.js';
 import { resolveInstrument } from './instruments.js';
 import { sanitizePatch, patchStructureKey, topoOrder, resolveKeyLinks, PATCH_IN, PATCH_OUT } from '../core/patch.js';
 import { computePdc, faderOffsets } from './latency.js';
-import { MasterAnalysis } from './meters.js';
+import { needsShapedEnvelope, envelopePoints } from '../record/clips.js';
 import { frozenMode, bypassesInserts, bypassesFader, frozenLaneFilter } from '../core/freeze.js';
+import { spanOf } from '../time/tempo-map.js';
+import { WarpPlayer, needsWarpPlayer, unwarpedInSeconds } from './warp/player.js';
+import { MasterAnalysis } from './meters.js';
 import { inputGain, widthMatrix, vcaGainFor, vcaCombinedLane, soloState, sendTap, outputOf } from '../core/mixer-model.js';
 
 const TC = 0.012;
@@ -402,7 +405,7 @@ export class ChannelStrip {
         param.setValueAtTime(v0, t0);
       }
       for (const seg of segmentsInWindow(lane.points, b0, b1)) {
-        param.linearRampToValueAtTime(clampFn(seg.value), t0 + (seg.beat - b0) * spb);
+        param.linearRampToValueAtTime(clampFn(seg.value), t0 + spanOf(spb, b0, seg.beat)); // spb: number | TempoMap
       }
     };
     const vol = (x) => Math.max(0, Math.min(4, x));
@@ -960,23 +963,38 @@ export class MixGraph {
   getInstrument(trackId) { return this.tracks.get(trackId)?.instrument || null; }
 
   /** Play a collected event (see scheduler.collectEvents) at ctx time `time`. */
-  playEvent(ev, time, spb) {
+  // map: the TempoMap the event was timed with (time/tempo-map.js); events timed through a non-constant map carry
+  // durSec (exact seconds across ramps) and audio clips are played through the warp engine (warp/player.js).
+  playEvent(ev, time, spb, map) {
     // the click joins after the master section: it skips the compensated mix latency
-    if (ev.type === 'click') { scheduleClick(this.ctx, this.clickOut, time + this.latency, ev.accent); return; }
+    if (ev.type === 'click') { scheduleClick(this.ctx, this.clickOut, time + this.latency, ev.level ?? ev.accent); return; }
     const e = this.tracks.get(ev.trackId);
     if (!e) return;
     if (ev.type === 'note') {
-      const durSec = Math.max(0.005, ev.dur * spb);
+      const durSec = Math.max(0.005, ev.durSec ?? ev.dur * spb);
       e.instrument?.trigger(time, ev.pitch, ev.vel, durSec, ev.x ? noteExtra(ev, durSec) : undefined);
     } else if (ev.type === 'code') {
-      e.code?.trigger(time, ev.value, Math.max(0.005, ev.dur * spb), ev);
+      e.code?.trigger(time, ev.value, Math.max(0.005, ev.durSec ?? ev.dur * spb), ev);
     } else if (ev.type === 'audio') {
+      if (needsWarpPlayer(ev.clip)) { this._warpPlayer().play(e, ev, time, spb, map); return; }
+      if (map && !map.isConstant) { this._playAudioClip(e, unwarpedInSeconds(ev, map), time, 1); return; } // tempo map: in seconds
       this._playAudioClip(e, ev, time, spb);
     }
   }
 
+  /** Warp engine for audio clips (warp modes / tempo maps), created on first use. */
+  _warpPlayer() {
+    return this._warp || (this._warp = new WarpPlayer(this, { getSampleBuffer: (id) => this.o.getSampleBuffer(id), getSampleAnalysis: (id) => this.o.getSampleAnalysis?.(id) || null, worklet: this.o.warpWorklet !== false }));
+  }
+
   /** Gain envelope of one audio-clip play: 4 ms de-click ramps + the clip's own fades (fadeIn / fadeOut, beats). */
   _clipEnvelope(g, clip, ev, time, dur, spb) {
+    if (needsShapedEnvelope(clip)) { // curved fades / crossfades / gain envelope (src/record/clips.js)
+      const pts = envelopePoints(clip, ev.offset, dur, spb);
+      g.gain.setValueAtTime(0, time);
+      for (let i = 1; i < pts.length; i++) g.gain.linearRampToValueAtTime(pts[i].v, time + pts[i].t);
+      return;
+    }
     const gain = clip.gain ?? 1;
     const fade = Math.min(0.004, dur / 4);
     if (clip.fadeIn > 0 || clip.fadeOut > 0) {
