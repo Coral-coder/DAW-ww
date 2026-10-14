@@ -10,9 +10,13 @@ import { INSTRUMENT_DEFS } from '../audio/defs.js';
 import { EFFECT_DEFS, resolveEffectParams } from '../audio/effect-defs.js';
 import { resolveInstrumentDef } from '../audio/presets.js';
 import { getStatus, pluginKey } from '../plugins/status.js';
+import { VCA_MAX } from '../core/mixer-model.js';
 
 export const BUS_COLOR = '#3bc9db';
 export const MASTER_COLOR = '#ffa94d';
+export const VCA_COLOR = '#b197fc';
+// VCA level lane: linear gain 0..VCA_MAX (+12 dB); square-law scale puts 0 dB (1.0) in the middle of the lane
+const VCA_DEF = { key: 'volume', label: 'VCA level', type: 'number', min: 0, max: VCA_MAX, default: 1, step: 0.01, curve: 'exp' };
 
 const MUTE_DEF = { ...MIXER_TARGETS.mute, boolParam: true, onLabel: 'Muted', offLabel: 'Playing' };
 const FXEN_DEF = { ...MIXER_TARGETS.fxen, boolParam: true, onLabel: 'On', offLabel: 'Bypassed' };
@@ -24,6 +28,7 @@ export function ownerInfo(project, id) {
   if (!o) return null;
   if (id === 'master') return { kind: 'master', id, name: 'Master', color: MASTER_COLOR, owner: o };
   if (project.tracks.includes(o)) return { kind: 'track', id, name: o.name, color: o.color, owner: o };
+  if (project.mixer?.vcas?.includes(o)) return { kind: 'vca', id, name: o.name || 'VCA', color: o.color || VCA_COLOR, owner: o };
   return { kind: 'bus', id, name: o.name || 'Bus', color: BUS_COLOR, owner: o };
 }
 
@@ -66,6 +71,7 @@ export function targetGroups(project, ownerId) {
   if (!oi) return [];
   const o = oi.owner;
   const groups = [];
+  if (oi.kind === 'vca') return [{ name: 'VCA', kind: 'mixer', items: [{ target: 'volume', label: 'VCA level', def: VCA_DEF }] }];
   const mixer = [{ target: 'volume', label: 'Volume', def: MIXER_TARGETS.volume }];
   if (oi.kind !== 'master') mixer.push({ target: 'pan', label: 'Pan', def: MIXER_TARGETS.pan }, { target: 'mute', label: 'Mute', def: MUTE_DEF });
   if (oi.kind === 'track') for (const b of project.buses || []) mixer.push({ target: `send:${b.id}`, label: `Send → ${b.name}`, def: MIXER_TARGETS.send });
@@ -120,6 +126,7 @@ export function targetInfo(project, ownerId, target) {
   const tg = parseTarget(target);
   if (!tg) return miss(`Unknown target (${target})`);
   const ok = (label, def, staticValue, paramDef = null, short = label) => ({ label, short, def, paramDef, staticValue, missing: false, stepped: !!def.stepped });
+  if (oi.kind === 'vca') return tg.kind === 'volume' ? ok('VCA level', VCA_DEF, Number(o.volume ?? 1)) : miss(`${tg.kind} (VCAs automate their level only)`);
   if (tg.kind === 'volume') return ok('Volume', MIXER_TARGETS.volume, o.volume ?? (oi.kind === 'master' ? 0.9 : 0.8));
   if (tg.kind === 'pan') return oi.kind === 'master' ? miss('Pan (master has no pan)') : ok('Pan', MIXER_TARGETS.pan, o.pan || 0);
   if (tg.kind === 'mute') return oi.kind === 'master' ? miss('Mute (master)') : ok('Mute', MUTE_DEF, o.mute ? 1 : 0);

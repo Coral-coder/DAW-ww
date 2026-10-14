@@ -5,6 +5,7 @@ import { padTable, padZone } from './dsp/padsynth.js';
 import { pluckTable } from './dsp/pluck.js';
 import { pianoTable, PIANO_ZONE } from './dsp/piano.js';
 import { warmLater } from './dsp/bufcache.js';
+import { exprStage, applyStage, applyBend } from './voice-expression.js';
 
 /* ------------------------------------------------------------------ */
 /* Small numeric helpers                                               */
@@ -642,6 +643,20 @@ export class BaseInstrument {
     for (const v of this.voices) this._kill(v, t, 0.02);
     this.held.clear();
   }
+  /**
+   * Per-note expression of a held note (MPE) for every engine built on BaseInstrument (voice-expression.js):
+   * bend (semitones) on that voice's detune params, pressure -> per-voice gain (+ filter), timbre (CC74) -> the
+   * voice's own filter (v.filters) or a lazily inserted per-voice low-pass. Returns false when the voice has no
+   * per-voice pitch (the caller then falls back to channel pitch bend).
+   */
+  noteExpression(pitch, x = {}, time) {
+    const v = this.held.get(pitch);
+    if (!v || v.done) return Number.isFinite(x.bend) ? false : true;
+    const t = this._t(time);
+    const bent = applyBend(this.ctx, v, x.bend, t);
+    applyStage(v.xs, x, t, v.filters);
+    return bent || !Number.isFinite(x.bend);
+  }
   dispose() {
     this.allNotesOff();
     this.disposeExtra?.();
@@ -729,6 +744,7 @@ export class SynthInstrument extends BaseInstrument {
       const cents = (Number.isFinite(x.timbre) ? (x.timbre - 0.5) * 2400 : 0) + (Number.isFinite(x.pressure) ? x.pressure * 1200 : 0);
       v.mpeTone.offset.setTargetAtTime(cents, t, 0.02);
     }
+    if (Number.isFinite(x.pressure) && v.xs) applyStage(v.xs, { pressure: x.pressure }, t); // pressure -> per-voice gain
   }
 
   onParams() {
@@ -1226,7 +1242,7 @@ export class SynthInstrument extends BaseInstrument {
         }
       }
     }
-    outNode.connect(this.out.input);
+    v.xs = exprStage(ctx, v, outNode, this.out.input); // MPE pressure -> per-voice gain (voice-expression.js)
 
     // start / schedule stop
     v.startAll(t);

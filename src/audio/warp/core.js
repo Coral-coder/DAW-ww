@@ -120,8 +120,10 @@ export class WarpRenderer {
   // ---------------------------------------------------------------- repitch
   _repitch(outs, n) {
     const ratio = this.srcRate;
+    // Re-Pitch transpose: rate × 2^(st/12) on top of the tempo ratio (tape); 'off' ignores transpose
+    const P = this.mode === 'repitch' ? this.P : 1, s0 = this.curve[0].s;
     for (let i = 0; i < n; i++) {
-      const p = this.s((this.n + i) / this.outRate) * ratio;
+      const p = (s0 + (this.s((this.n + i) / this.outRate) - s0) * P) * ratio;
       for (let c = 0; c < outs.length; c++) outs[c][i] = readCubic(this.ch[Math.min(c, this.nch - 1)], p);
     }
   }

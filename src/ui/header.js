@@ -4,8 +4,10 @@ import { TapTempo, tapTempoToMap } from '../time/tempo-edit.js';
 import { h, icon } from './dom.js';
 import { numberField, select, contextMenu, meter, knob, markAuto } from './components.js';
 import { AUTO_MODES } from './automation-recorder.js';
-import { SCALES, pitchClassName } from '../theory/index.js';
+import { SCALES, keyRootName } from '../theory/index.js';
 import { GENRES } from '../gen/genres.js';
+import { priorityOverflow } from './overflow.js';
+const prio = (e, n) => { e.dataset.prio = String(n); return e; };
 import { overriddenLanes } from '../core/automation.js';
 
 export function createHeader(app) {
@@ -69,7 +71,7 @@ export function createHeader(app) {
   const sig = select({ options: sigOptions, value: p0.timeSig.join('/'), title: 'Time signature', onChange: (v) => store.transact('Time signature', (p) => { p.timeSig = v.split('/').map(Number); }) });
   const swing = numberField({ value: Math.round(p0.swing * 100), min: 0, max: 100, step: 1, width: 42, title: 'Swing % (applied to off-beat 16ths)', onChange: (v, { final }) => { if (final && Math.abs(store.get().swing * 100 - v) < 1e-9) return; store.transact('Swing', (p) => { p.swing = v / 100; }, { coalesce: !final }); } });
 
-  const rootOpts = Array.from({ length: 12 }, (_, i) => ({ value: i, label: pitchClassName(i) }));
+  const rootOpts = Array.from({ length: 12 }, (_, i) => ({ value: i, label: keyRootName(i, p0.key.scale) }));
   const keyRoot = select({ options: rootOpts, value: p0.key.root, title: 'Key root', onChange: (v) => store.transact('Key', (p) => { p.key.root = Number(v); }) });
   const scaleOpts = Object.entries(SCALES).map(([id, s]) => ({ value: id, label: s.name }));
   const keyScale = select({ options: scaleOpts, value: p0.key.scale, title: 'Scale — used by the piano roll, generators and assistant', onChange: (v) => store.transact('Scale', (p) => { p.key.scale = v; }) });
@@ -112,23 +114,29 @@ export function createHeader(app) {
 
   const el = h('header.app-header',
     h('div.hgroup', menuBtn, logo),
-    h('div.hgroup', undoBtn, redoBtn),
-    h('div.hgroup', playBtn, stopBtn, recBtn, h('div.auto-arm-group', autoBtn, autoMode, reBtn), loopBtn, metroBtn, lcd),
-    h('div.hgroup', h('div.hfield', h('span.hlabel', 'BPM'), bpm, tempoNow), tap, h('div.hfield', h('span.hlabel', 'Sig'), sig), h('div.hfield', h('span.hlabel', 'Swing'), swing)),
-    h('div.hgroup', h('div.hfield', h('span.hlabel', 'Key'), keyRoot), h('div.hfield', h('span.hlabel', 'Scale'), keyScale), h('div.hfield', h('span.hlabel', 'Genre'), genre)),
-    h('div.hgroup', modeSwitch),
+    // data-prio: priority+ overflow (src/ui/overflow.js) — when the row doesn't fit, the highest numbers move into
+    // the "⋯" menu first (genre, swing, undo, master …); transport, BPM, Create and the panel toggles always stay
+    h('div.hgroup', { dataset: { prio: 7 } }, undoBtn, redoBtn),
+    h('div.hgroup', playBtn, stopBtn, recBtn, h('div.auto-arm-group', autoBtn, prio(autoMode, 2), reBtn), loopBtn, metroBtn, lcd),
+    h('div.hgroup', h('div.hfield', h('span.hlabel', 'BPM'), bpm, tempoNow), prio(tap, 4), h('div.hfield', { dataset: { prio: 5 } }, h('span.hlabel', 'Sig'), sig), h('div.hfield', { dataset: { prio: 8 } }, h('span.hlabel', 'Swing'), swing)),
+    h('div.hgroup', h('div.hfield', { dataset: { prio: 1 } }, h('span.hlabel', 'Key'), keyRoot), h('div.hfield', { dataset: { prio: 2 } }, h('span.hlabel', 'Scale'), keyScale), h('div.hfield', { dataset: { prio: 9 } }, h('span.hlabel', 'Genre'), genre)),
+    h('div.hgroup', { dataset: { prio: 3 } }, modeSwitch),
     h('div.hgroup', genBtn),
     h('div.spacer'),
-    h('div.hgroup', masterVol, masterMeter),
+    h('div.hgroup', { dataset: { prio: 6 } }, masterVol, masterMeter),
     h('div.hgroup.ctl-slot'), // hardware control: MIDI learn + command palette (src/control/index.js)
     h('div.hgroup', browserBtn, deviceBtn, assistBtn),
   );
+
+  priorityOverflow(el, { title: 'More transport controls (hidden to fit the window)' });
 
   function sync() {
     const p = store.get();
     bpm.setValue(p.bpm);
     sig.setValue(p.timeSig.join('/'));
     swing.setValue(Math.round(p.swing * 100));
+    // key-signature spelling follows the scale: Ab major / G# minor, Eb minor / D# — see theory keyRootName
+    if (keyRoot._sc !== p.key.scale) { keyRoot._sc = p.key.scale; Array.from(keyRoot.options).forEach((o) => { o.textContent = keyRootName(Number(o.value), p.key.scale); }); }
     keyRoot.setValue(p.key.root);
     keyScale.setValue(p.key.scale);
     genre.setValue(p.genre || '');

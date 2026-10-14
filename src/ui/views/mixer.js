@@ -1026,6 +1026,27 @@ export function createMixerView(app) {
   });
   store.on?.('load', () => { lastSig = ''; resetAllPeaks(); });
 
+  // ---------------------------------------------------------------- rebindable keys (src/control/view-commands.js)
+  const selT = () => store.get().tracks.find((t) => t.id === ui.get('selectedTrackId')) || null;
+  const stepStrip = (dir) => {
+    const ts = store.get().tracks;
+    if (!visible || !ts.length) return false;
+    const i = ts.findIndex((t) => t.id === ui.get('selectedTrackId'));
+    actions.selectTrack(ts[Math.max(0, Math.min(ts.length - 1, i < 0 ? 0 : i + dir))].id);
+    return true;
+  };
+  const editSel = (label, fn) => () => { const t = selT(); if (!visible || !t) return false; actions.updateTrack(t.id, fn, label); return true; };
+  const dbStep = (d) => (t) => { const db = 20 * Math.log10(Math.max(1e-4, t.volume ?? 0.8)) + d; t.volume = +Math.min(1.5, Math.max(0, Math.pow(10, db / 20))).toFixed(4); };
+  app.viewActions = { ...(app.viewActions || {}), mixer: {
+    prevStrip: () => stepStrip(-1),
+    nextStrip: () => stepStrip(1),
+    mute: editSel('Mute', (t) => { t.mute = !t.mute; }),
+    solo: editSel('Solo', (t) => { t.solo = !t.solo; }),
+    resetVolume: editSel('Volume 0 dB', (t) => { t.volume = 1; }),
+    volumeUp: editSel('Volume', dbStep(1)),
+    volumeDown: editSel('Volume', dbStep(-1)),
+  } };
+
   return {
     el,
     show() { visible = true; render(dirty); startLoop(); syncLoudness(); },

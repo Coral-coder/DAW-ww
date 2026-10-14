@@ -313,3 +313,53 @@ export class MappingEngine extends Emitter {
   /** Forget pickup state (e.g. after loading a project or when automation moves the value). */
   resetTakeover() { for (const s of this.state.values()) s.picked = false; }
 }
+
+/**
+ * Named controller-template banks: several global templates ("Mixer", "Synth edit", "Live set"…), one active.
+ * Plain JSON { active, banks: { name: [mappings] } }; switching replaces the engine's template with that bank.
+ */
+export class TemplateBanks {
+  constructor(state = null, current = []) {
+    const banks = state?.banks && typeof state.banks === 'object' ? { ...state.banks } : {};
+    if (!Object.keys(banks).length) banks.Default = current || [];
+    this.banks = banks;
+    this.active = state?.active && banks[state.active] ? state.active : Object.keys(banks)[0];
+  }
+  names() { return Object.keys(this.banks); }
+  get list() { return this.banks[this.active] || []; }
+  /** Store the engine's current template into the active bank. */
+  store(list) { this.banks[this.active] = (list || []).map((m) => JSON.parse(JSON.stringify(m))); }
+  /** Switch to a bank (by name or ±1 step); returns its mappings (or null when unknown). */
+  select(nameOrStep) {
+    const names = this.names();
+    let name = nameOrStep;
+    if (typeof nameOrStep === 'number') name = names[(((names.indexOf(this.active) + nameOrStep) % names.length) + names.length) % names.length];
+    if (!(name in this.banks)) return null;
+    this.active = name;
+    return this.list;
+  }
+  /** Save the given mappings as a new (or replaced) bank and make it active. */
+  saveAs(name, list) {
+    name = String(name || '').trim().slice(0, 40);
+    if (!name) return false;
+    this.banks[name] = (list || []).map((m) => JSON.parse(JSON.stringify(m)));
+    this.active = name;
+    return true;
+  }
+  rename(from, to) {
+    to = String(to || '').trim().slice(0, 40);
+    if (!(from in this.banks) || !to || (to in this.banks)) return false;
+    const out = {};
+    for (const [k, v] of Object.entries(this.banks)) out[k === from ? to : k] = v;
+    this.banks = out;
+    if (this.active === from) this.active = to;
+    return true;
+  }
+  remove(name) {
+    if (!(name in this.banks) || this.names().length < 2) return false;
+    delete this.banks[name];
+    if (this.active === name) this.active = this.names()[0];
+    return true;
+  }
+  toJSON() { return { active: this.active, banks: this.banks }; }
+}

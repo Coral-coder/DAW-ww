@@ -793,6 +793,32 @@ export function createRackView(app) {
     if (r.project || 'selectedTrackId' in r.ui || 'selectedPatternId' in r.ui) render();
   });
 
+  // ---------------------------------------------------------------- rebindable keys (src/control/view-commands.js)
+  const focusedRow = () => rows.find((r) => rowKey(r) === focusKey && r.kind !== 'head') || null;
+  const onRow = (fn) => () => { const r = focusedRow(); if (!visible || !r || !r.pat) return false; fn(r); return true; };
+  const moveFocus = (dir) => {
+    if (!visible) return false;
+    const real = rows.filter((r) => r.kind !== 'head');
+    if (!real.length) return false;
+    const i = real.findIndex((r) => rowKey(r) === focusKey);
+    const n = real[Math.max(0, Math.min(real.length - 1, i < 0 ? 0 : i + dir))];
+    focusKey = rowKey(n);
+    if (ui.get('selectedTrackId') !== n.track.id) actions.selectTrack(n.track.id);
+    updateFocus();
+    return true;
+  };
+  app.viewActions = { ...(app.viewActions || {}), rack: {
+    focusUp: () => moveFocus(-1),
+    focusDown: () => moveFocus(1),
+    shiftLeft: onRow((r) => shiftRow(r, -1)),
+    shiftRight: onRow((r) => shiftRow(r, 1)),
+    clearRow: onRow((r) => setRowNotes(r, 'Clear row', () => [])),
+    copyRow: onRow((r) => copyRow(r)),
+    pasteRow: () => { const r = focusedRow(); if (!visible || !r || !rowClipboard) return false; pasteRow(r); return true; },
+    randomizeRow: onRow((r) => randomizeRow(r, 0.35)),
+    generateBeat: () => { if (!visible) return false; generateBeat(); return true; },
+  } };
+
   return {
     el,
     show() {

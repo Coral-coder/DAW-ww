@@ -2,13 +2,13 @@
 // warped (clip.warp.mode != 'off') or when the transport follows a non-constant tempo map.
 //
 //   off      — AudioBufferSourceNode at rate 1 (offset / duration from the tempo map)
-//   repitch  — AudioBufferSourceNode whose playbackRate steps through curveRates() (exact at every breakpoint)
+//   repitch  — AudioBufferSourceNode whose playbackRate steps through repitchRates() (tempo ratio × 2^(transpose/12); exact at every breakpoint)
 //   beats / tones / complex (pitch-preserving):
 //              realtime: an AudioWorkletNode ('daw3-warp', worklet.js) streams WarpRenderer (core.js) — the sample
 //              PCM is posted once per context into the worklet scope;
 //              fallback (no AudioWorklet, worklet still loading, offline renders / export): the same WarpRenderer
 //              runs once on the main thread and the result is cached (LRU) and played as a plain buffer.
-import { clipCurve, curveRates, curveTimeAt, isWarped, secAtBeat } from './markers.js';
+import { clipCurve, repitchRates, repitchFactor, curveTimeAt, isWarped, secAtBeat } from './markers.js';
 import { renderWarp } from './core.js';
 import { TempoMap } from '../../time/tempo-map.js';
 
@@ -91,7 +91,7 @@ export class WarpPlayer {
     this.g._clipEnvelope(g, clip, ev, time, duration, map.spbAt(b0));
     g.connect(e.strip.input);
     let src = null;
-    if (mode === 'off' || mode === 'repitch') src = this._native(buffer, points, duration, time, g, mode);
+    if (mode === 'off' || mode === 'repitch') src = this._native(buffer, points, duration, time, g, mode, clip.warp?.transpose || 0);
     else src = this._stretched(clip, buffer, points, duration, time, g, mode);
     if (!src) { try { g.disconnect(); } catch { /* */ } return; }
     const rec = { src, g };
@@ -99,17 +99,19 @@ export class WarpPlayer {
     src.onended = () => { this.g.sources.delete(rec); try { g.disconnect(); } catch { /* */ } };
   }
 
-  _native(buffer, points, duration, time, dest, mode) {
+  _native(buffer, points, duration, time, dest, mode, transpose = 0) {
     const ctx = this.ctx;
     const s0 = points[0].s;
     // portion before the sample start (negative source time) is silent: start later
     let t0 = 0;
-    if (s0 < 0) { t0 = curveTimeAt(points, 0); if (t0 >= duration) return null; }
+    // (Re-Pitch transpose reads s0 + P·(s − s0): the sample starts where that reaches 0)
+    const P = mode === 'repitch' ? repitchFactor(transpose) : 1;
+    if (s0 < 0) { t0 = curveTimeAt(points, s0 - s0 / P); if (t0 >= duration) return null; }
     const src = ctx.createBufferSource();
     src.buffer = buffer;
     if (mode === 'repitch') {
       // piecewise-constant rates: exact source position at every curve breakpoint
-      for (const r of curveRates(points)) src.playbackRate.setValueAtTime(Math.max(0.01, r.rate), time + r.t);
+      for (const r of repitchRates(points, transpose)) src.playbackRate.setValueAtTime(Math.max(0.01, r.rate), time + r.t);
     }
     src.connect(dest);
     const off = Math.max(0, s0 < 0 ? 0 : s0);

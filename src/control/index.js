@@ -12,15 +12,17 @@
 import { h, icon } from '../ui/dom.js';
 import { toast, contextMenu, touchStart, touchEnd } from '../ui/components.js';
 import { laneLabel, targetGroups } from '../ui/automation-targets.js';
-import { automationOwner, MIXER_TARGETS, toNorm } from '../core/automation.js';
+import { automationOwner, automationOwners, overriddenLanes, MIXER_TARGETS, toNorm } from '../core/automation.js';
 import { beatsPerBar } from '../core/model.js';
+import { uid } from '../core/util.js';
 import { MidiDeviceManager } from './devices.js';
-import { MappingEngine, sourceKey } from './mapping.js';
+import { MappingEngine, sourceKey, TemplateBanks } from './mapping.js';
 import { sourceLabel } from './midi.js';
 import { NoteRouter } from './router.js';
 import { SurfaceController, faderToGain } from './surface.js';
 import { GridController } from './grid.js';
-import { MidiClockOut, MidiClockIn, MtcOut } from './clock.js';
+import { MidiClockOut, MidiClockIn, MtcOut, ClockPhaseLock } from './clock.js';
+import { applyExternalTempo } from '../time/tempo-edit.js';
 import { tempoMapFor } from '../time/tempo-map.js';
 import { LinkClient, LINK_DEFAULT_URL } from './link-client.js';
 import { applyNorm, applyLaneValue, targetNorm, targetSteps, resolveOwner } from './targets.js';
@@ -89,12 +91,35 @@ export function installControl(app) {
     setNorm(t, n) { const r = resolve(t); if (r.owner) writeNorm(r.owner, r.target, n); },
     runCommand(id, { pressed }) { if (pressed) registry()?.get(id)?.run(); },
   });
-  mappings.setTemplate(settings.template);
+  // named controller-template banks: the active bank is the engine's template (mapping.js TemplateBanks)
+  const banks = new TemplateBanks(settings.templateBanks, settings.template);
+  mappings.setTemplate(banks.list);
+  const persistBanks = () => { settings.templateBanks = banks.toJSON(); settings.template = mappings.template; save(); };
+  function selectTemplateBank(nameOrStep) {
+    banks.store(mappings.template);
+    const list = banks.select(nameOrStep);
+    if (!list) return false;
+    mappings.setTemplate(list);
+    persistBanks(); markMapped(); bus.emit();
+    toast(`Controller template bank: ${banks.active} (${list.length} mapping${list.length === 1 ? '' : 's'})`, { timeout: 1600 });
+    return true;
+  }
+  function saveTemplateBankAs(name) {
+    if (!banks.saveAs(name, mappings.template)) return false;
+    persistBanks(); bus.emit();
+    return true;
+  }
+  function deleteTemplateBank(name) {
+    if (!banks.remove(name)) return false;
+    mappings.setTemplate(banks.list);
+    persistBanks(); markMapped(); bus.emit();
+    return true;
+  }
   mappings.setProjectMappings(store.get().controlMappings || []);
   let syncing = false;
   const projectJson = () => JSON.stringify(mappings.project);
   mappings.on('change', ({ scope, auto } = {}) => {
-    if (scope === 'template') { settings.template = mappings.template; save(); }
+    if (scope === 'template') { banks.store(mappings.template); persistBanks(); }
     else {
       const list = JSON.parse(projectJson());
       syncing = true;
@@ -153,7 +178,7 @@ export function installControl(app) {
     // tempo map (src/time): clock ticks follow ramps / changes; MTC runs on the map's seconds
     const map = tempoMapFor(p, p.mode);
     if (settings.sync.clockOut?.length) clockOut.start(Math.max(0, pos()), map.bpmAt(Math.max(0, pos())), t0, map);
-    if (settings.sync.mtcOut) { mtcOut.fps = [24, 25, 30].includes(+settings.sync.mtcFps) ? +settings.sync.mtcFps : 25; mtcOut.start(map.secAt(Math.max(0, pos())), t0); }
+    if (settings.sync.mtcOut) { mtcOut.fps = String(settings.sync.mtcFps) === '29.97' ? '29.97' : [24, 25, 30].includes(+settings.sync.mtcFps) ? +settings.sync.mtcFps : 25; mtcOut.start(map.secAt(Math.max(0, pos())), t0); }
   };
   const syncStop = () => { clockOut.stop(now()); mtcOut.stop(); };
   engine.on?.('state', ({ playing }) => {
@@ -181,11 +206,35 @@ export function installControl(app) {
     }
     clockOut.pump(now()); mtcOut.pump(now());
   }, 25);
+  // external tempo (MIDI clock / Link): recorded as tempo-map points while automation is being recorded, else it
+  // changes the tempo segment under the playhead (src/time/tempo-edit.js applyExternalTempo)
+  const recordingAutomation = () => !!ui.get('autoArm') && engine.isPlaying && store.get().mode === 'song';
+  const externalTempo = (label, bpm) => store.transact(label, (p) => { applyExternalTempo(p, bpm, { beat: Math.max(0, engine.getPosition() || 0), record: recordingAutomation() }); }, { undo: recordingAutomation() });
+  let extBpm = null;
   clockIn.on('tempo', (bpm) => {
     if (!settings.sync.follow) return;
     const v = Math.round(bpm * 10) / 10;
-    if (Math.abs(store.get().bpm - v) >= 0.1) store.transact('Tempo (MIDI clock)', (p) => { p.bpm = v; }, { undo: false });
+    if (extBpm != null && Math.abs(extBpm - v) < 0.1) return;
+    extBpm = v;
+    externalTempo('Tempo (MIDI clock)', v);
   });
+  // continuous phase lock: every 16th compare the clock's position with ours — trim the tempo a little (constant
+  // tempo, not recording) or relocate when far off
+  const phaseLock = new ClockPhaseLock();
+  clockIn.on('tick', () => {
+    if (!settings.sync.follow || !settings.sync.followTransport || !engine.isPlaying || !clockIn.running || !clockIn.bpm || clockIn.ticks % 6) return;
+    const t = now();
+    const ext = clockIn.beatAt(t);
+    const local = pos();
+    const p = store.get();
+    const r = phaseLock.update(ext, local, extBpm || clockIn.bpm);
+    if (r.kind === 'jump') { actions.setPosition(Math.max(0, r.beat)); return; }
+    if (recordingAutomation() || !tempoMapFor(p, p.mode).isConstant) return; // never write trims into a map
+    const want = Math.round(r.bpm * 100) / 100;
+    if (Math.abs(p.bpm - want) >= 0.01) store.transact('Tempo (MIDI clock)', (pp) => { pp.bpm = want; }, { undo: false });
+  });
+  clockIn.on('start', () => phaseLock.reset());
+  clockIn.on('continue', () => phaseLock.reset());
   clockIn.on('start', () => { if (!settings.sync.followTransport) return; actions.setPosition(0); if (!engine.isPlaying) actions.play(); });
   clockIn.on('continue', () => { if (settings.sync.followTransport && !engine.isPlaying) actions.play(); });
   clockIn.on('stop', () => { if (settings.sync.followTransport && engine.isPlaying) actions.togglePlay(); });
@@ -193,7 +242,7 @@ export function installControl(app) {
 
   const link = new LinkClient({
     bpm: () => store.get().bpm,
-    setBpm: (b) => store.transact('Tempo (Link)', (p) => { p.bpm = b; }, { undo: false }),
+    setBpm: (b) => externalTempo('Tempo (Link)', b),
     playing: () => !!engine.isPlaying,
     beat: () => engine.getPosition(),
     play: () => actions.play(),
@@ -210,6 +259,8 @@ export function installControl(app) {
 
   // ------------------------------------------------------------------ control surfaces + grids
   const meterNorm = (id) => { const m = engine.ctx ? engine.getMeter(id) : null; const v = m ? Math.max(m.l, m.r) : 0; return v > 0 ? Math.max(0, Math.min(1, (20 * Math.log10(v) + 60) / 60)) : 0; };
+  let autoOff = false; // surface Read/Off button state
+  const surfaceAutoMode = () => (ui.get('autoArm') ? ui.get('autoMode') || 'touch' : autoOff && overriddenLanes(store.get()).length ? 'off' : 'read');
   const surfaceHost = {
     strips() {
       const p = store.get();
@@ -242,7 +293,17 @@ export function installControl(app) {
       }
       return out;
     },
-    transport: () => { const p = store.get(); return { playing: !!engine.isPlaying, recording: !!ui.get('recording'), loop: !!p.loop.enabled, click: !!p.metronome, autoArm: !!ui.get('autoArm') }; },
+    transport: () => { const p = store.get(); return { playing: !!engine.isPlaying, recording: !!ui.get('recording'), loop: !!p.loop.enabled, click: !!p.metronome, autoArm: !!ui.get('autoArm'), autoMode: surfaceAutoMode() }; },
+    /** Surface automation buttons: read (play lanes) / off (every lane overridden — ↺ or Read brings them back) /
+     * touch / latch / write (arm automation recording in that mode). */
+    setAutoMode(mode) {
+      if (mode === 'touch' || mode === 'latch' || mode === 'write') { ui.set({ autoMode: mode }); ui.set({ autoArm: true }); autoOff = false; return; }
+      ui.set({ autoArm: false });
+      if (mode === 'off') {
+        autoOff = true;
+        store.transact('Override automation', (pp) => { for (const o of automationOwners(pp)) for (const l of o?.automation || []) if (l && l.points?.length) l.overridden = true; });
+      } else if (autoOff) { autoOff = false; app.automation?.reenable?.(); }
+    },
     command(name) {
       const p = store.get();
       const bpb = beatsPerBar(p);
@@ -257,6 +318,19 @@ export function installControl(app) {
         case 'undo': actions.undo(); return;
         case 'save': actions.saveProject(); return;
         case 'autoArm': ui.set({ autoArm: !ui.get('autoArm') }); return;
+        case 'marker': {
+          const at = Math.floor(Math.max(0, engine.getPosition()) / bpb + 1e-6) * bpb;
+          if ((p.markers || []).some((m) => Math.abs(m.beat - at) < 1e-6)) return;
+          store.transact('Add marker', (pp) => { pp.markers = [...(pp.markers || []), { id: uid('mk'), beat: at, name: `Marker ${(pp.markers || []).length + 1}` }].sort((a, b) => a.beat - b.beat); });
+          return;
+        }
+        case 'prevMarker': case 'nextMarker': {
+          const pos = engine.getPosition();
+          const ms = [...(p.markers || [])].sort((a, b) => a.beat - b.beat);
+          const m = name === 'prevMarker' ? [...ms].reverse().find((x) => x.beat < pos - (engine.isPlaying ? 0.5 : 1e-6)) : ms.find((x) => x.beat > pos + 1e-6);
+          if (m) actions.setPosition(m.beat); else if (name === 'prevMarker') actions.setPosition(0);
+          return;
+        }
         default: return;
       }
     },
@@ -536,7 +610,8 @@ export function installControl(app) {
   }
 
   const api = {
-    devices, mappings, router, clockOut, clockIn, mtcOut, link, surfaces, grids, settings,
+    devices, mappings, router, clockOut, clockIn, mtcOut, link, surfaces, grids, settings, banks,
+    selectTemplateBank, saveTemplateBankAs, deleteTemplateBank,
     save, openMidi, openPrefs, openPalette, setLearnMode, learn, labelOfTarget, shortcutLabel, buildControllers,
     get learnMode() { return learnMode; },
     toggleLearnMode: () => setLearnMode(!learnMode),

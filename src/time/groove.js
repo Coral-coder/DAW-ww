@@ -113,3 +113,44 @@ export function applyGrooveToNotes(notes, groove, { strength = 1, velStrength = 
 export function quantizeNotes(notes, { grid = 0.25, strength = 1, swing = 0 } = {}) {
   return notes.map((n) => ({ ...n, start: r6(Math.max(0, n.start + strength * (gridTarget(n.start, grid, swing).target - n.start))) }));
 }
+
+// ------------------------------------------------------------------ groove library
+/** MPC-style swing amounts (% of the pair: 50 = straight, 66 ≈ triplet). */
+export const MPC_SWING = [50, 54, 56, 58, 60, 62, 64, 66, 71];
+
+/**
+ * An MPC swing template: the off-beat of every pair of `grid` slots is placed at `pct`% of the pair
+ * (offset = (pct/100 − 0.5)·2·grid). grid 0.25 = 16th swing, 0.5 = 8th swing. Off-beats are slightly softer.
+ */
+export function mpcSwingGroove(pct, grid = 0.25) {
+  const off = r6((pct / 100 - 0.5) * 2 * grid);
+  const n = Math.max(2, Math.round(1 / grid)); // one beat per cycle... aligned to beats
+  const offsets = Array.from({ length: n }, (_, i) => (i % 2 ? off : 0));
+  const velocities = Array.from({ length: n }, (_, i) => (i % 2 ? 0.85 : 1));
+  const tag = grid === 0.25 ? '16' : grid === 0.5 ? '8' : String(grid);
+  return { id: `mpc${tag}-${pct}`, name: `MPC ${tag}th swing ${pct}%`, grid, length: n * grid, offsets, velocities, builtin: true };
+}
+
+/** Built-in grooves: MPC 16th-swing presets (54–71%) + 8th-swing 58 / 66%. */
+export const BUILTIN_GROOVES = Object.freeze([
+  ...MPC_SWING.filter((p) => p > 50).map((p) => mpcSwingGroove(p, 0.25)),
+  mpcSwingGroove(58, 0.5), mpcSwingGroove(66, 0.5),
+]);
+
+/** All grooves usable in a project: built-ins first, then the ones extracted / saved in project.grooves. */
+export function grooveLibrary(project) {
+  return [...BUILTIN_GROOVES, ...((project && project.grooves) || [])];
+}
+export const findGroove = (project, id) => grooveLibrary(project).find((g) => g.id === id) || null;
+
+/**
+ * Apply a library groove to a pattern's notes (only `noteIds` when given), strength 0..1 (timing), velStrength 0..1
+ * (accents). Returns the new notes array (the input is not modified).
+ */
+export function grooveNotes(notes, groove, { strength = 1, velStrength = 0, noteIds = null } = {}) {
+  if (!groove) return notes.map((n) => ({ ...n }));
+  const ids = noteIds && noteIds.size !== undefined ? noteIds : noteIds ? new Set(noteIds) : null;
+  const pick = ids && ids.size ? notes.filter((n) => ids.has(n.id)) : notes;
+  const moved = new Map(applyGrooveToNotes(pick, groove, { strength, velStrength }).map((n) => [n.id, n]));
+  return notes.map((n) => moved.get(n.id) || { ...n });
+}

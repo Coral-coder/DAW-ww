@@ -14,7 +14,7 @@ import { encodeWav } from '../io/wav.js';
 import { arrayBufferToBase64 } from '../io/samples.js';
 import { scheduleClick } from '../audio/metronome.js';
 import { InputManager, deviceLatency, setDeviceLatency, DEFAULT_SOURCE, loadCaptureWorklet } from './inputs.js';
-import { roundTrip, beatAtTime, recordPlan, countInPlan, planAudioTakes, detectPing, DEFAULT_REC_PREFS } from './timing.js';
+import { roundTrip, beatAtTime, recordPlan, countInSchedule, planAudioTakes, detectPing, DEFAULT_REC_PREFS } from './timing.js';
 import { createTake, addRecordedTakes, compClips, clearTakes, findTake, takeEnd, hasTakes, srcSecAt } from './takes.js';
 import { songTempoMap, tempoMapFor, hasMeterChanges } from '../time/tempo-map.js';
 import { mixClipsToPcm, trackClips, reverseFrames, peakOf, normalizeGain } from './clips.js';
@@ -127,18 +127,12 @@ export function createRecorder(app, { toast: toastFn = null } = {}) {
       const bars = Math.max(0, Math.round(prefs.countInBars || 0));
       const t0 = ctx.currentTime + 0.12;
       if (bars) app.setStatus?.(`Count-in: ${bars} bar${bars > 1 ? 's' : ''}…`);
-      if (!bm) {
-        const sp = 60 / pp.bpm;
-        const n = bars * bpb;
-        if (n && !pp.metronome) for (let i = 0; i < n; i++) scheduleClick(ctx, engine.graph.clickOut, t0 + i * sp, i % bpb === 0);
-        await engine.play({ from: plan.playFrom - (pp.metronome ? n : 0), at: t0 + (pp.metronome ? 0 : n * sp) });
-      } else {
-        // count-in through the tempo / meter map: the bars before the start at their own meter and tempo. With the
-        // metronome on the transport rolls through them (it clicks from bar 1 on; we click what lies before beat 0).
-        const ci = countInPlan(bm, plan.playFrom, bars);
-        for (const c of ci.clicks) if (!pp.metronome || c.beat < -1e-9) scheduleClick(ctx, engine.graph.clickOut, t0 + c.t, c.level);
-        await engine.play({ from: pp.metronome ? ci.from : plan.playFrom, at: t0 + (pp.metronome ? 0 : ci.sec) });
-      }
+      // count-in through the tempo / meter map (a constant map when the project has none): the bars before the start
+      // at their own meter and tempo, accented per meter. With the metronome on the transport rolls through them — its
+      // clicks only cover beats ≥ 0, so we click (sample-accurately, on the audio clock) what lies before beat 0.
+      const ci = countInSchedule(bm || songTempoMap(pp), plan.playFrom, bars, !!pp.metronome);
+      for (const c of ci.clicks) scheduleClick(ctx, engine.graph.clickOut, t0 + c.t, c.level);
+      await engine.play({ from: ci.from, at: t0 + ci.startDelay });
       const a = engine.scheduler.anchors[0];
       s.anchor = { time: a.time, beat: a.beat, bpm: a.bpm, map: a.map, loop: s.loop };
     }
