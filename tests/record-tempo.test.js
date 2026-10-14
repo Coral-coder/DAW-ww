@@ -254,3 +254,12 @@ test('comp flatten across a ramp: each comp segment plays its take at the right 
   const rh = []; for (let i = 0; i < re[0].length; i++) if (Math.abs(re[0][i]) > 0.5) rh.push(map.beatAt(i / SR));
   [2, 4, 5, 8].forEach((b, i) => assert.ok(Math.abs(map.secAt(rh[i]) - map.secAt(b)) < MS));
 });
+
+test('unwarped clips under a tempo map: gain envelope points are converted to seconds like fades', async () => {
+  const { unwarpedInSeconds } = await import('../src/audio/warp/player.js');
+  const map = { spbAt: () => 0.5, span: (a, b) => (b - a) * 0.5 };
+  const ev = { beat: 0, dur: 8, clip: { start: 0, length: 8, offset: 0, fadeIn: 1, gainEnv: [{ beat: 0, gain: 1 }, { beat: 4, gain: 0.5 }] } };
+  const out = unwarpedInSeconds(ev, map);
+  assert.deepEqual(out.clip.gainEnv.map((p) => p.beat), [0, 2]);
+  assert.equal(out.clip.fadeIn, 0.5);
+});
