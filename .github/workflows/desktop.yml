@@ -91,6 +91,13 @@ jobs:
           CXX=aarch64-w64-mingw32-clang++ CC=aarch64-w64-mingw32-clang sh desktop/native/build.sh
           npx electron-builder --win --arm64 --publish never
           ls dist  # the smoke test below runs dist/win-unpacked (x64, packaged with the x64 native layer earlier)
+          # each arch must carry its own native layer (an arm64 addon in the x64 app = "not a valid Win32 application")
+          V=$(node -p "require('./package.json').version")
+          test -f dist/daW3-Setup-$V-x64.exe -a -f dist/daW3-Setup-$V-arm64.exe -a -f dist/daW3-$V-win-x64.zip -a -f dist/daW3-$V-win-arm64.zip
+          for d in win-unpacked:x86-64 win-arm64-unpacked:arm64; do
+            dir=${d%%:*}; want=${d##*:}
+            llvm-objdump -f "dist/$dir/resources/native/daw3_audio.node" | grep -i "file format" | tee /dev/stderr | grep -qi "$want" || { echo "$dir has the wrong native arch"; exit 1; }
+          done
       - name: Package Linux x64 (AppImage, .deb, .tar.gz)
         if: matrix.platform == 'linux'
         run: npx electron-builder --linux --x64 --publish never

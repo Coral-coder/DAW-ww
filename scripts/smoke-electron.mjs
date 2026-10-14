@@ -146,6 +146,15 @@ try {
   if (typeof result.checks.nativeAudio === 'string' && result.checks.nativeAudio.startsWith('error')) throw new Error(`native audio: ${result.checks.nativeAudio}`);
   await page.keyboard.press('Escape');
 
+  // what the screenshot shows, in words (for the CI log)
+  result.checks.visible = await page.evaluate(() => ({
+    song: window.daw3.store.get().name,
+    bpm: window.daw3.store.get().bpm,
+    trackNames: window.daw3.store.get().tracks.slice(0, 8).map((t) => t.name),
+    activeView: document.querySelector('[aria-selected="true"], .tab.active, .view-tab.active')?.textContent?.trim()?.slice(0, 40) || null,
+    modalsOpen: document.querySelectorAll('.modal').length,
+    window: `${innerWidth}x${innerHeight}`,
+  }));
   const shot = path.join(outDir, `smoke-${label}.png`);
   await page.screenshot({ path: shot });
   result.checks.screenshot = shot;

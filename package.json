@@ -98,16 +98,10 @@
       "icon": "build/icon.png",
       "target": [
         {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
+          "target": "nsis"
         },
         {
-          "target": "zip",
-          "arch": [
-            "x64"
-          ]
+          "target": "zip"
         }
       ],
       "artifactName": "daW3-${version}-win-${arch}.${ext}",
@@ -140,22 +134,13 @@
       },
       "target": [
         {
-          "target": "AppImage",
-          "arch": [
-            "x64"
-          ]
+          "target": "AppImage"
         },
         {
-          "target": "deb",
-          "arch": [
-            "x64"
-          ]
+          "target": "deb"
         },
         {
-          "target": "tar.gz",
-          "arch": [
-            "x64"
-          ]
+          "target": "tar.gz"
         }
       ],
       "artifactName": "daW3-${version}-linux-${arch}.${ext}"
