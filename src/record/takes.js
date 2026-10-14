@@ -3,7 +3,8 @@
 // Model (all optional on a track; projects without it behave exactly as before):
 //   track.takeLanes = [{ id, name?, takes: Take[] }]           rows under the track ("take lanes")
 //   Take  = { id, name, sampleId | patternId, start, length, offset, gain?, srcLength?, pass? }
-//           start / length / offset in beats like a Clip (offset = beats into the sample / pattern);
+//           start / length / offset in beats like a Clip (offset = beats into the sample / pattern; under a tempo map
+//           audio offsets are content beats at the tempo of the take start — srcSecAt);
 //           srcLength = length of the source in beats (lets crossfades use the handle after the take's end)
 //   track.comp = [{ takeId, start, end }]                      sorted, non-overlapping song-beat ranges
 //   track.compXfade = ms                                       crossfade at comp boundaries (default 10, equal power)
@@ -13,12 +14,22 @@
 // trackClips). Recording (src/record/session.js) adds one take per cycle / punch pass and points the comp at the
 // newest take for the recorded range.
 import { uid } from '../core/util.js';
+import { songTempoMap } from '../time/tempo-map.js';
 
 export const DEFAULT_XFADE_MS = 10;
 const EPS = 1e-6;
 const r6 = (x) => +(+x).toFixed(6);
 
 export const takeEnd = (t) => t.start + t.length;
+
+/**
+ * Sample seconds an (unwarped) audio clip / take plays at song beat `beat` under tempo map `map`: content beats
+ * (offset) count at the tempo of the clip start, then the sample runs at its own speed — exactly how playback treats
+ * unwarped clips under a tempo map (src/audio/warp/player.js unwarpedInSeconds).
+ */
+export const srcSecAt = (map, clip, beat) => (clip.offset || 0) * map.spbAt(clip.start) + map.span(clip.start, beat);
+/** Content-beat offset a clip starting at `beat` needs to play the same audio there as `clip` does (see srcSecAt). */
+export const offsetAtBeat = (map, clip, beat) => srcSecAt(map, clip, beat) / map.spbAt(beat);
 export const hasTakes = (track) => !!track?.takeLanes?.some((l) => l.takes?.length);
 
 /** Every take of a track with its lane: [{ take, lane, laneIndex }]. */
@@ -212,8 +223,11 @@ export function addRecordedTakes(project, track, takes, { kind = 'audio' } = {})
 export function compClips(project, track) {
   const segs = track?.comp;
   if (!segs?.length || !track.takeLanes?.length) return [];
+  const map = songTempoMap(project);
+  const tm = map.isConstant ? null : map; // tempo map: audio offsets / crossfades through it (see srcSecAt)
   const spb = 60 / (project.bpm || 120);
-  const xf = Math.max(0, Number(track.compXfade ?? DEFAULT_XFADE_MS) || 0) / 1000 / spb; // beats
+  const ms = Math.max(0, Number(track.compXfade ?? DEFAULT_XFADE_MS) || 0) / 1000;
+  const xf = ms / spb; // beats
   const half = xf / 2;
   const items = [];
   for (const s of segs) {
@@ -229,11 +243,22 @@ export function compClips(project, track) {
   for (let i = 0; i + 1 < items.length; i++) {
     const A = items[i], B = items[i + 1];
     if (!A.audio || !B.audio || Math.abs(A.s.end - B.s.start) > EPS || half <= 0) continue;
-    const bOff = B.take.offset + (B.s.start - B.take.start); // where B's segment starts in its source
-    const aEndOff = A.take.offset + (A.s.end - A.take.start);
-    const aSrc = A.take.srcLength ?? Infinity;
-    const h1 = Math.max(0, Math.min(half, bOff, A.s.end - A.s.start - EPS, B.s.end - B.s.start - EPS));
-    const h2 = Math.max(0, Math.min(half, aSrc - aEndOff, B.s.end - B.s.start - EPS));
+    let hf, bOff, aRest;
+    if (tm) {
+      // seconds -> beats at the tempo of the boundary (the fade is a few ms long)
+      const sp = tm.spbAt(B.s.start);
+      hf = ms / 2 / sp;
+      bOff = srcSecAt(tm, B.take, B.s.start) / sp;
+      aRest = A.take.srcLength == null ? Infinity : (A.take.srcLength * tm.spbAt(A.take.start) - srcSecAt(tm, A.take, A.s.end)) / sp;
+    } else {
+      hf = half;
+      bOff = B.take.offset + (B.s.start - B.take.start); // where B's segment starts in its source
+      const aEndOff = A.take.offset + (A.s.end - A.take.start);
+      const aSrc = A.take.srcLength ?? Infinity;
+      aRest = aSrc - aEndOff;
+    }
+    const h1 = Math.max(0, Math.min(hf, bOff, A.s.end - A.s.start - EPS, B.s.end - B.s.start - EPS));
+    const h2 = Math.max(0, Math.min(hf, aRest, B.s.end - B.s.start - EPS));
     lead[i + 1] = h1;
     tail[i] = h2;
   }
@@ -244,7 +269,7 @@ export function compClips(project, track) {
     const clip = {
       id: `comp:${track.id}:${i}`, trackId: track.id, type: audio ? 'audio' : 'pattern',
       sampleId: take.sampleId || null, patternId: take.patternId || null,
-      start: start, length: end - start, offset: take.offset + (start - take.start),
+      start: start, length: end - start, offset: audio && tm ? offsetAtBeat(tm, take, start) : take.offset + (start - take.start),
       gain: take.gain ?? 1, name: take.name, comp: true, takeId: take.id,
     };
     if (audio) {

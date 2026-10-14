@@ -7,7 +7,7 @@
 //   gainEnv                    [{ beat (relative to the clip start), gain (linear multiplier, 0..4) }] sorted
 //   xfade === false            opt this clip out of automatic crossfades with overlapping clips
 // Overlapping audio clips on a track crossfade automatically over the overlap (equal power), see autoCrossfade().
-import { compClips } from './takes.js';
+import { compClips, srcSecAt } from './takes.js';
 
 const EPS = 1e-6;
 export const FADE_SHAPES = ['lin', 'exp', 'log', 's', 'eqp'];
@@ -59,20 +59,25 @@ export const needsShapedEnvelope = (clip) => !!(clip && ((clip.fadeInShape && cl
  * Breakpoints of one clip play's gain: [{ t (s after the play starts), v }], to be scheduled as linear ramps.
  *   offBeats: where the play starts inside the clip (beats from the clip start), durSec: how long it plays.
  * Includes the 4 ms de-click ramps at both ends (like every clip play) and samples curved fades in 24 steps.
+ *   spb: seconds per beat, or a TempoMap (src/time/tempo-map.js) — beats are then song beats from clip.start, timed
+ *   through the map (fades / envelope points stay on their beats across tempo ramps).
  */
 export function envelopePoints(clip, offBeats, durSec, spb, { steps = 24 } = {}) {
   const dur = Math.max(0, durSec);
   const dc = Math.min(DECLICK, dur / 4);
-  const tbAt = (t) => offBeats + t / spb;
+  const map = spb && typeof spb === 'object' ? spb : null;
+  const s0 = map ? map.secAt(clip.start + offBeats) : 0;
+  const tbAt = map ? (t) => map.beatAt(s0 + t) - clip.start : (t) => offBeats + t / spb;
+  const tOf = map ? (b) => map.secAt(clip.start + b) - s0 : (b) => (b - offBeats) * spb;
   const ts = new Set([dc, dur - dc]);
   const addRange = (b0, b1, curved) => {
     const n = curved ? steps : 1;
-    for (let k = 0; k <= n; k++) ts.add(((b0 + ((b1 - b0) * k) / n) - offBeats) * spb);
+    for (let k = 0; k <= n; k++) ts.add(tOf(b0 + ((b1 - b0) * k) / n));
   };
   const fi = clip.fadeIn || 0, fo = clip.fadeOut || 0;
   if (fi > 0) addRange(0, fi, (clip.fadeInShape || 'lin') !== 'lin');
   if (fo > 0) addRange(clip.length - fo, clip.length, (clip.fadeOutShape || 'lin') !== 'lin');
-  for (const p of clip.gainEnv || []) ts.add((p.beat - offBeats) * spb);
+  for (const p of clip.gainEnv || []) ts.add(tOf(p.beat));
   const inner = [...ts].filter((t) => t >= dc - 1e-9 && t <= dur - dc + 1e-9).sort((a, b) => a - b);
   const pts = [{ t: 0, v: 0 }];
   let prev = -1;
@@ -253,11 +258,15 @@ export function reverseFrames(channels, a, b) {
  * Mix audio clips into PCM exactly like playback does (offset, gain, fades, gain envelope, de-click ramps).
  *   clips: audio clips (e.g. trackClips() output), getPcm(sampleId) -> { channels: Float32Array[], sampleRate } | null
  *   startBeat / endBeat: range to render; bpm; sampleRate of the result; channels (1 | 2)
+ *   map (optional TempoMap): song beats -> seconds through the tempo map (unwarped clips play their audio at its own
+ *   speed, offsets count at the tempo of the clip start — see takes.js srcSecAt); a constant map = `bpm`.
  * Returns Float32Array[] (one per output channel). Used by flatten comp / consolidate and the tests.
  */
-export function mixClipsToPcm({ clips, getPcm, bpm, sampleRate = 44100, startBeat, endBeat, channels = 2 }) {
+export function mixClipsToPcm({ clips, getPcm, bpm, map = null, sampleRate = 44100, startBeat, endBeat, channels = 2 }) {
+  const tm = map && !map.isConstant ? map : null;
+  if (map && !tm) bpm = map.bpm;
   const spb = 60 / bpm;
-  const frames = Math.max(0, Math.round((endBeat - startBeat) * spb * sampleRate));
+  const frames = Math.max(0, Math.round((tm ? tm.span(startBeat, endBeat) : (endBeat - startBeat) * spb) * sampleRate));
   const out = Array.from({ length: channels }, () => new Float32Array(frames));
   for (const clip of clips) {
     if (clip.type !== 'audio' || !clip.sampleId) continue;
@@ -268,15 +277,15 @@ export function mixClipsToPcm({ clips, getPcm, bpm, sampleRate = 44100, startBea
     // the play: from max(clip.start, startBeat) for as long as the clip and the source last
     const playStart = Math.max(clip.start, startBeat);
     const offBeats = playStart - clip.start;
-    const offSec = ((clip.offset || 0) + offBeats) * spb;
+    const offSec = tm ? srcSecAt(tm, clip, playStart) : ((clip.offset || 0) + offBeats) * spb;
     const srcDur = srcLen / srcSr;
     if (offSec >= srcDur) continue;
-    const durSec = Math.min((clip.start + clip.length - playStart) * spb, srcDur - offSec);
+    const durSec = Math.min(tm ? tm.span(playStart, clip.start + clip.length) : (clip.start + clip.length - playStart) * spb, srcDur - offSec);
     if (durSec <= 0.002) continue;
     const pts = needsShapedEnvelope(clip) || clip.fadeIn > 0 || clip.fadeOut > 0
-      ? envelopePoints(clip, offBeats, durSec, spb)
+      ? envelopePoints(clip, offBeats, durSec, tm || spb)
       : (() => { const dc = Math.min(DECLICK, durSec / 4); const g = clip.gain ?? 1; return [{ t: 0, v: 0 }, { t: dc, v: g }, { t: durSec - dc, v: g }, { t: durSec, v: 0 }]; })();
-    const f0 = Math.round((playStart - startBeat) * spb * sampleRate);
+    const f0 = Math.round((tm ? tm.span(startBeat, playStart) : (playStart - startBeat) * spb) * sampleRate);
     const n = Math.min(frames - f0, Math.round(durSec * sampleRate));
     let k = 0; // breakpoint cursor
     for (let i = 0; i < n; i++) {
