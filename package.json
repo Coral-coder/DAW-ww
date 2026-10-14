@@ -8,8 +8,10 @@
     "start": "node scripts/serve.js",
     "test": "node --test tests/*.test.js",
     "mac:dev": "electron .",
-    "mac:build": "electron-builder --mac --arm64 --publish never && electron-builder --mac --x64 --publish never && sh scripts/make-dmg.sh",
-    "mac:icon": "node scripts/make-icon.mjs"
+    "mac:build": "sh desktop/native/build.sh && electron-builder --mac --arm64 --publish never && electron-builder --mac --x64 --publish never && sh scripts/make-dmg.sh",
+    "mac:icon": "node scripts/make-icon.mjs",
+    "native:build": "sh desktop/native/build.sh",
+    "native:test": "sh desktop/native/build.sh --test"
   },
   "license": "AGPL-3.0-or-later",
   "main": "desktop/main.cjs",
@@ -34,7 +36,8 @@
       "desktop/**/*",
       "build/icon.png",
       "LICENSE",
-      "package.json"
+      "package.json",
+      "!desktop/native/**"
     ],
     "asar": true,
     "mac": {
@@ -72,6 +75,16 @@
         "description": "daW³ project",
         "role": "Editor",
         "mimeType": "application/x-daw3"
+      }
+    ],
+    "extraResources": [
+      {
+        "from": "desktop/native/build",
+        "to": "native",
+        "filter": [
+          "daw3_audio.node",
+          "daw3-plughost"
+        ]
       }
     ]
   }

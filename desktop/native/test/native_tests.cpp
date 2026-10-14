@@ -17,13 +17,8 @@
 
 using namespace daw3;
 
-static int gFails = 0, gChecks = 0;
-#define CHECK(c)                                                                  \
-  do {                                                                            \
-    gChecks++;                                                                    \
-    if (!(c)) { gFails++; fprintf(stderr, "  FAIL %s:%d  %s\n", __FILE__, __LINE__, #c); } \
-  } while (0)
-#define CHECK_NEAR(a, b, eps) CHECK(std::fabs((double)(a) - (double)(b)) <= (eps))
+#include "check.h"
+int gFails = 0, gChecks = 0;
 
 static void run(const char* name, std::function<void()> fn) {
   int before = gFails;
@@ -212,7 +207,7 @@ static std::unique_ptr<PluginInstance> loadFirst(PluginFormat& f, const std::str
 }
 
 /** Runs one block of a constant 0.5 through the plugin; returns the first output sample. */
-static float runBlock(PluginInstance& p, uint32_t n = 256, const std::vector<MidiEvt>& midi = {}, std::vector<float>* rms = nullptr) {
+float runBlock(PluginInstance& p, uint32_t n = 256, const std::vector<MidiEvt>& midi = {}, std::vector<float>* rms = nullptr) {
   std::vector<float> a(n, 0.5f), b(n, 0.5f), oa(n, 9.f), ob(n, 9.f);
   const float* ins[2] = {a.data(), b.data()};
   float* outs[2] = {oa.data(), ob.data()};

@@ -13,6 +13,11 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+      # Native audio engine + plugin host: compile (universal arm64/x86_64) and run the C++ unit tests
+      # (ring buffer, engine on the null backend, CLAP / VST3 test plugins, Apple's AUs) first — fast failures.
+      - name: Native layer + native tests
+        run: sh desktop/native/build.sh --test
+      # JS tests; with the native build present they also drive the real addon + plugin host end to end.
       - run: npm test
       - run: npm install --no-audit --no-fund
       # electron-builder makes the .app + .zip; the .dmg is packed by hdiutil create -srcfolder (no attach/detach —
