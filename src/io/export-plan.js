@@ -176,7 +176,7 @@ export function stemProject(project, target, { tap = 'post', master = false } = 
       return { ...t, solo: false, sends, _noDirect: outputOf(project, t) !== target.id };
     });
     p.buses = (project.buses || []).map((b) => (b.id === target.id ? (pre ? { ...b, volume: 1, pan: 0, automation: [] } : b) : { ...b, mute: true, automation: (b.automation || []).filter((l) => l.target !== 'mute') }));
-    return p;
+    return prune(p);
   }
   p.tracks = project.tracks.map((t) => {
     if (live.has(t.id)) return pre ? { ...strip(t), mute: false, solo: false } : { ...t, mute: false, solo: false };
@@ -185,7 +185,14 @@ export function stemProject(project, target, { tap = 'post', master = false } = 
   });
   // a pre-fader track routed into a folder bus: bypass the bus too (unity) — the stem is the track itself
   if (pre) p.tracks = p.tracks.map((t) => (live.has(t.id) && t.output ? { ...t, output: undefined } : t));
-  return p;
+  return prune(p);
+}
+
+/** Drop the silenced tracks (and their clips) so a stem render doesn't build instruments nobody hears. */
+function prune(p) {
+  const silent = new Set(p.tracks.filter((t) => t.mute && !(t.automation || []).some((l) => l.target === 'mute')).map((t) => t.id));
+  if (!silent.size) return p;
+  return { ...p, tracks: p.tracks.filter((t) => !silent.has(t.id)), clips: (p.clips || []).filter((c) => !silent.has(c.trackId)) };
 }
 
 // ------------------------------------------------------------------------------------------------ report

@@ -35,6 +35,8 @@ const PAN_DEF = { key: 'pan', label: 'Pan', min: -1, max: 1, step: 0.01, default
 const TRIM_DEF = { key: 'trim', label: 'Trim', min: -24, max: 24, step: 0.1, default: 0, unit: 'dB', description: 'Input trim (gain before the inserts) — double-click to reset' };
 const WIDTH_DEF = { key: 'width', label: 'Width', min: 0, max: 2, step: 0.01, default: 1, description: 'Stereo width: 0 = mono, 100 % = unchanged, 200 % = extra wide — double-click to reset' };
 const VCA_MAX_UI = 1.5;
+/** Buses tracks send to (folder sums and drum multi-outs are routing targets, not returns). */
+const returnBuses = (p) => p.buses.filter((b) => !b.source && !b.folderId);
 const SEND_DEF = (bus) => ({ key: 'send', label: bus.name, min: 0, max: 1, step: 0.01, default: 0, unit: '%', description: `Send level to “${bus.name}” — double-click to reset` });
 
 const ROLE_RE = [
@@ -180,7 +182,8 @@ export function createMixerView(app) {
     clear(scroller);
     clear(masterHost);
     el.classList.toggle('narrow', prefs.narrow);
-    const sendRows = prefs.showBuses && p.buses.length ? Math.min(3, Math.ceil(p.buses.length / 2)) : 0;
+    const nRet = returnBuses(p).length;
+    const sendRows = prefs.showBuses && nRet ? Math.min(3, Math.ceil(nRet / 2)) : 0;
     el.style.setProperty('--mx-send-rows', sendRows);
     busToggle.classList.toggle('on', prefs.showBuses);
     inputToggle.classList.toggle('on', prefs.showInput);
@@ -508,9 +511,9 @@ export function createMixerView(app) {
     // sends
     const sends = new Map();
     let sendsSec = null;
-    if (p.buses.length && prefs.showBuses) {
+    if (returnBuses(p).length && prefs.showBuses) {
       const grid = h('div.mx-send-grid');
-      for (const b of p.buses) {
+      for (const b of returnBuses(p)) {
         const k = knob({
           def: SEND_DEF(b), value: t.sends?.[b.id] || 0, size: prefs.narrow ? 22 : 24, label: b.name, showValue: false,
           onChange: (v, { final }) => { if (final && same(trackOf(t.id)?.sends?.[b.id] || 0, v)) return; editTrack(t.id, `Send ${b.name}`, (tt) => { if (v <= 0.001) delete tt.sends[b.id]; else tt.sends[b.id] = v; }, !final); },
@@ -651,7 +654,7 @@ export function createMixerView(app) {
 
     // spacer keeps faders aligned with track strips that have sends
     const el = h('div.mx-strip.mx-bus', { dataset: { id: b.id } },
-      head, inserts, p.buses.length ? h('div.mx-sends.mx-sends-spacer') : null, pan.el, h('div.mx-btns', mute), fad.area, h('div.mx-foot', fad.readout, fad.peakEl));
+      head, inserts, returnBuses(p).length ? h('div.mx-sends.mx-sends-spacer') : null, pan.el, h('div.mx-btns', mute), fad.area, h('div.mx-foot', fad.readout, fad.peakEl));
     return { kind: 'bus', id: b.id, el, pan: pan.knob, panVal: pan.panVal, mute, setVolume: fad.setVolume, meterState: fad.meterState, reset: fad.reset };
   }
 

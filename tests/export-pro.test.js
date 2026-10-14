@@ -72,7 +72,8 @@ test('stem targets + variants (track / bus / group, pre / post fader, master on 
   const pb = post.tracks.find((t) => t.id === b.id), pa = post.tracks.find((t) => t.id === a.id);
   assert.ok(pb.volume === 0.5 && pb.sends[rev.id] === 0.3 && !pb.mute);
   assert.ok(pa.volume === 0 && !pa.mute);
-  assert.ok(post.tracks.find((t) => t.id === c.id).mute);
+  assert.equal(post.tracks.find((t) => t.id === c.id), undefined); // silenced tracks are pruned from the stem render
+  assert.ok(post.clips.every((x) => x.trackId !== c.id));
   assert.equal(post.master.fx.length, 0);
   const pre = stemProject(p, { kind: 'track', id: b.id, trackIds: [b.id] }, { tap: 'pre', master: true });
   const qb = pre.tracks.find((t) => t.id === b.id);
@@ -107,4 +108,37 @@ test('WAV metadata: INFO + iXML chunks, file still decodes', () => {
   const m = measureLoudness(dec.channels, sr, { truePeak: false });
   assert.ok(m.duration > 0);
   assert.match(reportText('x', m, { gainDb: 1.5 }), /Normalise gain\s+\+1.50 dB/);
+});
+
+test('runExport: normalised mixdown hits −14 LUFS / ≤ −1 dBTP, stems share start + length, names from templates', async () => {
+  const { runExport } = await import('../src/audio/export.js');
+  const p = song();
+  p.bpm = 120;
+  const sr = 48000;
+  const fake = (proj, ro) => {
+    const secs = (ro.endBeat - ro.startBeat) * 0.5 + ro.tail;
+    const n = Math.round(secs * sr);
+    const live = proj.tracks.filter((t) => !t.mute).length;
+    const music = Math.round((ro.endBeat - ro.startBeat) * 0.5 * sr);
+    const ch = [new Float32Array(n), new Float32Array(n)];
+    for (let i = 0; i < n; i++) {
+      const env = i < music ? 1 : Math.exp(-(i - music) / (0.2 * sr)); // a short "reverb tail"
+      const v = 0.05 * live * env * Math.sin((2 * Math.PI * 220 * i) / sr);
+      ch[0][i] = v; ch[1][i] = v;
+    }
+    return { numberOfChannels: 2, sampleRate: sr, length: n, getChannelData: (c) => ch[c] };
+  };
+  const { files, report } = await runExport({ project: p, render: fake, opts: { format: 'wav24', sampleRate: sr, dither: 'tpdf', normalize: 'lufs', target: -14, ceiling: -1, range: 'custom', custom: { start: 1, end: 3 }, tail: 'auto', tailMax: 4, stems: 'all', stemTap: 'post', nameTemplate: '{project} master', stemTemplate: '{n} {stem}', artist: 'Ada' } });
+  assert.equal(files.length, 4);
+  assert.equal(files[0].name, 'Night Drive master.wav');
+  assert.deepEqual(files.slice(1).map((f) => f.name), ['01 Kick.wav', '02 Bass.wav', '03 Pad.wav']);
+  const dec = files.map((f) => decodeWav(f.data));
+  const m = measureLoudness(dec[0].channels, sr);
+  assert.ok(Math.abs(m.integrated + 14) <= 0.1, `I ${m.integrated}`);
+  assert.ok(m.truePeakDb <= -1 + 0.05, `TP ${m.truePeakDb}`);
+  const len = dec[0].channels[0].length;
+  assert.ok(len > 4 * sr && len < 6 * sr, `tail trimmed: ${len / sr}s`); // 4 s music + detected tail (≪ 4 s max)
+  for (const d of dec) assert.equal(d.channels[0].length, len);
+  assert.equal(readWavMetadata(files[0].data).info.IART, 'Ada');
+  assert.match(report.text, /Integrated\s+-14\.0 LUFS/);
 });
