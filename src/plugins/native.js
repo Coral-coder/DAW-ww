@@ -2,7 +2,10 @@
 // plugin host; here it is a Web Audio node (daw3-native-plugin worklet) at a fixed, reported latency.
 //   instrument params / effect params: { key, format, uid, path, name, vendor, state (base64), values: {id: plain} }
 // Parameters map onto daW³'s model as `values.<id>` (automation, MIDI learn, undo); the plugin's own
-// editor opens as a native window; its state chunk is saved in the project.
+// editor opens as a native window; its state chunk is saved in the project. Effects with a sidechain input
+// bus get a key input (the effect's `keyInput`, fed by the mixer from params.sourceTrackId); multi-out
+// instruments expose their aux output buses (setPadOutputs({ bus<k>: AudioNode })); presets are listed /
+// loaded / saved through the plugin host.
 import { setStatus, getStatus } from './status.js';
 import { getNativeClient, nativePluginsApi } from '../native/client.js';
 import { controlsFromParams, diffValues, valuesPatch } from '../native/params.js';
@@ -10,6 +13,13 @@ import { sanitizeNativeParams } from '../native/state.js';
 
 const live = new Map(); // inst -> plugin object (events from the host are routed here)
 let unsubscribe = null;
+// App-level hooks (installed by the UI, src/ui/plugin-device.js installNativeHooks):
+//   values(plugin, values)  a change in the plugin's own window -> the project (undo, automation, controller feedback)
+//   touch(plugin, address)  the user moved that parameter in the plugin's window (MIDI learn picks it up)
+const hooks = { values: null, touch: null };
+export function setNativeHooks(h = {}) { Object.assign(hooks, h); }
+/** Every live native plugin object (instruments + effects). */
+export const livePlugins = () => [...live.values()];
 function listen() {
   if (unsubscribe) return;
   const api = nativePluginsApi();
@@ -94,12 +104,14 @@ class NativeBase {
       this.sent = { ...Object.fromEntries(Object.entries(info.values || {}).map(([k, v]) => [k, Number(v)])) };
       this._sendValues();
       if (!this.offline) {
-        this.bridge = await client.pluginNode(this.ctx, { inst: info.inst, numIn: info.plugin?.numInputs ?? 2, numOut: info.plugin?.numOutputs ?? 2 });
+        this.bridge = await client.pluginNode(this.ctx, this._nodeShape(info.plugin || {}));
         this._connect(this.bridge.node);
       }
       if (!this.offline) {
         setStatus(key, { state: 'ready', progress: 1, message: info.plugin?.name || this.p.name,
-          info: { name: info.plugin?.name || this.p.name, vendor: info.plugin?.vendor, params: this.controls, hasGui: !!info.hasEditor, latency: this.latencySamples, offline: info.offline !== false } });
+          info: { name: info.plugin?.name || this.p.name, vendor: info.plugin?.vendor, format: info.plugin?.format, params: this.controls, hasGui: !!info.hasEditor,
+            latency: this.latencySamples, offline: info.offline !== false, sidechain: info.plugin?.sidechain || 0,
+            outputBuses: info.plugin?.outputBuses || [{ name: 'Main', channels: info.plugin?.numOutputs ?? 2 }] } });
       }
       return true;
     } catch (e) {
@@ -112,7 +124,12 @@ class NativeBase {
   _hostEvent(ev) {
     if (ev.event === 'param') {
       const values = valuesPatch(this.p.values, this.controls, ev.param, ev.value);
-      if (values) { this.sent[String(ev.param)] = Number(ev.value); this.p = { ...this.p, values }; this.onValues?.(values); }
+      if (values) {
+        this.sent[String(ev.param)] = Number(ev.value);
+        this.p = { ...this.p, values };
+        if (this.onValues) this.onValues(values); else hooks.values?.(this, values);
+      }
+      hooks.touch?.(this, String(ev.param));
     } else if (ev.event === 'latency') {
       if (this.info) this.info.latency = ev.samples;
       const st = getStatus(this.statusKey);
@@ -133,6 +150,41 @@ class NativeBase {
     this.inst = null;
     this.error = 'The plugin host stopped (a plugin crashed). Retry to reload the plugin.';
     if (!this.offline) setStatus(this.statusKey, { state: 'error', error: this.error, message: this.error });
+  }
+
+  /** Bridge node shape (client.pluginNode options) for the loaded plugin. */
+  _nodeShape(pl) { return { inst: this.inst, numIn: pl.numInputs ?? 2, numOut: pl.numOutputs ?? 2 }; }
+
+  /** Factory presets + preset files -> [{ id, name, category, kind: 'factory'|'file' }]. */
+  async listPresets() {
+    await this.ready;
+    if (this.inst == null) throw new Error(this.error || 'The plugin is not loaded');
+    return nativePluginsApi().presets(this.inst);
+  }
+
+  /**
+   * Load a preset in the plugin -> { values, state } for the project (the plugin's new parameter values and its
+   * state chunk, so the project reproduces the preset without the file).
+   */
+  async loadPreset(id) {
+    await this.ready;
+    if (this.inst == null) throw new Error(this.error || 'The plugin is not loaded');
+    const api = nativePluginsApi();
+    const info = await api.loadPreset(this.inst, id);
+    if (info?.params) this.controls = controlsFromParams(info.params);
+    const values = {};
+    for (const c of this.controls) if (info?.values && c.address in info.values) values[c.address] = Number(info.values[c.address]);
+    this.sent = { ...this.sent, ...values };
+    this.p = { ...this.p, values: { ...(this.p.values || {}), ...values } };
+    const state = await this.getState().catch(() => null);
+    return { values: this.p.values, state };
+  }
+
+  /** Save the current settings as a user preset file (VST3 / AU) -> its path. */
+  async savePreset(name) {
+    await this.ready;
+    if (this.inst == null) throw new Error(this.error || 'The plugin is not loaded');
+    return nativePluginsApi().savePreset(this.inst, name);
   }
 
   /** Re-create the plugin (after a crash). */
@@ -172,12 +224,50 @@ export class NativeEngine extends NativeBase {
     this.voices = [];
     this.held = new Set();
     this.prerendered = false;
+    this.padOuts = null; // multi-out: { bus<k>: AudioNode } (plugin output bus k -> a mixer channel)
+    this.auxGains = new Map(); // bus<k> -> GainNode (the instrument's gain applies to aux buses too)
     this.setParams(params);
   }
 
-  _applyGain() { try { this.out.gain.setTargetAtTime(Math.max(0, Number(this.p.gain ?? 1)), this.ctx.currentTime, 0.01); } catch { /* */ } }
-  _connect(node) { node.connect(this.out); }
-  _disconnect() { /* bridge.dispose() disconnects the node */ }
+  _applyGain() {
+    const g = Math.max(0, Number(this.p.gain ?? 1));
+    for (const n of [this.out, ...this.auxGains.values()]) { try { n.gain.setTargetAtTime(g, this.ctx.currentTime, 0.01); } catch { /* */ } }
+  }
+  _nodeShape(pl) { return { inst: this.inst, numIn: 0, numOut: pl.numOutputs ?? 2, outputBuses: pl.outputBuses }; }
+  _connect(node) { node.connect(this.out, 0); this._wireAux(); }
+  _disconnect() { for (const g of this.auxGains.values()) { try { g.disconnect(); } catch { /* */ } } this.auxGains.clear(); }
+
+  /** Output buses beyond the main one: [{ key: 'bus<k>', name, channels }] (empty for single-output plugins). */
+  get auxBuses() {
+    const buses = this.info?.plugin?.outputBuses || [];
+    return buses.map((b, k) => ({ key: `bus${k}`, name: b.name || `Out ${k + 1}`, channels: b.channels })).slice(1).filter((b) => b.channels > 0);
+  }
+
+  /** Drum-style multi-out: map { bus<k>: AudioNode } routes plugin output bus k into that node (unmapped aux buses are silent). */
+  setPadOutputs(map) {
+    this.padOuts = map && Object.keys(map).length ? map : null;
+    this._wireAux();
+  }
+
+  _wireAux() {
+    const layout = this.bridge?.layout;
+    if (!layout) return;
+    layout.busIds.forEach((busIndex, out) => {
+      if (busIndex === 0) return;
+      const key = `bus${busIndex}`;
+      const dest = this.padOuts?.[key] || null;
+      let g = this.auxGains.get(key);
+      if (!dest) { if (g) { try { g.disconnect(); } catch { /* */ } } return; }
+      if (!g) {
+        g = this.ctx.createGain();
+        g.gain.value = Math.max(0, Number(this.p.gain ?? 1));
+        this.auxGains.set(key, g);
+        this.bridge.node.connect(g, out);
+      }
+      try { g.disconnect(); } catch { /* */ }
+      g.connect(dest);
+    });
+  }
 
   _midi(events) {
     if (this.prerendered || !this.bridge) return;
@@ -205,9 +295,12 @@ export class NativeEngine extends NativeBase {
   /**
    * Offline export: render this instrument's whole part faster than realtime in the plugin host
    * (offline processing mode) and play it back in the OfflineAudioContext.
-   * notes: [{ time (s), pitch, vel (0..1), dur (s) }], frames: render length.
+   * notes: [{ time (s), pitch, vel (0..1), dur (s) }], frames: render length,
+   * opts.params: parameter automation [[frame, paramId, value]] (sample-accurate, see native/automation.js),
+   * opts.initial: { paramId: value } applied at frame 0 (the static values the automation starts from).
+   * Aux output buses play into their multi-out channels (setPadOutputs) when mapped.
    */
-  async prerender(notes, frames) {
+  async prerender(notes, frames, opts = {}) {
     const ok = await this.ready;
     if (!ok || this.inst == null) return false;
     const sr = this.ctx.sampleRate;
@@ -217,13 +310,34 @@ export class NativeEngine extends NativeBase {
       const on = Math.max(0, Math.round(n.time * sr));
       events.push([on, 0x90, k, this._vel(n.vel)], [Math.max(on + 1, Math.round((n.time + Math.max(0.005, n.dur)) * sr)), 0x80, k, 0]);
     }
-    const r = await nativePluginsApi().render({ inst: this.inst, frames, events });
-    const buf = this.ctx.createBuffer(2, frames, sr);
-    for (let c = 0; c < 2; c++) buf.copyToChannel(r.output.subarray(Math.min(c, r.numOut - 1) * frames, Math.min(c, r.numOut - 1) * frames + frames), c);
-    const src = this.ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(this.out);
-    src.start(0);
+    const params = [];
+    for (const [id, v] of Object.entries(opts.initial || {})) if (Number.isFinite(Number(v))) params.push([0, Number(id), Number(v)]);
+    for (const e of opts.params || []) params.push(e);
+    const r = await nativePluginsApi().render({ inst: this.inst, frames, events, params });
+    const buses = r.buses?.length ? r.buses : [{ channels: r.numOut }];
+    let ch0 = 0;
+    buses.forEach((b, k) => {
+      const nch = Math.max(0, b.channels | 0);
+      const first = ch0;
+      ch0 += nch;
+      const dest = k === 0 ? this.out : this.padOuts?.[`bus${k}`];
+      if (!nch || !dest || first >= r.numOut) return;
+      const buf = this.ctx.createBuffer(2, frames, sr);
+      for (let c = 0; c < 2; c++) {
+        const src = first + Math.min(c, nch - 1);
+        if (src < r.numOut) buf.copyToChannel(r.output.subarray(src * frames, src * frames + frames), c);
+      }
+      const node = this.ctx.createBufferSource();
+      node.buffer = buf;
+      if (k === 0) node.connect(dest);
+      else {
+        const g = this.ctx.createGain();
+        g.gain.value = Math.max(0, Number(this.p.gain ?? 1));
+        node.connect(g);
+        g.connect(dest);
+      }
+      node.start(0);
+    });
     this.prerendered = true;
     return true;
   }
@@ -237,22 +351,31 @@ export class NativeEngine extends NativeBase {
 
 // ----------------------------------------------------------------------------- effect
 export class NativeEffect extends NativeBase {
-  constructor(ctx, input, output) {
+  /** opts.keyInput: the node the mixer feeds the sidechain key into (params.sourceTrackId). */
+  constructor(ctx, input, output, opts = {}) {
     super(ctx);
     this.input = input;
     this.output = output;
+    this.keyInput = opts.keyInput || null;
     this.thru = true;
     input.connect(output); // audio passes through until the plugin is ready (the effect shell does dry / wet)
   }
 
+  /** Effects use the main output bus, and the aux input bus as the sidechain when the plugin has one. */
+  _nodeShape(pl) { return { inst: this.inst, numIn: pl.numInputs ?? 2, numOut: pl.numOutputs ?? 2, numSc: this.keyInput ? pl.sidechain || 0 : 0 }; }
+
   _connect(node) {
-    this.input.connect(node);
-    node.connect(this.output);
+    this.input.connect(node, 0, 0);
+    if (this.keyInput && this.bridge?.layout?.numSc) this.keyInput.connect(node, 0, 1);
+    node.connect(this.output, 0);
     if (this.thru) { try { this.input.disconnect(this.output); } catch { /* */ } this.thru = false; }
   }
 
   _disconnect() {
-    if (this.bridge) { try { this.input.disconnect(this.bridge.node); } catch { /* */ } }
+    if (this.bridge) {
+      try { this.input.disconnect(this.bridge.node); } catch { /* */ }
+      if (this.keyInput) { try { this.keyInput.disconnect(this.bridge.node); } catch { /* */ } }
+    }
     if (!this.thru) { try { this.input.connect(this.output); } catch { /* */ } this.thru = true; }
   }
 

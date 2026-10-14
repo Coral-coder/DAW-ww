@@ -1,8 +1,9 @@
 // AudioWorklet processors of the native audio bridge (loaded with audioWorklet.addModule).
 //   daw3-native-out     daW³'s master output -> SharedArrayBuffer ring -> (pump worker) -> native device
 //   daw3-native-in      native device inputs -> ring -> Web Audio (an input stream for recording)
-//   daw3-native-plugin  a track's audio + MIDI -> packet ring -> native plugin (out of process) -> ring -> Web Audio,
-//                       at a fixed, reported latency
+//   daw3-native-plugin  a track's audio (input 0) + sidechain key (input 1, when the plugin has one) + MIDI
+//                       -> packet ring -> native plugin (out of process) -> ring -> Web Audio, one output per plugin
+//                       output bus (multi-out instruments), at a fixed, reported latency
 //   daw3-capture        records its input into a ring (realtime bounce / export)
 import { RingBuffer, encodePacket, packetSize, BLOCK } from './ring.js';
 
@@ -54,15 +55,19 @@ class NativePlugin extends AudioWorkletProcessor {
     super();
     const o = opts.processorOptions;
     this.numIn = o.numIn;
-    this.numOut = o.numOut;
+    this.numSc = o.numSc || 0;
+    this.numOut = o.numOut;                       // every output channel, bus after bus
+    this.buses = o.buses || [o.numOut];           // channels per output (bus)
     this.to = new RingBuffer(o.toSab);
     this.from = new RingBuffer(o.fromSab);
     this.latencyBlocks = o.latencyBlocks || 3;
-    this.rec = new Float32Array(packetSize(this.numIn));
+    this.rec = new Float32Array(packetSize(this.numIn + this.numSc));
+    this.chans = [];                              // the packet's input channels: main, then sidechain
+    this.outChans = [];
     this.block = 0;
     this.debt = 0;
     this.events = []; // [time(s), status, d1, d2] sorted
-    this.silentIn = Array.from({ length: Math.max(1, this.numIn) }, () => new Float32Array(BLOCK));
+    this.silentIn = Array.from({ length: Math.max(1, this.numIn, this.numSc) }, () => new Float32Array(BLOCK));
     this.bypass = false;
     this.port.onmessage = (e) => {
       const d = e.data;
@@ -84,14 +89,27 @@ class NativePlugin extends AudioWorkletProcessor {
       evs.push([Math.max(0, Math.min(BLOCK - 1, Math.round((e[0] - t0) * sampleRate))), e[1], e[2], e[3]]);
     }
     const inp = inputs[0] && inputs[0].length ? inputs[0] : this.silentIn;
-    encodePacket(this.rec, this.block & 0xffffff, inp, this.numIn, evs);
+    let chans = inp;
+    if (this.numSc) {
+      const key = inputs[1] && inputs[1].length ? inputs[1] : this.silentIn;
+      const c = this.chans;
+      c.length = 0;
+      for (let i = 0; i < this.numIn; i++) c.push(inp[Math.min(i, inp.length - 1)]);
+      for (let i = 0; i < this.numSc; i++) c.push(key[Math.min(i, key.length - 1)]);
+      chans = c;
+    }
+    encodePacket(this.rec, this.block & 0xffffff, chans, this.numIn + this.numSc, evs);
     this.to.write(this.rec, 1);
     this.block++;
-    const out = outputs[0];
     if (this.block <= this.latencyBlocks) return true;
+    // the outputs (buses) side by side = the ring's channels
+    const outs = this.outChans;
+    outs.length = 0;
+    for (let b = 0; b < outputs.length; b++) for (const ch of outputs[b]) outs.push(ch);
     if (this.debt > 0 && this.from.available() >= BLOCK * 2) { this.from.read(null, BLOCK); this.debt--; }
     if (this.from.available() >= BLOCK) {
-      this.from.readPlanar(out, BLOCK);
+      this.from.readPlanar(outs, BLOCK);
+      const out = outputs[0];
       if (this.bypass) for (let c = 0; c < out.length; c++) out[c].set(inp[Math.min(c, inp.length - 1)] || this.silentIn[0]);
     } else {
       this.from.noteUnderrun();

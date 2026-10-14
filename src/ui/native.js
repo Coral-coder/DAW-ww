@@ -62,6 +62,45 @@ export function installNative(app) {
       if (files.length) importMusic(files); else app.toast('Drop audio files, folders or a .daW3 project', { level: 'warn' });
     });
   });
+  if (nat.plugins) installPluginBridge(app, nat);
   nat.ready?.(); // flush files queued by Finder before the page was ready
   return true;
+}
+
+/**
+ * Native plugins + device rate (Mac app): plugin-window edits / MIDI learn by touch (plugin-device.js hooks);
+ * a device sample-rate change (Audio Settings, or another window) rebuilds the Web Audio context at the new
+ * rate without a reload — native plugins keep their state: it is saved into the project first and the
+ * re-created instances load it at the new rate.
+ */
+function installPluginBridge(app, nat) {
+  import('./plugin-device.js').then((m) => m.installNativeHooks(app)).catch((e) => console.warn('[native] hooks', e));
+  const engine = app.engine;
+  engine.onBeforeRebuild?.(async () => {
+    const { livePlugins } = await import('../plugins/native.js');
+    const { nativeTargetOf } = await import('./plugin-device.js');
+    const saved = [];
+    for (const pl of livePlugins()) {
+      if (pl.offline || pl.inst == null) continue;
+      const t = nativeTargetOf(app, pl);
+      const state = t ? await pl.getState().catch(() => null) : null;
+      if (state) saved.push({ t, state });
+    }
+    if (!saved.length) return;
+    app.store.transact('Plugin states', (p) => {
+      for (const { t, state } of saved) {
+        const owner = t.owner === 'master' ? p.master : p.tracks.find((x) => x.id === t.owner) || p.buses.find((x) => x.id === t.owner);
+        if (!owner) continue;
+        const fxId = t.prefix.startsWith('fx:') ? t.prefix.slice(3, t.prefix.indexOf(':', 3)) : null;
+        const def = fxId ? owner.fx?.find((f) => f.id === fxId) : owner.instrument;
+        if (def) def.params = { ...(def.params || {}), state };
+      }
+    }, { undo: false });
+  });
+  nat.audio?.onEvent?.((ev) => {
+    if (ev?.event !== 'audio-config' || !ev.rateChanged || !engine.ctx || !ev.config?.enabled) return;
+    if (engine.ctx.sampleRate === ev.config.sampleRate) return;
+    engine.setSampleRate(ev.config.sampleRate).then((sr) => app.toast(`Audio engine at ${(sr / 1000).toFixed(1)} kHz`, { level: 'success' }),
+      (e) => app.toast(`Could not switch the sample rate: ${e?.message || e}`, { level: 'error' }));
+  });
 }

@@ -197,9 +197,12 @@ async function renderOnceWith(project, cfg) {
   if ([...(graph.tracks?.values?.() || [])].some((e) => e.instrument?.engine?.plugin?.isNative)) {
     const { prerenderNative } = await import('../native/export.js');
     const all = collectEvents(project, startBeat, endBeat, { mode, jump: true, codeCache, metronome: false, onError });
+    // note times through the tempo map (a constant map keeps the exact old math)
     const notesFor = (id) => all.filter((ev) => ev.type === 'note' && ev.trackId === id)
-      .map((ev) => ({ time: Math.max(0, (ev.beat - startBeat) * spb), pitch: ev.pitch, vel: ev.vel, dur: ev.dur * spb }));
-    await prerenderNative(graph, notesFor, length, onError);
+      .map((ev) => ({ time: Math.max(0, timeOf(ev.beat)), pitch: ev.pitch, vel: ev.vel, dur: Math.max(0, timeOf(ev.beat + ev.dur) - timeOf(ev.beat)) }));
+    // song-mode automation of the plugins' parameters: sample-accurate parameter events with the render
+    const auto = mode === 'song' && hasAutomation(project) ? { project, startBeat, endBeat, frameAt: (b) => timeOf(b) * sampleRate } : null;
+    await prerenderNative(graph, notesFor, length, onError, auto);
   }
   // code tracks playing library samples (Strudel drum machines, Dirt-Samples…): fetch + decode first
   // (daW³-instrument code tracks only; superdough loads its own samples while the render waits in flushCode)

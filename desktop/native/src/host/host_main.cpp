@@ -211,7 +211,9 @@ struct Server {
   }
 
   void audioLoop() {
-    uint64_t last = h->reqSeq.load();
+    // everything up to the last answered request is done: a request posted before this thread got to run is
+    // still picked up (starting from reqSeq instead would drop it and hang that block until the app times out)
+    uint64_t last = h->doneSeq.load();
     std::vector<ParamEvt> outParams;
     outParams.reserve(kMaxParamEvents);
     std::vector<MidiEvt> midi(kMaxMidi);

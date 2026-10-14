@@ -101,7 +101,8 @@ test('native e2e: scan, load, process, params, state, latency (CLAP + VST3 throu
     const r = server.stream({ t: 'proc', inst: t.inst, block: 0, numIn: 0, numOut: 2, input: new Float32Array(0), midi: new Float64Array([0, 0x90, 69, 100]) });
     assert.ok(Math.max(...r.output.map(Math.abs)) > 0.2, 'note on -> sound');
     const rendered = await server.handle('plugins.render', [{ inst: t.inst, frames: 4800, events: [[1000, 0x80, 69, 0], [2400, 0x90, 60, 100]] }]);
-    assert.equal(rendered.output.length, 9600);
+    assert.equal(rendered.numOut, 4, 'every output bus of the multi-out tone plugin');
+    assert.equal(rendered.output.length, 4 * 4800);
     const seg = (a, b) => Math.max(...rendered.output.subarray(a, b).map(Math.abs));
     assert.ok(seg(0, 900) > 0.2, 'held note sounds');
     assert.equal(seg(1100, 2300), 0, 'silent after note off');
@@ -135,5 +136,85 @@ test('native e2e: Audio Units through the plugin host (macOS)', { skip: !have ? 
     const state = await server.handle('plugins.getState', [info.inst]);
     const again = await server.handle('plugins.load', [{ key: delay.key, state }]);
     assert.equal(Math.round(again.values['0']), 0, 'state restored');
+  } finally { cleanup(); }
+});
+
+test('native e2e: sidechain bus, multi-out, sample-accurate automation in the offline render, presets, rate change', opts, async () => {
+  const { server, tmp, cleanup } = await setup();
+  try {
+    await server.handle('plugins.scan', [{ formats: ['clap', 'vst3'] }]);
+    const { plugins } = await server.handle('plugins.list');
+    const byName = (n) => plugins.find((p) => p.name === n);
+
+    // sidechain: the key input of the duck plugins (CLAP port 1 / VST3 aux bus) ducks the main input
+    for (const name of ['daW3 Test Duck', 'daW3 Test Duck (VST3)']) {
+      const info = await server.handle('plugins.load', [{ key: byName(name).key, sampleRate: 48000 }]);
+      assert.equal(info.plugin.sidechain, 2, `${name}: sidechain bus reported`);
+      const base = { t: 'proc', inst: info.inst, block: 0, numIn: 2, numOut: 2, input: block(0.5), midi: new Float64Array(0) };
+      assert.ok(Math.abs(server.stream(base).output[5] - 0.5) < 1e-6, `${name}: no key -> unity`);
+      const keyed = server.stream({ ...base, numSc: 2, sidechain: block(0.5) });
+      assert.ok(Math.abs(keyed.output[5] - 0.25) < 1e-6 && Math.abs(keyed.output[133] - 0.25) < 1e-6, `${name}: key 0.5 -> half`);
+      assert.equal(server.m.protocol.validateStreamMessage({ ...base, numSc: 2, sidechain: new Float32Array(3) }), false);
+      await server.handle('plugins.unload', [info.inst]);
+    }
+
+    // multi-out: the tone plugin's second output bus (the same sine at half level)
+    const tone = await server.handle('plugins.load', [{ key: byName('daW3 Test Tone').key, sampleRate: 48000 }]);
+    assert.equal(tone.plugin.totalOutputs, 4);
+    assert.deepEqual(tone.plugin.outputBuses.map((b) => b.name), ['Out', 'Aux']);
+    const mo = server.stream({ t: 'proc', inst: tone.inst, block: 0, numIn: 0, numOut: 4, input: new Float32Array(0), midi: new Float64Array([0, 0x90, 69, 100]) });
+    const peak = (a, ch) => Math.max(...a.subarray(ch * 128, ch * 128 + 128).map(Math.abs));
+    assert.ok(peak(mo.output, 0) > 0.2);
+    assert.ok(Math.abs(peak(mo.output, 2) - peak(mo.output, 0) / 2) < 1e-6, 'aux bus at half level');
+
+    // offline render: notes + sample-accurate parameter automation (gain 1 -> 2 at frame 1000, 0 at frame 3000)
+    const r = await server.handle('plugins.render', [{ inst: tone.inst, frames: 4800, events: [[0, 0x80, 69, 0], [0, 0x90, 69, 100]],
+      params: [[3000, 1, 0], [1000, 1, 2]] }]);
+    assert.equal(r.numOut, 4);
+    assert.equal(r.buses.length, 2);
+    const seg = (ch, a, b) => Math.max(...r.output.subarray(ch * 4800 + a, ch * 4800 + b).map(Math.abs));
+    assert.ok(Math.abs(seg(0, 0, 1000) - 0.25) < 0.01, 'gain 1 before frame 1000');
+    assert.ok(seg(0, 0, 1000) <= 0.2501, 'the change does not leak before its frame');
+    assert.ok(Math.abs(seg(0, 1000, 3000) - 0.5) < 0.01, 'gain 2 from frame 1000');
+    assert.equal(seg(0, 3000, 4800), 0, 'silent from frame 3000');
+    assert.ok(Math.abs(seg(2, 1000, 3000) - 0.25) < 0.01, 'the aux bus follows the automation too');
+    // the very sample: frame 999 is still at gain 1, 1000 on is at 2 (the 440 Hz sine's phase from its first two samples)
+    const w = 2 * Math.PI * 440 / 48000, s0 = r.output[0] / 0.25, c0 = (r.output[1] / 0.25 - s0 * Math.cos(w)) / Math.sin(w);
+    const ref = (k) => 0.25 * (s0 * Math.cos(k * w) + c0 * Math.sin(k * w));
+    assert.ok(Math.abs(r.output[999] - ref(999)) < 1e-4 && Math.abs(r.output[1000] - 2 * ref(1000)) < 1e-4, 'sample-accurate');
+    assert.throws(() => server.m.protocol.validateCall('plugins.render', [{ inst: 1, frames: 10, params: 'x' }]));
+
+    // presets: CLAP factory presets / VST3 programs + a saved .vstpreset
+    const gain = await server.handle('plugins.load', [{ key: byName('daW3 Test Gain').key, sampleRate: 48000 }]);
+    const cp = await server.handle('plugins.presets', [gain.inst]);
+    assert.deepEqual(cp.map((p) => p.name), ['Unity', 'Double', 'Half']);
+    const after = await server.handle('plugins.loadPreset', [gain.inst, cp[1].id]);
+    assert.equal(after.values['1'], 2, 'preset values come back with the info');
+    await assert.rejects(server.handle('plugins.savePreset', [gain.inst, 'Mine']), /CLAP/);
+    const v = await server.handle('plugins.load', [{ key: byName('daW3 Test Gain (VST3)').key, sampleRate: 48000 }]);
+    let vp = await server.handle('plugins.presets', [v.inst]);
+    assert.deepEqual(vp.map((p) => `${p.kind}:${p.name}`), ['factory:Unity', 'factory:Double', 'factory:Silent']);
+    await server.handle('plugins.setParam', [v.inst, 0, 0.75]);
+    server.stream({ t: 'proc', inst: v.inst, block: 0, numIn: 2, numOut: 2, input: block(0.5), midi: new Float64Array(0) });
+    const file = await server.handle('plugins.savePreset', [v.inst, 'Warm One']);
+    assert.ok(file.startsWith(path.join(tmp, 'home')) && file.endsWith('Warm One.vstpreset'), file);
+    assert.throws(() => server.m.protocol.validateCall('plugins.savePreset', [v.inst, '../escape']));
+    await server.handle('plugins.loadPreset', [v.inst, vp[2].id]);
+    vp = await server.handle('plugins.presets', [v.inst]);
+    const mine = vp.find((p) => p.kind === 'file');
+    assert.equal(mine?.name, 'Warm One');
+    const back = await server.handle('plugins.loadPreset', [v.inst, mine.id]);
+    assert.ok(Math.abs(back.values['0'] - 0.75) < 1e-6, '.vstpreset restores the state');
+
+    // sample-rate change: the device reopens and loaded plugins are re-activated at the new rate
+    await server.handle('audio.setConfig', [{ enabled: true, sampleRate: 48000, bufferFrames: 128 }]);
+    const sr = await server.handle('audio.setConfig', [{ sampleRate: 96000 }]);
+    assert.equal(sr.status.sampleRate, 96000);
+    assert.equal(sr.plugins.sampleRate, 96000);
+    assert.deepEqual(sr.plugins.failed, []);
+    const r96 = await server.handle('plugins.render', [{ inst: tone.inst, frames: 24000, events: [[0, 0x90, 69, 100]], params: [[0, 1, 1]] }]);
+    let zc = 0;
+    for (let k = 1; k < 24000; k++) if ((r96.output[k] >= 0) !== (r96.output[k - 1] >= 0) && r96.output[k - 1] !== 0) zc++;
+    assert.ok(Math.abs(zc - 220) <= 2, `440 Hz at 96 kHz (${zc} zero crossings in 0.25 s)`);
   } finally { cleanup(); }
 });

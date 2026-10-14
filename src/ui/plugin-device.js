@@ -1,8 +1,9 @@
-// Device-panel editors for plugin instruments / effects (soundfont, faust, wam):
-// status (loading / error + retry), auto-generated Faust knobs, "Open plugin UI" for WAMs.
-// The plugin runtime is never imported here — only the small pure status registry.
+// Device-panel editors for plugin instruments / effects (soundfont, faust, wam, native):
+// status (loading / error + retry), auto-generated Faust / native parameter knobs (automation + MIDI learn
+// targets: right-click → MIDI learn…), "Open plugin UI" for WAMs, the native plugin's window, presets and
+// multi-out. The plugin runtime is never imported here — only the small pure status registry.
 import { h, icon, clear } from './dom.js';
-import { knob, toggle, button, modal } from './components.js';
+import { knob, toggle, button, modal, markAuto, contextMenu, promptText } from './components.js';
 import { getStatus, onStatus, pluginKey, shortUrl } from '../plugins/status.js';
 
 // ---- dialog opener registry (set by plugins-dialog.js; avoids a static import cycle) ----
@@ -18,7 +19,45 @@ export function openPluginDialog(opts = {}) {
 const KIND_NAMES = { soundfont: 'SoundFont', faust: 'Faust', wam: 'WAM', native: 'Native' };
 const FORMAT_NAMES = { vst3: 'VST3', au: 'Audio Unit', clap: 'CLAP' };
 
-/** Native plugin (Mac app) buttons: open its own editor window, keep its state in the project. */
+/** Native plugin presets: factory presets + preset files, grouped; loading one stores its values + state in the project. */
+async function presetMenu(app, ev, getPlugin, edit) {
+  const pl = getPlugin();
+  if (!pl?.listPresets) { app.toast('The plugin is still loading', { level: 'warn' }); return; }
+  let list = [];
+  try { list = await pl.listPresets(); } catch (e) { app.toast(String(e?.message || e), { level: 'error' }); return; }
+  const load = async (pr) => {
+    try {
+      const r = await pl.loadPreset(pr.id);
+      edit(`Preset: ${pr.name}`, (p) => { p.values = r.values; if (r.state) p.state = r.state; p.preset = pr.name; });
+    } catch (e) { app.toast(`Could not load “${pr.name}”: ${e?.message || e}`, { level: 'error' }); }
+  };
+  const groups = new Map();
+  for (const pr of list) {
+    const g = `${pr.kind === 'factory' ? 'Factory' : 'Files'}${pr.category ? ` · ${pr.category}` : ''}`;
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(pr);
+  }
+  const items = [];
+  for (const [g, prs] of groups) {
+    const entries = prs.slice(0, 400).map((pr) => ({ label: pr.name, title: pr.path || pr.name, onClick: () => load(pr) }));
+    if (groups.size > 1 && prs.length > 12) items.push({ label: g, icon: 'folder', submenu: entries });
+    else items.push({ header: g }, ...entries);
+  }
+  if (!items.length) items.push({ header: 'No presets found for this plugin' });
+  const fmt = getStatus(nativeStatusKeyOf(pl))?.info?.format;
+  if (fmt === 'vst3' || fmt === 'au') {
+    items.push('-', { label: 'Save preset…', icon: 'save', onClick: async () => {
+      const name = await promptText('Save preset', pl.p?.preset || 'My preset');
+      if (!name) return;
+      try { const file = await pl.savePreset(name); app.toast(`Preset saved: ${file}`, { level: 'success' }); } catch (e) { app.toast(String(e?.message || e), { level: 'error' }); }
+    } });
+  }
+  contextMenu(ev, items);
+}
+
+const nativeStatusKeyOf = (pl) => pl?.statusKey || null;
+
+/** Native plugin (Mac app) buttons: open its own editor window, keep its state in the project, presets. */
 function nativeButtons(app, getPlugin, edit) {
   const save = async (quiet) => {
     const pl = getPlugin();
@@ -38,7 +77,51 @@ function nativeButtons(app, getPlugin, edit) {
       await pl.openEditor();
     } catch (e) { app.toast(String(e?.message || e), { level: 'error' }); }
   }, { icon: 'sliders', cls: 'small primary', title: 'Show the plugin’s own interface in a separate window' });
-  return [open, button('Save state', () => save(false), { icon: 'save', cls: 'small', title: 'Store the plugin’s current settings in the project (saved with it)' })];
+  const presets = button('Presets', (e) => presetMenu(app, e, getPlugin, edit), { icon: 'menu', cls: 'small', title: 'Factory presets and preset files (.vstpreset / .aupreset / CLAP presets) of this plugin' });
+  return [open, presets, button('Save state', () => save(false), { icon: 'save', cls: 'small', title: 'Store the plugin’s current settings in the project (saved with it)' })];
+}
+
+/** Where a live native plugin object sits in the mix graph -> { owner, prefix } (automation target prefix) | null. */
+export function nativeTargetOf(app, plugin) {
+  const g = app.engine?.graph;
+  if (!g || !plugin) return null;
+  const fxIn = (strip) => (strip?.effects || []).find((e) => e.fx?.plugin === plugin);
+  for (const [id, e] of g.tracks || []) {
+    if (e.instrument?.engine?.plugin === plugin) return { owner: id, prefix: 'inst:values.' };
+    const f = fxIn(e.strip);
+    if (f) return { owner: id, prefix: `fx:${f.id}:values.` };
+  }
+  for (const [id, s] of g.buses || []) { const f = fxIn(s); if (f) return { owner: id, prefix: `fx:${f.id}:values.` }; }
+  const f = fxIn(g.master);
+  return f ? { owner: 'master', prefix: `fx:${f.id}:values.` } : null;
+}
+
+/**
+ * App hooks for native plugins (Mac app): a parameter moved in the plugin's own window is written into the
+ * project (undo, automation recording, controller feedback through the mappings), and — in MIDI learn mode —
+ * becomes the learn target, so any control of the plugin window can be learned by touching it.
+ */
+export async function installNativeHooks(app) {
+  const m = await import('../plugins/native.js');
+  const { applyLaneValue } = await import('../control/targets.js');
+  m.setNativeHooks({
+    values(plugin, values) {
+      const t = nativeTargetOf(app, plugin);
+      if (!t) return;
+      app.store.transact(`${plugin.p?.name || 'Plugin'}: edit`, (p) => {
+        for (const [addr, v] of Object.entries(values)) applyLaneValue(p, t.owner, `${t.prefix}${addr}`, v);
+      }, { coalesce: true });
+    },
+    touch(plugin, address) {
+      const c = app.control;
+      if (!c?.learnMode || c.mappings?.isLearning) return;
+      const t = nativeTargetOf(app, plugin);
+      if (!t) return;
+      const target = `${t.prefix}${address}`;
+      const el = document.querySelector(`[data-auto-owner="${CSS.escape(t.owner)}"][data-auto-target="${CSS.escape(target)}"]`);
+      c.learn(t.owner, target, el);
+    },
+  });
 }
 
 /** Live plugin engine of a track instrument (FaustEngine / SoundfontEngine / WamEngine) or null. */
@@ -93,8 +176,10 @@ function watch(el, fn) {
   const iv = setInterval(() => { if (el.isConnected) { seen = true; fn(); } else if (seen) { clearInterval(iv); off(); } }, 1000);
 }
 
-function faustKnobs(host, params, values, onChange) {
+/** Knobs for plugin controls. auto = { owner, prefix } tags them as automation / MIDI learn targets. */
+function faustKnobs(host, params, values, onChange, auto = null) {
   clear(host);
+  const tag = (el, p) => (auto?.owner ? markAuto(el, auto.owner, `${auto.prefix}${p.address}`) : el);
   const knobs = new Map();
   if (!params?.length) { host.appendChild(h('div.dv-note', 'This program has no adjustable controls.')); return knobs; }
   const sections = new Map();
@@ -107,9 +192,9 @@ function faustKnobs(host, params, values, onChange) {
     for (const p of list) {
       const v = values?.[p.address] ?? p.init;
       if (p.type === 'bool') {
-        const t = toggle({ label: p.label, value: !!v, title: p.tooltip || p.address, onChange: (nv) => onChange(p, nv ? 1 : 0, true) });
-        knobs.set(p.address, { set: (x) => t.setValue?.(!!x) });
-        row.appendChild(t);
+        const t = toggle({ label: p.label, value: !!v, title: p.tooltip || p.address, onChange: (nv) => onChange(p, nv ? p.max ?? 1 : p.min ?? 0, true) });
+        knobs.set(p.address, { set: (x) => t.setValue?.(Number(x) >= ((p.min ?? 0) + (p.max ?? 1)) / 2) });
+        row.appendChild(tag(t, p));
       } else {
         const def = {
           key: p.address, label: p.label, type: 'number', min: p.min, max: p.max, step: p.step, default: p.init,
@@ -119,7 +204,7 @@ function faustKnobs(host, params, values, onChange) {
         };
         const k = knob({ def, value: v, size: 36, onChange: (nv, { final } = {}) => onChange(p, nv, final) });
         knobs.set(p.address, { set: (x) => k.setValue(x) });
-        row.appendChild(k);
+        row.appendChild(tag(k, p));
       }
     }
     host.appendChild(sections.size > 1 ? h('div.plg-section', h('div.plg-section-title', name), row) : row);
@@ -167,8 +252,19 @@ export function pluginInstrumentEditor(app, body, tgt, ins, { edit, resolved }) 
   }
   if (ins.type === 'native') {
     for (const b of nativeButtons(app, () => liveInstrumentPlugin(app, trackId), edit)) buttons.appendChild(b);
+    // multi-out instruments: their aux output buses become mixer channels (like drum pads)
+    const multi = button('Multi-out', () => {
+      const t = app.store.get().tracks.find((x) => x.id === trackId);
+      const tools = app.mixerTools;
+      if (!t || !tools) return;
+      if (t.padOutputs && Object.keys(t.padOutputs).length) tools.cmd.mergeMultiOut(trackId); else tools.cmd.splitMultiOut(trackId);
+    }, { icon: 'layers', cls: 'small', title: 'Give each extra output of this plugin its own mixer channel (click again to merge them back)' });
+    multi.style.display = 'none';
+    buttons.appendChild(multi);
     knobsHost = h('div.plg-faust-knobs');
     extra.appendChild(knobsHost);
+    const upd = () => { const n = (getStatus(keyOf())?.info?.outputBuses || []).length; multi.style.display = n > 1 ? '' : 'none'; };
+    watch(wrap, upd);
   }
   if (ins.type === 'faust') {
     buttons.appendChild(button('Edit source', () => openPluginDialog({ tab: 'faust', trackId, code: params.code, name: params.name }), { icon: 'code', cls: 'small', title: 'Open the Faust editor with this program; recompile to update the track' }));
@@ -195,7 +291,8 @@ export function pluginInstrumentEditor(app, body, tgt, ins, { edit, resolved }) 
     if (sig !== knobSig) {
       knobSig = sig;
       if (list) {
-        knobs = faustKnobs(knobsHost, list, params.values || {}, (p, v) => edit(`${params.name || 'Faust'}: ${p.label}`, (pp) => { pp.values = { ...(pp.values || {}), [p.address]: v }; }, { coalesce: true }));
+        knobs = faustKnobs(knobsHost, list, params.values || {}, (p, v) => edit(`${params.name || 'Faust'}: ${p.label}`, (pp) => { pp.values = { ...(pp.values || {}), [p.address]: v }; }, { coalesce: true }),
+          { owner: trackId, prefix: 'inst:values.' });
       } else {
         clear(knobsHost);
         knobs = new Map();
@@ -217,8 +314,8 @@ export function pluginInstrumentEditor(app, body, tgt, ins, { edit, resolved }) 
   };
 }
 
-/** Effect editor block (faust knobs / wam GUI). edit(label, fn(params), opts) mutates effect.params. */
-export function pluginEffectEditor(app, body, fx, { edit }) {
+/** Effect editor block (faust / native knobs, wam GUI). edit(label, fn(params), opts) mutates effect.params; owner = the strip's id. */
+export function pluginEffectEditor(app, body, fx, { edit, owner = null }) {
   let params = fx.params || {};
   const keyOf = () => pluginKey({ type: fx.type, params });
   const retry = () => { const pl = liveEffectPlugin(app, fx.id); if (pl?.reload) pl.reload(); else app.engine.init().catch(() => {}); };
@@ -243,7 +340,10 @@ export function pluginEffectEditor(app, body, fx, { edit }) {
     const sig = list ? list.map((p) => p.address).join('|') : `#${st.state}`;
     if (sig !== knobSig) {
       knobSig = sig;
-      if (list) knobs = faustKnobs(knobsHost, list, params.values || {}, (p, v) => edit(`${params.name || 'Faust'}: ${p.label}`, (pp) => { pp.values = { ...(pp.values || {}), [p.address]: v }; }, { coalesce: true }));
+      if (list) {
+        knobs = faustKnobs(knobsHost, list, params.values || {}, (p, v) => edit(`${params.name || 'Faust'}: ${p.label}`, (pp) => { pp.values = { ...(pp.values || {}), [p.address]: v }; }, { coalesce: true }),
+          owner ? { owner, prefix: `fx:${fx.id}:values.` } : null);
+      }
       else { clear(knobsHost); knobs = new Map(); }
     } else {
       for (const [addr, k] of knobs) if (params.values && addr in params.values) k.set(params.values[addr]);

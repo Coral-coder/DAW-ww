@@ -3,6 +3,7 @@
 import { h } from './dom.js';
 import { modal, promptText, toast } from './components.js';
 import { createBus, DRUM_PADS, TRACK_COLORS } from '../core/model.js';
+import { getStatus, pluginKey } from '../plugins/status.js';
 import {
   mixerOf, ensureMixer, createGroup, removeGroup, createVca, removeVca, createFolder, removeFolder, setFolderSum, setTrackFolder,
   saveSnapshot, recallMixerState, resetMixer, linkChannels, SOLO_MODES,
@@ -20,6 +21,17 @@ function usedPads(p, t) {
   for (const pad of DRUM_PADS) if (pitches.has(pad.pitch)) keys.add(pad.key);
   for (const pitch of pitches) { const pad = DRUM_PADS.find((x) => x.pitch === pitch); if (!pad) keys.add('kick'); }
   return DRUM_PADS.filter((pad) => keys.has(pad.key));
+}
+
+/**
+ * Aux output buses of a native multi-out instrument (from the loaded plugin's status): [{ key: 'bus<k>', name }]
+ * (the main bus 0 stays on the track itself). Empty for other instruments / before the plugin has loaded.
+ */
+export function nativeAuxBuses(track) {
+  const ins = track?.instrument;
+  if (ins?.type !== 'native') return [];
+  const buses = getStatus(pluginKey(ins))?.info?.outputBuses || [];
+  return buses.map((b, k) => ({ key: `bus${k}`, name: b.name || `Out ${k + 1}`, channels: b.channels | 0 })).slice(1).filter((b) => b.channels > 0);
 }
 
 export function createMixerTools(app) {
@@ -87,10 +99,31 @@ export function createMixerTools(app) {
       if (v == null) return;
       tx('Track notes', (p) => { const t = p.tracks.find((x) => x.id === id) || p.buses.find((x) => x.id === id); if (t) { if (v.trim()) t.notes = v; else delete t.notes; } });
     },
-    /** Drum multi-out: every pad the track plays gets its own mixer channel (a bus fed straight by that pad). */
+    /**
+     * Multi-out: every pad a drum track plays — or every aux output bus of a native multi-out instrument — gets its
+     * own mixer channel (a bus fed straight by that pad / plugin output).
+     */
     splitMultiOut(trackId) {
       const p0 = get();
       const t0 = p0.tracks.find((x) => x.id === trackId);
+      if (t0?.instrument?.type === 'native') {
+        const aux = nativeAuxBuses(t0);
+        if (!aux.length) { toast('This plugin has a single output (or has not loaded yet)', { level: 'warn' }); return; }
+        tx('Multi-out: plugin outputs', (p) => {
+          const t = p.tracks.find((x) => x.id === trackId);
+          t.padOutputs ||= {};
+          for (const o of aux) {
+            if (t.padOutputs[o.key] && p.buses.some((b) => b.id === t.padOutputs[o.key])) continue;
+            const b = createBus(`${t.name} · ${o.name}`);
+            b.source = { trackId, pad: o.key };
+            b.volume = 1;
+            p.buses.push(b);
+            t.padOutputs[o.key] = b.id;
+          }
+        });
+        toast(`${aux.length} plugin output${aux.length === 1 ? '' : 's'} now ha${aux.length === 1 ? 's its' : 've their'} own channel strip${aux.length === 1 ? '' : 's'} in the mixer`, { level: 'success' });
+        return;
+      }
       if (!t0 || t0.instrument?.type !== 'drums') return;
       const pads = usedPads(p0, t0);
       if (!pads.length) { toast('This drum track plays no pads yet', { level: 'warn' }); return; }
@@ -170,10 +203,11 @@ export function createMixerTools(app) {
       { label: t.soloSafe ? 'Solo safe ✓' : 'Solo safe', icon: 'headphones', onClick: () => cmd.toggleSoloSafe(trackId) },
       { label: t.notes ? 'Notes… ✎' : 'Notes…', icon: 'pencil', onClick: () => cmd.editNotes(trackId) },
     ];
-    if (t.instrument?.type === 'drums') {
+    if (t.instrument?.type === 'drums' || nativeAuxBuses(t).length) {
+      const what = t.instrument?.type === 'drums' ? 'pad' : 'plugin output';
       items.push(t.padOutputs && Object.keys(t.padOutputs).length
-        ? { label: 'Multi-out: merge pad channels', icon: 'drum', onClick: () => cmd.mergeMultiOut(trackId) }
-        : { label: 'Multi-out: pads to separate channels', icon: 'drum', onClick: () => cmd.splitMultiOut(trackId) });
+        ? { label: `Multi-out: merge ${what} channels`, icon: 'drum', onClick: () => cmd.mergeMultiOut(trackId) }
+        : { label: `Multi-out: ${what}s to separate channels`, icon: 'drum', onClick: () => cmd.splitMultiOut(trackId) });
     }
     return [{ header: 'Mixer' }, ...items];
   }

@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <unistd.h>
 
 // .vstpreset helpers (header-only, shared with the VST3 host)
 #include "../src/host/vst3_common.h"

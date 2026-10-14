@@ -387,7 +387,10 @@ export const EFFECT_DEFS = {
   native: {
     name: 'Native Plugin', category: 'Plugins', plugin: true,
     description: 'A VST3, Audio Unit or CLAP effect installed on this Mac (daW³ Mac app; runs in the out-of-process plugin host).',
-    params: [num('mix', 'Mix', 0, 1, 1, { step: 0.01, section: 'Plugin' })],
+    params: [
+      num('mix', 'Mix', 0, 1, 1, { step: 0.01, section: 'Plugin' }),
+      { key: 'sourceTrackId', label: 'Sidechain', type: 'track', default: '', section: 'Sidechain', description: 'Key input: feeds another track / bus into the plugin’s sidechain input (plugins with a sidechain bus, e.g. compressors, gates)' },
+    ],
   },
   wam: {
     name: 'Web Audio Module', category: 'Plugins', plugin: true,

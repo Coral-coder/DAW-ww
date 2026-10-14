@@ -72,6 +72,9 @@ const isObj = (v) => v != null && typeof v === 'object' && !Array.isArray(v);
 const B64 = /^[A-Za-z0-9+/]*={0,2}$/;
 export const isBase64 = (s) => isStr(s) && s.length % 4 === 0 && B64.test(s);
 export const MAX_STATE_BYTES = 32 * 1024 * 1024;
+/** Output channels of one plugin over all its buses (multi-out instruments), and the host's shared-memory width. */
+export const MAX_OUT_CHANNELS = 32;
+export const HOST_MAX_CHANNELS = 32;
 
 /** method -> validator(args) returning an error string or null. */
 export const METHODS = {
@@ -99,13 +102,20 @@ export const METHODS = {
   'plugins.openEditor': (a) => (isInt(a?.[0]) ? null : 'instance id expected'),
   'plugins.closeEditor': (a) => (isInt(a?.[0]) ? null : 'instance id expected'),
   'plugins.setOffline': (a) => (isInt(a?.[0]) && typeof a?.[1] === 'boolean' ? null : '(inst, boolean) expected'),
+  'plugins.presets': (a) => (isInt(a?.[0]) ? null : 'instance id expected'),
+  'plugins.loadPreset': (a) => (isInt(a?.[0]) && isStr(a?.[1]) && a[1].length > 0 && a[1].length < 4096 ? null : '(inst, preset id) expected'),
+  'plugins.savePreset': (a) => (isInt(a?.[0]) && isStr(a?.[1]) && PRESET_NAME.test(a[1]) ? null : '(inst, preset name) expected (letters, digits, spaces, - _ . ( ), no path)'),
   'plugins.render': (a) => {
     const o = a?.[0];
     if (!isObj(o) || !isInt(o.inst) || !isInt(o.frames) || o.frames < 0 || o.frames > 48000 * 60 * 60) return '{inst, frames, events} expected';
     if (o.events != null && !Array.isArray(o.events)) return 'events must be an array';
+    if (o.params != null && !Array.isArray(o.params)) return 'params must be an array of [frame, paramId, value]';
     return null;
   },
 };
+
+/** A preset name the server may turn into a file name (no separators, no dot files). */
+export const PRESET_NAME = /^(?!\.)[\p{L}\p{N} _\-.()'&+,#]{1,96}$/u;
 
 /** Throws on an unknown method or bad arguments. */
 export function validateCall(method, args = []) {
@@ -118,7 +128,8 @@ export function validateCall(method, args = []) {
 
 // ------------------------------------------------------------------------------------- stream messages
 // worker -> server: { t:'out', data:Float32Array(stereo interleaved) }
-//                   { t:'proc', inst, block, numIn, numOut, input:Float32Array(planar), midi:Float64Array, params?:Float64Array }
+//                   { t:'proc', inst, block, numIn, numOut, input:Float32Array(planar), midi:Float64Array, params?:Float64Array,
+//                     numSc?, sidechain?:Float32Array(planar numSc*128) }   numOut = every output bus' channels, bus after bus
 // server -> worker: { t:'in', data:Float32Array(interleaved), channels }
 //                   { t:'procd', inst, block, output:Float32Array(planar)|null, status, outParams:Float64Array }
 export function validateStreamMessage(m) {
@@ -129,8 +140,9 @@ export function validateStreamMessage(m) {
     case 'out': return f32(m.data) && m.data.length % 2 === 0;
     case 'in': return f32(m.data) && isInt(m.channels) && m.channels > 0 && m.data.length % m.channels === 0;
     case 'proc': return isInt(m.inst) && isNum(m.block) && isInt(m.numIn) && isInt(m.numOut) && m.numIn >= 0 && m.numIn <= 16
-      && m.numOut >= 1 && m.numOut <= 16 && f32(m.input) && m.input.length === m.numIn * 128 && f64(m.midi) && m.midi.length % 4 === 0
-      && (m.params == null || (f64(m.params) && m.params.length % 3 === 0));
+      && m.numOut >= 1 && m.numOut <= MAX_OUT_CHANNELS && f32(m.input) && m.input.length === m.numIn * 128 && f64(m.midi) && m.midi.length % 4 === 0
+      && (m.params == null || (f64(m.params) && m.params.length % 3 === 0))
+      && (m.numSc == null || m.numSc === 0 || (isInt(m.numSc) && m.numSc > 0 && m.numSc <= 8 && f32(m.sidechain) && m.sidechain.length === m.numSc * 128));
     case 'procd': return isInt(m.inst) && isNum(m.block) && (m.output === null || f32(m.output)) && isInt(m.status);
     case 'hello': return isInt(m.sampleRate);
     default: return false;

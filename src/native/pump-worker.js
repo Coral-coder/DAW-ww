@@ -1,6 +1,7 @@
 // Pump worker: moves audio between the AudioWorklet rings (SharedArrayBuffer) and the native audio
 // server (MessagePort), off the UI thread so UI work can't cause dropouts.
-//   main thread -> { type:'init', port } | { type:'out', sab } | { type:'in', sab } | { type:'plugin', inst, toSab, fromSab, numIn, numOut } | { type:'unplug', inst }
+//   main thread -> { type:'init', port } | { type:'out', sab } | { type:'in', sab }
+//                  | { type:'plugin', inst, toSab, fromSab, numIn, numSc, numOut } | { type:'unplug', inst }
 import { RingBuffer, decodePacket, BLOCK } from './ring.js';
 
 let port = null;
@@ -40,10 +41,16 @@ function pump() {
   for (const [inst, p] of plugins) {
     while (p.to.available() > 0 && p.inflight < 16) {
       p.to.read(p.rec, 1);
-      const pk = decodePacket(p.rec, p.numIn);
+      const pk = decodePacket(p.rec, p.numIn + p.numSc);
       p.inflight++;
       stats.procSent++;
-      port.postMessage({ t: 'proc', inst, block: pk.block, numIn: p.numIn, numOut: p.numOut, input: pk.audio, midi: pk.midi }, [pk.audio.buffer, pk.midi.buffer]);
+      if (p.numSc) {
+        // the packet carries main + sidechain channels: the key goes to the plugin's aux input bus
+        const input = pk.audio.slice(0, p.numIn * BLOCK), sidechain = pk.audio.slice(p.numIn * BLOCK);
+        port.postMessage({ t: 'proc', inst, block: pk.block, numIn: p.numIn, numOut: p.numOut, input, midi: pk.midi, numSc: p.numSc, sidechain }, [input.buffer, sidechain.buffer, pk.midi.buffer]);
+      } else {
+        port.postMessage({ t: 'proc', inst, block: pk.block, numIn: p.numIn, numOut: p.numOut, input: pk.audio, midi: pk.midi }, [pk.audio.buffer, pk.midi.buffer]);
+      }
     }
   }
 }
@@ -62,7 +69,7 @@ self.onmessage = (e) => {
     inRing = d.sab ? new RingBuffer(d.sab) : null;
   } else if (d.type === 'plugin') {
     const to = new RingBuffer(d.toSab);
-    plugins.set(d.inst, { to, from: new RingBuffer(d.fromSab), numIn: d.numIn, numOut: d.numOut, rec: new Float32Array(to.channels), inflight: 0 });
+    plugins.set(d.inst, { to, from: new RingBuffer(d.fromSab), numIn: d.numIn, numSc: d.numSc || 0, numOut: d.numOut, rec: new Float32Array(to.channels), inflight: 0 });
   } else if (d.type === 'unplug') {
     plugins.delete(d.inst);
   }

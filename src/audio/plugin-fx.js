@@ -13,6 +13,9 @@ export function pluginEffectBuilder(type) {
   return (ctx, sh) => {
     const inNode = ctx.createGain();
     const outNode = ctx.createGain();
+    // native effects with a sidechain input bus: the mixer feeds the key (params.sourceTrackId) in here
+    const keyNode = type === 'native' ? ctx.createGain() : null;
+    if (keyNode) { keyNode.channelCount = 2; keyNode.channelCountMode = 'explicit'; }
     sh.fxIn.connect(inNode);
     outNode.connect(sh.wet);
     let impl = null;
@@ -21,7 +24,7 @@ export function pluginEffectBuilder(type) {
     let loadError = null;
     const loaded = LOADERS[type]().then((m) => {
       if (disposed) return null;
-      impl = new m.Effect(ctx, inNode, outNode);
+      impl = new m.Effect(ctx, inNode, outNode, { keyInput: keyNode });
       if (pending) impl.setParams(pending);
       return impl;
     }, (e) => { loadError = `Could not load the ${type} plugin host: ${e?.message || e}`; inNode.connect(outNode); return null; });
@@ -36,12 +39,14 @@ export function pluginEffectBuilder(type) {
       detach() { try { sh.fxIn.disconnect(inNode); } catch { /* */ } try { outNode.disconnect(); } catch { /* */ } },
       get error() { return loadError || impl?.error || null; },
       get plugin() { return impl; },
+      /** Sidechain key input (native effects; silent unless the plugin has an aux input bus). */
+      keyInput: keyNode,
       /** Latency the plugin reports (seconds; WAM getCompensationDelay, Faust metadata), 0 until loaded. */
       get latency() { return Number(impl?.latency) || 0; },
       dispose() {
         disposed = true;
         try { impl?.dispose(); } catch { /* */ }
-        for (const n of [inNode, outNode]) { try { n.disconnect(); } catch { /* */ } }
+        for (const n of [inNode, outNode, keyNode]) { try { n?.disconnect(); } catch { /* */ } }
       },
     };
   };

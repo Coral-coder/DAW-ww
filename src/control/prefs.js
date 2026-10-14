@@ -209,7 +209,9 @@ function syncTab(app, rerender) {
   urlIn.addEventListener('keydown', (e) => e.stopPropagation());
   const linkBlock = [
     h('h4', 'Ableton Link'),
-    help('Browsers cannot join Link directly. Run the companion bridge (node tools/link-bridge/link-bridge.mjs — see its README) and connect: daW³ then follows and sets the session tempo, starts on the next bar of the Link timeline and stops with it.'),
+    help(typeof window !== 'undefined' && window.daw3Native?.link
+      ? 'Ableton Link is built into the daW³ Mac app: Connect joins the Link session on your network. daW³ then follows and sets the session tempo, starts on the next bar of the Link timeline and stops with it.'
+      : 'Browsers cannot join Link directly. Run the companion bridge (node tools/link-bridge/link-bridge.mjs — see its README) and connect: daW³ then follows and sets the session tempo, starts on the next bar of the Link timeline and stops with it.'),
     h('div.ctl-row', urlIn,
       c.link.status === 'off' || c.link.status === 'error'
         ? btn('Connect', () => { linkSet.enabled = true; linkSet.url = urlIn.value.trim() || linkSet.url; c.save(); c.link.connect(linkSet.url); rerender(); }, { primary: true })

@@ -128,8 +128,24 @@ export class NativeAudioClient {
 
   _reroute() { for (const rec of this.outputs.values()) this._route(rec).catch((e) => console.warn('[native] reroute', e)); }
 
-  /** Does a context's sample rate differ from the device's (the app must reload to switch rate)? */
+  /** Does a context's sample rate differ from the device's (engine.setSampleRate rebuilds the context)? */
   rateMismatch(ctx) { return this.enabled && ctx && ctx.sampleRate !== this.config.sampleRate; }
+
+  /** Switch the device's sample rate (the server renegotiates the stream and re-activates loaded plugins). */
+  async setDeviceRate(rate) {
+    const r = await this.api.setConfig({ sampleRate: rate });
+    this.config = r.config;
+    if (r.error) throw new Error(r.error);
+    return r;
+  }
+
+  /** The context the output tap of `ctx` belongs to is gone (rate switch): forget it. */
+  detachOutput(ctx) {
+    const rec = this.outputs.get(ctx);
+    if (!rec) return;
+    try { rec.tap.disconnect(); rec.node?.disconnect(); } catch { /* */ }
+    this.outputs.delete(ctx);
+  }
 
   /** Web Audio node carrying native device inputs `channels` (0-based device input channel indices). */
   async inputNode(ctx, { channels = [0, 1] } = {}) {
@@ -155,26 +171,52 @@ export class NativeAudioClient {
     return dest.stream;
   }
 
-  /** A worklet node that runs plugin instance `inst` (loaded in the plugin host). */
-  async pluginNode(ctx, { inst, numIn, numOut }) {
+  /**
+   * A worklet node that runs plugin instance `inst` (loaded in the plugin host).
+   *   input 0 = the plugin's main input, input 1 = its sidechain key (numSc > 0);
+   *   output k = output bus k (outputBuses [{name, channels}], multi-out instruments; output 0 = main).
+   */
+  async pluginNode(ctx, { inst, numIn, numOut, numSc = 0, outputBuses = null }) {
     await this.connect();
     await this.ensureWorklet(ctx);
-    const nOut = Math.max(1, Math.min(2, numOut || 2));
-    const nIn = Math.max(0, Math.min(2, numIn || 0));
-    const toSab = createRingBuffer(64, packetSize(nIn));
-    const fromSab = createRingBuffer(8192, nOut);
+    const layout = pluginNodeLayout({ numIn, numOut, numSc, outputBuses });
+    const toSab = createRingBuffer(64, packetSize(layout.numIn + layout.numSc));
+    const fromSab = createRingBuffer(8192, layout.totalOut);
     const node = new AudioWorkletNode(ctx, 'daw3-native-plugin', {
-      numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [nOut],
-      channelCount: Math.max(1, nIn), channelCountMode: 'explicit', channelInterpretation: 'speakers',
-      processorOptions: { toSab, fromSab, numIn: nIn, numOut: nOut, latencyBlocks: PLUGIN_LATENCY_BLOCKS },
+      numberOfInputs: layout.numSc ? 2 : 1, numberOfOutputs: layout.buses.length, outputChannelCount: layout.buses,
+      channelCount: Math.max(1, layout.numIn), channelCountMode: 'explicit', channelInterpretation: 'speakers',
+      processorOptions: { toSab, fromSab, numIn: layout.numIn, numSc: layout.numSc, numOut: layout.totalOut, buses: layout.buses, latencyBlocks: PLUGIN_LATENCY_BLOCKS },
     });
-    this.worker.postMessage({ type: 'plugin', inst, toSab, fromSab, numIn: nIn, numOut: nOut });
+    this.worker.postMessage({ type: 'plugin', inst, toSab, fromSab, numIn: layout.numIn, numSc: layout.numSc, numOut: layout.totalOut });
     return {
       node,
+      layout,
       bridgeLatency: PLUGIN_LATENCY_BLOCKS * BLOCK,
       dispose: () => { this.worker?.postMessage({ type: 'unplug', inst }); try { node.disconnect(); } catch { /* */ } },
     };
   }
+}
+
+/**
+ * Bridge node shape for a plugin: main input channels (≤ 2), sidechain channels (≤ 2) and one node output per
+ * plugin output bus with the bus' own channel count (multi-out instruments; ≤ 8 channels a bus, 32 in all — the
+ * host's limits). Buses without channels are left out; busIds[k] = the plugin bus index of node output k. Pure.
+ */
+export function pluginNodeLayout({ numIn = 0, numOut = 2, numSc = 0, outputBuses = null } = {}) {
+  const cl = (v, lo, hi, d) => Math.max(lo, Math.min(hi, Number.isFinite(+v) ? Math.round(+v) : d));
+  const buses = [], busIds = [];
+  const list = Array.isArray(outputBuses) && outputBuses.length ? outputBuses : [{ channels: numOut || 2 }];
+  let total = 0;
+  for (let i = 0; i < Math.min(16, list.length); i++) {
+    const ch = cl(list[i]?.channels, 0, 8, 2);
+    if (total + ch > 32) break; // the host fills channels bus after bus: stop at the first bus that no longer fits
+    if (!ch) continue;
+    buses.push(ch);
+    busIds.push(i);
+    total += ch;
+  }
+  if (!buses.length) { buses.push(2); busIds.push(0); total = 2; }
+  return { numIn: cl(numIn, 0, 2, 0), numSc: cl(numSc, 0, 2, 0), buses, busIds, totalOut: total };
 }
 
 let client = null;

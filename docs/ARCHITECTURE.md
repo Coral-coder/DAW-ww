@@ -729,6 +729,28 @@ Instrument type `'strudel'` plays a superdough *patch* (`params` = Strudel contr
   brass, saxes, fiddles, orchestral solos keep their multisamples; drums keep sampled machines. `opts.strudel: false`
   (or `soundfonts: false`) keeps the built-in instruments.
 
+## Mac app native layer (`desktop/*`, `desktop/native/*`, `src/native/*`, `src/plugins/native.js`)
+
+* Processes: renderer (Web Audio) → pump worker → audio server (utility process: `daw3_audio.node` device I/O +
+  plugin-host client) ↔ `daw3-plughost` (CLAP / VST3 / AU, shared-memory blocks v2 + JSON-line control) and, on
+  demand, `daw3-link` (Ableton Link, JSON lines) behind the main process' local WebSocket (`desktop/link-server.cjs`).
+* Buses: `PluginDesc.sidechainChannels` (first aux / non-main input bus) and `outputBuses` [{name, channels}]
+  (every output bus, main first). `ProcessBlock.sc/numSc` carry the key; `out` holds all buses bus after bus.
+  The bridge node (`client.pluginNode`, layout = `pluginNodeLayout`) has input 1 = sidechain and one output per
+  bus. Native effects: `effect.params.sourceTrackId` (KEYED_FX) → the effect's `keyInput`. Native instruments:
+  `track.padOutputs { bus<k>: busId }` (mixer-tools `splitMultiOut`) → `NativeEngine.setPadOutputs`.
+* Parameters: `values.<id>` on the plugin's params (automation, undo, MIDI learn — the device-panel knobs are
+  `markAuto` targets `inst:values.<id>` / `fx:<fxId>:values.<id>`; plugin-window edits come back through the
+  `setNativeHooks({ values, touch })` hooks, which also let MIDI learn mode pick a parameter by touching it).
+  Offline render: `native/automation.js nativeAutomationEvents` → `[[frame, id, value]]` sent with each block of
+  `plugins.render` (sorted per block, ≤ 256 a block; CLAP event time / VST3 queue offset / AU buffer offset).
+* Presets: host commands `presets` / `loadPreset` / `savePreset` (CLAP preset-discovery + preset-load, VST3
+  IUnitInfo programs + `.vstpreset`, AU factory presets + `.aupreset`; folders `<Presets>/<vendor>/<name>`,
+  extra roots in `$DAW3_PRESET_DIRS`). Loading stores the new values + state chunk in the project.
+* Sample rate: `audio.setConfig({sampleRate})` reopens the device and re-activates loaded instances
+  (`setSampleRate`); the renderer's `engine.setSampleRate` (serialised) saves native plugin states into the project
+  (`onBeforeRebuild`), rebuilds the context at the device rate and re-creates the plugins there.
+
 ## Licensing
 
 daW³ is AGPL-3.0-or-later (`LICENSE`), because it ships Strudel (AGPL-3.0-or-later; © Strudel contributors,

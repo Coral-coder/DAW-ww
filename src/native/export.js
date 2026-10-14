@@ -5,6 +5,7 @@
 //  • Anything else (native effects, plugins that need realtime) goes through a realtime bounce:
 //    the song plays through the live engine and the master output is captured, with progress.
 import { nativePluginsIn } from './state.js';
+import { nativeAutomationEvents } from './automation.js';
 import { createRingBuffer, RingBuffer } from './ring.js';
 import { getStatus } from '../plugins/status.js';
 import { nativeStatusKey } from '../plugins/native.js';
@@ -20,13 +21,22 @@ export function nativeExportMode(project) {
   return { mode: 'offline' };
 }
 
-/** render.js hook: pre-render every native instrument of an offline graph (faster than realtime). */
-export async function prerenderNative(graph, notesFor, frames, onError = () => {}) {
+/**
+ * render.js hook: pre-render every native instrument of an offline graph (faster than realtime), with its
+ * parameter automation applied sample-accurately (song mode). auto: { project, startBeat, endBeat, frameAt(beat) } | null.
+ */
+export async function prerenderNative(graph, notesFor, frames, onError = () => {}, auto = null) {
   const jobs = [];
   for (const [id, e] of graph.tracks || []) {
     const pl = e.instrument?.engine?.plugin;
     if (!pl?.isNative || !pl.prerender) continue;
-    jobs.push(pl.prerender(notesFor(id), frames).then((ok) => { if (!ok) onError(new Error(`Native plugin: ${pl.error || 'could not render'} — rendered silent.`)); },
+    jobs.push((async () => {
+      if (!(await pl.ready)) return false;
+      const track = auto?.project?.tracks?.find((t) => t.id === id);
+      const { events, initial } = track ? nativeAutomationEvents(track, { controls: pl.controls, startBeat: auto.startBeat, endBeat: auto.endBeat, frameAt: auto.frameAt })
+        : { events: [], initial: {} };
+      return pl.prerender(notesFor(id), frames, { params: events, initial });
+    })().then((ok) => { if (!ok) onError(new Error(`Native plugin: ${pl.error || 'could not render'} — rendered silent.`)); },
       (err) => onError(new Error(`Native plugin render failed: ${err?.message || err}`))));
   }
   await Promise.all(jobs);

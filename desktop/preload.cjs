@@ -41,12 +41,22 @@ const plugins = caps.plugins ? {
   closeEditor: (inst) => call('plugins.closeEditor', inst),
   setOffline: (inst, off) => call('plugins.setOffline', inst, !!off),
   render: (opts) => call('plugins.render', opts || {}),
+  /** -> [{ id, name, category, kind: 'factory'|'file', path? }] */
+  presets: (inst) => call('plugins.presets', inst),
+  /** -> instance info with the new parameter values */
+  loadPreset: (inst, id) => call('plugins.loadPreset', inst, String(id || '')),
+  /** Save a .vstpreset / .aupreset in the plugin's user preset folder -> its path */
+  savePreset: (inst, name) => call('plugins.savePreset', inst, String(name || '')),
   onEvent: onNativeEvent,
 } : undefined;
+
+// Ableton Link, built in (the daw3-link process behind a local WebSocket): start() -> { url, native }
+const link = { start: () => ipcRenderer.invoke('daw3:link-start') };
 
 contextBridge.exposeInMainWorld('daw3Native', {
   ...(audio ? { audio } : {}),
   ...(plugins ? { plugins } : {}),
+  link,
   isNative: true,
   platform: process.platform,
   /** Native open dialog -> [{ name, path, data: Uint8Array }]. opts: { kind: 'audio'|'project'|'any', multiple, title } */

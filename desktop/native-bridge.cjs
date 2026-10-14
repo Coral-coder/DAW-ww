@@ -4,6 +4,7 @@
 'use strict';
 const path = require('node:path');
 const { nativePaths } = require('./native-server.cjs');
+const { startLinkServer, processLink, simulatedLink, LINK_PORT } = require('./link-server.cjs');
 
 function setupNative({ app, ipcMain, utilityProcess, MessageChannelMain, getWindow }) {
   const paths = nativePaths({ resourcesPath: process.resourcesPath, isPackaged: app.isPackaged });
@@ -54,7 +55,31 @@ function setupNative({ app, ipcMain, utilityProcess, MessageChannelMain, getWind
     server().postMessage({ type: 'stream-port' }, [port1]);
     e.sender.postMessage('daw3:native-port', null, [port2]);
   });
-  app.on('will-quit', () => { try { child?.kill(); } catch { /* */ } });
+  // Ableton Link, built in: the daw3-link process (Link SDK) served on the local WebSocket the web app's
+  // LinkClient speaks (the tools/link-bridge protocol). Started on the first connect; a busy port 20809 (a
+  // separately running bridge) falls back to a free port.
+  let linkSrv = null;
+  ipcMain.handle('daw3:link-start', async () => {
+    if (!linkSrv) {
+      linkSrv = (async () => {
+        let srv = null;
+        let link = null;
+        if (paths.link) {
+          link = processLink(paths.link, { onState: () => srv?.broadcast(), onExit: () => { linkSrv = null; } });
+          try { await link.ready; } catch (e) { console.warn('[link]', e.message); link = null; }
+        }
+        srv = await startLinkServer({ link: link || simulatedLink(), port: LINK_PORT, fallbackPort: true, origins: ['app://daw3'], log: (m) => console.warn('[link]', m) });
+        return { srv, native: !!link };
+      })();
+      linkSrv.catch(() => { linkSrv = null; });
+    }
+    const { srv, native } = await linkSrv;
+    return { url: srv.url, native };
+  });
+  app.on('will-quit', () => {
+    try { child?.kill(); } catch { /* */ }
+    linkSrv?.then(({ srv }) => srv.close(), () => {});
+  });
   return { paths };
 }
 

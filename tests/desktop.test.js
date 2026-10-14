@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 const lib = require('../desktop/lib.cjs');
 
 test('desktop: main / preload / lib parse', () => {
-  for (const f of ['desktop/main.cjs', 'desktop/preload.cjs', 'desktop/lib.cjs', 'desktop/native-bridge.cjs', 'desktop/audio-server.cjs', 'desktop/native-server.cjs', 'desktop/plughost.cjs', 'src/ui/native.js', 'src/ui/audio-prefs.js', 'src/native/client.js', 'src/native/bridge-worklet.js', 'src/native/pump-worker.js', 'src/native/export.js', 'src/plugins/native.js']) execFileSync(process.execPath, ['--check', path.join(root, f)]);
+  for (const f of ['desktop/main.cjs', 'desktop/preload.cjs', 'desktop/lib.cjs', 'desktop/native-bridge.cjs', 'desktop/audio-server.cjs', 'desktop/native-server.cjs', 'desktop/plughost.cjs', 'src/ui/native.js', 'src/ui/audio-prefs.js', 'src/native/client.js', 'src/native/bridge-worklet.js', 'src/native/pump-worker.js', 'src/native/export.js', 'src/plugins/native.js', 'desktop/link-server.cjs', 'src/native/automation.js', 'tools/link-bridge/link-bridge.mjs']) execFileSync(process.execPath, ['--check', path.join(root, f)]);
 });
 
 test('desktop: app:// paths stay inside the app folder', () => {
@@ -99,7 +99,7 @@ test('desktop: cross-origin isolation headers (SharedArrayBuffer for the audio b
   }
   assert.deepEqual(sent, ['audio-prefs', 'audio-prefs']);
   const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
-  assert.deepEqual(pkg.build.extraResources[0].filter, ['daw3_audio.node', 'daw3-plughost']);
+  assert.deepEqual(pkg.build.extraResources[0].filter, ['daw3_audio.node', 'daw3-plughost', 'daw3-link']);
   assert.ok(pkg.build.files.includes('!desktop/native/**'), 'native sources stay out of the app bundle');
   assert.ok(pkg.build.asarUnpack.includes('src/native/**'));
 });

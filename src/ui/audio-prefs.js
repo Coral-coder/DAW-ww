@@ -37,7 +37,12 @@ export async function openAudioPrefs(app) {
       cfg = r.config;
       if (r.error) setMsg(r.error, 'error'); else setMsg(label ? `${label}: done` : '');
       const ctx = app.engine?.ctx;
-      if (getNativeClient()?.rateMismatch(ctx)) setMsg(`The new sample rate (${cfg.sampleRate} Hz) applies after a reload (View → Reload, or restart daW³).`, 'warn');
+      if (getNativeClient()?.rateMismatch(ctx)) {
+        // rebuild the Web Audio context at the device's new rate (plugins are re-created there with their state)
+        setMsg(`Switching the audio engine to ${cfg.sampleRate / 1000} kHz…`);
+        const sr = await app.engine.setSampleRate(cfg.sampleRate);
+        setMsg(sr === cfg.sampleRate ? `Audio engine at ${sr / 1000} kHz` : `The audio engine runs at ${sr / 1000} kHz`, sr === cfg.sampleRate ? 'info' : 'warn');
+      }
     } catch (e) { setMsg(e.message, 'error'); }
     render();
   };

@@ -29,6 +29,7 @@ export class PluginInstrument {
     this._loaded = LOADERS[type]().then((m) => {
       if (this.disposed) return null;
       this.impl = new m.Engine(ctx, output, this.params, opts);
+      if (this._padOuts) this.impl.setPadOutputs?.(this._padOuts);
       return this.impl;
     }, (e) => {
       this._error = `Could not load the ${type} plugin host: ${e?.message || e}`;
@@ -54,6 +55,8 @@ export class PluginInstrument {
   noteOn(pitch, vel, time) { this.impl?.noteOn(pitch, vel, time); }
   noteOff(pitch, time) { this.impl?.noteOff(pitch, time); }
   allNotesOff(time) { this.impl?.allNotesOff(time); }
+  /** Multi-out (native instruments): { bus<k>: AudioNode } — kept until the plugin has loaded. */
+  setPadOutputs(map) { this._padOuts = map || null; this.impl?.setPadOutputs?.(this._padOuts); }
   dispose() { this.disposed = true; try { this.impl?.dispose(); } catch { /* */ } this.impl = null; }
 }
 

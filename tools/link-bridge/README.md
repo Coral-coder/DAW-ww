@@ -5,7 +5,7 @@ companion that joins Link and re-publishes it to daW³ over a local WebSocket.
 
 ```
 cd tools/link-bridge
-npm i abletonlink          # optional native addon (needs a C++ toolchain); without it the bridge simulates Link
+sh ../../desktop/native/build.sh   # builds daw3-link (real Link); or: npm i abletonlink; without either it simulates Link
 node link-bridge.mjs       # ws://127.0.0.1:20809
 node link-bridge.mjs --origin https://example.github.io   # allow a hosted daW³ (localhost is always allowed)
 node link-bridge.mjs --simulate                            # no Link: a shared clock for several browser tabs
@@ -24,11 +24,10 @@ and nudges its playhead when the phase drifts by more than 1/16 note.
 
 The client lives in `src/control/link-client.js` (`LinkClient`, pure helper `linkPhaseError`).
 
-## Mac app integration point
+## Mac app
 
-The macOS app build can host Link natively instead of this script: link the Link SDK (C++), run the same
-JSON protocol on a loopback WebSocket (or post the `state` object to the web view with
-`window.daw3?.control?.link?.receive(state)` and route `tempo` / `play` / `stop` back through a
-`WKScriptMessageHandler`). `LinkClient.receive(state)` is the single entry point the client uses for incoming
-state, and `LinkClient.transport` (`send(obj)`) is the only outgoing call, so either transport plugs in without
-touching the sync logic.
+The daW³ Mac app has Link built in: `desktop/native/src/link/link_main.cpp` (the `daw3-link` process, Ableton's
+Link SDK 3.1.5 — GPL-2.0-or-later, which GPLv3 / AGPLv3 §13 let daW³'s AGPL-3.0-or-later code combine with; it is
+kept in its own process anyway) is served on this same WebSocket protocol by `desktop/link-server.cjs`, started
+from the main process when you press Connect. This script uses the same server, and the same `daw3-link` binary
+when it has been built (`sh desktop/native/build.sh`; `--native <path>` picks another one).

@@ -61,9 +61,9 @@ let hostSeq = 0;
  * Events: 'event' (plugin events: param / latency / params-changed / editor-closed), 'exit' (code, signal).
  */
 class PlugHost extends EventEmitter {
-  constructor({ binary, addon, tmpDir, maxFrames = 2048, maxChannels = 8, sampleRate = 48000 }) {
+  constructor({ binary, addon, tmpDir, maxFrames = 2048, maxChannels = 32, sampleRate = 48000, env }) {
     super();
-    Object.assign(this, { binary, addon, tmpDir, maxFrames, maxChannels, sampleRate });
+    Object.assign(this, { binary, addon, tmpDir, maxFrames, maxChannels, sampleRate, env });
     this.pending = new Map();
     this.nextId = 1;
     this.alive = false;
@@ -75,7 +75,7 @@ class PlugHost extends EventEmitter {
     this._starting = new Promise((resolve, reject) => {
       this.channel = this.addon.hostCreate({ dir: this.tmpDir, maxFrames: this.maxFrames, maxChannels: this.maxChannels, sampleRate: this.sampleRate });
       const c = this.channel;
-      this.proc = spawn(this.binary, ['--serve', '--shm', c.shm, '--req', c.req, '--done', c.done], { stdio: ['pipe', 'pipe', 'pipe'] });
+      this.proc = spawn(this.binary, ['--serve', '--shm', c.shm, '--req', c.req, '--done', c.done], { stdio: ['pipe', 'pipe', 'pipe'], ...(this.env ? { env: this.env } : {}) });
       this.proc.stdin.on('error', () => {});
       const rl = readline.createInterface({ input: this.proc.stdout });
       const t = setTimeout(() => reject(new Error('The plugin host did not start')), 15000);

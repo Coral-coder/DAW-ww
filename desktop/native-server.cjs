@@ -12,6 +12,7 @@ const { listBundles, describeBundle, PlugHost } = require('./plughost.cjs');
 // ES modules can't be imported from inside app.asar reliably: the packaged app unpacks src/native (asarUnpack)
 const SRC = path.resolve(__dirname, '..', 'src', 'native').replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
 const load = (f) => import(pathToFileURL(path.join(SRC, f)).href);
+const MAX_RENDER_OUT = 32; // = protocol.js MAX_OUT_CHANNELS / HOST_MAX_CHANNELS
 
 class NativeServer {
   /** opts: { addon, binary, dataDir, tmpDir?, post(event)?, nullBackend?, home?, platform? } */
@@ -83,17 +84,22 @@ class NativeServer {
     const deviceChanged = ['outputId', 'inputId', 'inputEnabled', 'sampleRate', 'bufferFrames', 'deviceOutChannels', 'deviceInChannels', 'outOffset', 'safetyFrames']
       .some((k) => next[k] !== this.config[k]);
     if (deviceChanged) { next.latencyMs = null; next.latencySamples = null; }
+    const rateChanged = next.sampleRate !== this.config.sampleRate;
     this.config = next;
     await this._writeJson('audio.json', next);
     let error = null;
     if (next.enabled && (deviceChanged || this.status !== 'running')) {
+      // renegotiates the stream in place: the device reopens at the new rate / buffer / channels
       try { this._open(); } catch (e) { error = e.message; this.lastError = error; this.status = 'error'; }
     } else if (!next.enabled) {
       this.addon.audioClose();
       this.status = 'stopped';
     }
-    this.post({ event: 'audio-config', config: this.config });
-    return { config: this.config, status: this._audio_status(), error };
+    // loaded plugins follow the device rate (re-activated in place: state and parameters are kept)
+    let plugins = null;
+    if (rateChanged) plugins = await this._plugins_setSampleRate(next.sampleRate).catch((e) => ({ error: e.message }));
+    this.post({ event: 'audio-config', config: this.config, rateChanged, plugins });
+    return { config: this.config, status: this._audio_status(), error, plugins };
   }
 
   _audio_status() {
@@ -151,7 +157,8 @@ class NativeServer {
   async _host() {
     if (this.host?.alive) return this.host;
     if (this._hostStarting) return this._hostStarting;
-    const h = new PlugHost({ binary: this.o.binary, addon: this.addon, tmpDir: this.tmpDir, sampleRate: this.config.sampleRate });
+    const h = new PlugHost({ binary: this.o.binary, addon: this.addon, tmpDir: this.tmpDir, sampleRate: this.config.sampleRate, maxChannels: this.m.protocol.HOST_MAX_CHANNELS,
+      env: this.o.home ? { ...process.env, HOME: this.o.home } : undefined }); // the host finds preset folders below HOME
     h.on('event', (e) => this.post({ event: 'plugin', ...e }));
     h.on('timeout', (inst) => this.post({ event: 'plugin-timeout', inst }));
     h.on('exit', (code, signal) => {
@@ -189,30 +196,77 @@ class NativeServer {
   async _plugins_closeEditor(inst) { const i = await this._inst(inst); await i.host.call('closeEditor', { inst }); return true; }
   async _plugins_setOffline(inst, off) { const i = await this._inst(inst); await i.host.call('setOffline', { inst, offline: off }); return true; }
 
+  /** Factory presets + preset files of an instance -> [{ id, name, category, kind: 'factory'|'file', path? }]. */
+  async _plugins_presets(inst) { const i = await this._inst(inst); return (await i.host.call('presets', { inst }, 30000)).presets; }
+
+  /** Load a preset (an id from plugins.presets) -> the instance info (new parameter values). */
+  async _plugins_loadPreset(inst, preset) {
+    const i = await this._inst(inst);
+    const info = (await i.host.call('loadPreset', { inst, preset }, 30000)).info;
+    i.info = info;
+    return info;
+  }
+
+  /** Save the current state as a user preset file (.vstpreset / .aupreset) in the standard preset folder -> path. */
+  async _plugins_savePreset(inst, name) {
+    const i = await this._inst(inst);
+    const ext = { vst3: '.vstpreset', au: '.aupreset' }[i.desc.format];
+    if (!ext) throw new Error('CLAP has no standard preset file format: use “Save state” to keep the settings in the project');
+    const file = path.join(this.presetFolder(i.desc), `${name}${ext}`);
+    await i.host.call('savePreset', { inst, path: file }, 30000);
+    return file;
+  }
+
+  /** The user preset folder of a plugin: ~/Library/Audio/Presets/<vendor>/<name> (Linux: ~/.vst3/presets/…). */
+  presetFolder(desc) {
+    const seg = (x) => String(x || '').replace(/[/:\\]/g, '_');
+    const home = this.o.home || os.homedir();
+    const root = (this.o.platform || process.platform) === 'darwin' ? path.join(home, 'Library', 'Audio', 'Presets') : path.join(home, '.vst3', 'presets');
+    return path.join(root, seg(desc.vendor), seg(desc.name));
+  }
+
+  /** Re-activate every loaded instance at a new sample rate -> { sampleRate, latency: {inst: samples}, failed }. */
+  async _plugins_setSampleRate(rate) {
+    if (this.host) this.host.sampleRate = rate;
+    if (!this.host?.alive || !this.instances.size) return { sampleRate: rate, latency: {}, failed: [] };
+    const r = await this.host.call('setSampleRate', { sampleRate: rate }, 60000);
+    for (const [k, v] of Object.entries(r.latency || {})) { const i = this.instances.get(Number(k)); if (i?.info) i.info.latency = v; }
+    return { sampleRate: r.sampleRate, latency: r.latency, failed: r.failed };
+  }
+
   /**
-   * Faster-than-realtime render of an instrument instance: events [[frame, status, d1, d2]…] over
-   * `frames` frames -> { output: Float32Array (planar, numOut * frames), numOut }.
+   * Faster-than-realtime render of an instrument instance: MIDI events [[frame, status, d1, d2]…] and parameter
+   * automation [[frame, paramId, value]…] (sample-accurate: each change lands on its frame) over `frames` frames
+   * -> { output: Float32Array (planar, numOut * frames: every output bus, bus after bus), numOut, buses }.
    */
   async _plugins_render(o) {
     const i = await this._inst(o.inst);
-    const numOut = Math.max(1, Math.min(2, i.info?.plugin?.numOutputs || 2));
-    const numIn = Math.max(0, Math.min(8, i.info?.plugin?.numInputs || 0));
+    const plug = i.info?.plugin || {};
+    const numOut = Math.max(1, Math.min(MAX_RENDER_OUT, plug.totalOutputs || plug.numOutputs || 2));
+    const numIn = Math.max(0, Math.min(8, plug.numInputs || 0));
     const block = 1024;
     if (i.info?.offline !== false) await i.host.call('setOffline', { inst: o.inst, offline: true });
-    const events = (o.events || []).filter((e) => Array.isArray(e) && e.length >= 4).sort((a, b) => a[0] - b[0]);
+    const valid = (e, n) => Array.isArray(e) && e.length >= n && e.every((x) => Number.isFinite(x));
+    const events = (o.events || []).filter((e) => valid(e, 4)).sort((a, b) => a[0] - b[0]);
+    const params = (o.params || []).filter((e) => valid(e, 3) && e[1] >= 0).map((e, k) => [e[0], e[1], e[2], k]).sort((a, b) => a[0] - b[0] || a[3] - b[3]);
     const output = new Float32Array(numOut * o.frames);
     const silence = new Float32Array(numIn * block);
-    let ei = 0;
-    for (let f = 0; f < o.frames; f += block) {
-      const n = Math.min(block, o.frames - f);
-      const midi = [];
+    let ei = 0, pi = 0;
+    for (let f = 0; f < o.frames;) {
+      let n = Math.min(block, o.frames - f);
+      // the shared-memory block holds 512 MIDI / 256 parameter events: dense passages get shorter blocks
+      if (events.length - ei > 500 && events[ei + 500][0] < f + n) n = Math.max(1, events[ei + 500][0] - f);
+      if (params.length - pi > 250 && params[pi + 250][0] < f + n) n = Math.max(1, params[pi + 250][0] - f);
+      const midi = [], pv = [];
       while (ei < events.length && events[ei][0] < f + n) { const e = events[ei++]; midi.push(Math.max(0, e[0] - f), e[1], e[2], e[3]); }
-      const r = i.host.process({ inst: o.inst, nframes: n, numIn, numOut, input: silence, midi: new Float64Array(midi), timeoutMs: 5000 });
+      while (pi < params.length && params[pi][0] < f + n) { const e = params[pi++]; pv.push(Math.max(0, e[0] - f), e[1], e[2]); }
+      const r = i.host.process({ inst: o.inst, nframes: n, numIn, numOut, input: silence, midi: new Float64Array(midi), params: new Float64Array(pv), timeoutMs: 5000 });
       if (!r) throw new Error('The plugin stopped responding during the render');
       for (let c = 0; c < numOut; c++) output.set(r.output.subarray(c * n, c * n + n), c * o.frames + f);
+      f += n;
     }
     if (i.info?.offline !== false) await i.host.call('setOffline', { inst: o.inst, offline: false }).catch(() => {});
-    return { output, numOut, frames: o.frames };
+    return { output, numOut, frames: o.frames, buses: plug.outputBuses || [{ name: 'Main', channels: numOut }] };
   }
 
   // ------------------------------------------------------------------------------------- stream
@@ -222,7 +276,8 @@ class NativeServer {
     if (msg.t === 'out') { if (this.status === 'running') this.addon.audioWrite(msg.data); return null; }
     if (msg.t === 'proc') {
       const i = this.instances.get(msg.inst);
-      const r = i?.host.alive ? i.host.process({ inst: msg.inst, nframes: 128, numIn: msg.numIn, numOut: msg.numOut, input: msg.input, midi: msg.midi, params: msg.params, timeoutMs: 100 }) : null;
+      const r = i?.host.alive ? i.host.process({ inst: msg.inst, nframes: 128, numIn: msg.numIn, numOut: msg.numOut, input: msg.input, midi: msg.midi, params: msg.params,
+        numSc: msg.numSc || 0, sidechain: msg.sidechain, timeoutMs: 100 }) : null;
       return { t: 'procd', inst: msg.inst, block: msg.block, output: r ? r.output : null, status: r ? r.status : -1, outParams: r ? r.outParams : new Float64Array(0) };
     }
     return null;
@@ -248,7 +303,8 @@ function nativePaths({ resourcesPath, isPackaged } = {}) {
   const dir = isPackaged && resourcesPath ? path.join(resourcesPath, 'native') : path.join(__dirname, 'native', 'build');
   const addon = path.join(dir, 'daw3_audio.node');
   const binary = path.join(dir, 'daw3-plughost');
-  return { dir, addon, binary, available: fs.existsSync(addon) && fs.existsSync(binary) };
+  const link = path.join(dir, 'daw3-link');
+  return { dir, addon, binary, link: fs.existsSync(link) ? link : null, available: fs.existsSync(addon) && fs.existsSync(binary) };
 }
 
 module.exports = { NativeServer, nativePaths };

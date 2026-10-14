@@ -3,6 +3,7 @@
 //
 // host: { bpm(), setBpm(bpm), playing(), beat() (playhead, beats), play(), stop(), setBeat(beat), now() ms }
 // receive(state) is the single entry point for bridge state (the Mac app can call it directly, see README).
+// opts.start: async () => url | null — the Mac app starts its built-in Link (daw3-link) and says where it listens.
 import { Emitter } from '../core/util.js';
 
 export const LINK_DEFAULT_URL = 'ws://127.0.0.1:20809';
@@ -18,11 +19,12 @@ export function linkPhaseError(localBeat, linkPhase, quantum = 4) {
 }
 
 export class LinkClient extends Emitter {
-  constructor(host, { url = LINK_DEFAULT_URL, WebSocketImpl = typeof WebSocket !== 'undefined' ? WebSocket : null } = {}) {
+  constructor(host, { url = LINK_DEFAULT_URL, WebSocketImpl = typeof WebSocket !== 'undefined' ? WebSocket : null, start = null } = {}) {
     super();
     this.host = host;
     this.url = url;
     this.WS = WebSocketImpl;
+    this.start = start;
     this.ws = null;
     this.state = null;
     this.status = 'off'; // 'off' | 'connecting' | 'connected' | 'error'
@@ -37,6 +39,17 @@ export class LinkClient extends Emitter {
     this.url = url;
     this.wanted = true;
     if (!this.WS) { this._status('error', 'WebSocket unavailable'); return; }
+    if (this.start && url === LINK_DEFAULT_URL) {
+      // built-in Link (Mac app): start it, then connect wherever it listens
+      this._status('connecting');
+      Promise.resolve().then(() => this.start()).then((u) => { if (this.wanted && !this.ws) this._open(u || url); },
+        (e) => { this._status('error', `Link could not start: ${e?.message || e}`); });
+      return;
+    }
+    this._open(url);
+  }
+
+  _open(url) {
     try { this.ws?.close(); } catch { /* */ }
     this._status('connecting');
     const ws = new this.WS(url);
@@ -50,7 +63,7 @@ export class LinkClient extends Emitter {
       if (this.wanted) {
         this._status('connecting');
         const ms = Math.min(10000, 500 * 2 ** this.retry++);
-        setTimeout(() => { if (this.wanted && !this.ws) this.connect(); }, ms);
+        setTimeout(() => { if (this.wanted && !this.ws) this.connect(this.url); }, ms);
       } else this._status('off');
     };
   }
