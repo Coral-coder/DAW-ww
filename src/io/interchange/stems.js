@@ -117,7 +117,9 @@ export function readmeText(project, { sampleRate, bitDepth, tap, lengthSec, stem
     `Stems:        ${tapText}`,
     '',
     'All stems start at bar 1 (0:00.000) — line them up at the session start and they are in sync.',
-    'Summing all stems (plus the effect returns when post-insert) reproduces the mix before the master bus.',
+    tap === 'post-insert'
+      ? 'Fader, pan, sends / effect returns and the master bus are not printed — balance and add space in the mix.'
+      : 'Summing all stems reproduces the mix before the master bus (send effects are printed into each stem).',
     '',
     'Files',
     '-----',

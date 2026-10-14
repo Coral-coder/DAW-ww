@@ -383,12 +383,16 @@ export function buildDawproject(project, opts = {}) {
     if (!lane.points?.length) return null;
     const r = registry.get(owner)?.get(lane.target);
     if (!r) { report.unmapped.push(`${name}: automation "${lane.target}" (${lane.points.length} points) has no DAWproject parameter — omitted`); return null; }
-    const pts = sortPoints(lane.points).map((p) => {
-      const time = r6(p.beat);
-      if (r.kind === 'bool') return el('BoolPoint', { time, value: p.value >= 0.5 ? 'true' : 'false' });
-      if (r.kind === 'enum') return el('EnumPoint', { time, value: clamp(Math.round(p.value), 0, Math.max(0, r.count - 1)) });
-      return el('RealPoint', { time, value: r6(r.to(p.value)), interpolation: 'linear' });
-    });
+    let pts;
+    if (r.kind === 'bool' || r.kind === 'enum') {
+      // daW³ step lanes interpolate linearly and then threshold (>= 0.5 / nearest option): write the switch points
+      const qf = r.kind === 'bool' ? (v) => (v >= 0.5 ? 1 : 0) : (v) => clamp(Math.round(v), 0, Math.max(0, r.count - 1));
+      pts = stepPoints(sortPoints(lane.points), qf).map(({ beat, value }) => (r.kind === 'bool'
+        ? el('BoolPoint', { time: r6(beat), value: value ? 'true' : 'false' })
+        : el('EnumPoint', { time: r6(beat), value })));
+    } else {
+      pts = sortPoints(lane.points).map((p) => el('RealPoint', { time: r6(p.beat), value: r6(r.to(p.value)), interpolation: 'linear' }));
+    }
     report.mapped.push(`${name}: automation "${lane.target}"`);
     return el('Points', { id: nextId(), unit: r.kind === 'real' ? r.unit : undefined }, el('Target', { parameter: r.id }), pts);
   };
@@ -437,6 +441,34 @@ export function buildDawproject(project, opts = {}) {
     project.genre ? el('Genre', {}, String(project.genre)) : null,
     el('Comment', {}, `Exported from ${APP_NAME}. Instruments are daW³ devices (placeholders elsewhere)${Object.keys(renders).length ? '; rendered audio tracks are included' : ''}.`));
   return { projectXml: toXml(root), metadataXml: toXml(meta), files, report };
+}
+
+/** Linear lane + quantizer -> the points where the quantized value changes (first point included). */
+export function stepPoints(points, qf) {
+  if (!points.length) return [];
+  const out = [{ beat: points[0].beat, value: qf(points[0].value) }];
+  let cur = out[0].value;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1], b = points[i];
+    const qb = qf(b.value);
+    if (qb === cur) continue;
+    if (!(b.beat > a.beat)) { out.push({ beat: b.beat, value: qb }); cur = qb; continue; }
+    // walk the crossings between a and b (thresholds at k + 0.5 for integers, 0.5 for bools)
+    const steps = 64;
+    for (let k = 1; k <= steps; k++) {
+      const t = k / steps;
+      let lo = (k - 1) / steps, hi = t;
+      const qt = qf(a.value + (b.value - a.value) * t);
+      if (qt === cur) continue;
+      for (let it = 0; it < 30; it++) { // bisect the switch point
+        const mid = (lo + hi) / 2;
+        if (qf(a.value + (b.value - a.value) * mid) === cur) lo = mid; else hi = mid;
+      }
+      cur = qf(a.value + (b.value - a.value) * hi);
+      out.push({ beat: a.beat + (b.beat - a.beat) * hi, value: cur });
+    }
+  }
+  return out;
 }
 
 function readNested(obj, key) {
@@ -798,7 +830,7 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
         // rendered audio companion of a daW³ instrument track: skipped when the original comes back with its State
         const originEl = byId.get(origin);
         const restorable = children(child(child(originEl, 'Channel'), 'Devices')).some((d) => stateOf(d));
-        if (restorable) { trackByXmlId.set(tEl.attrs.id, null); report.warnings.push(`"${name}": rendered audio of a daW³ instrument track — skipped (the instrument is restored).`); return; }
+        if (restorable) { trackByXmlId.set(tEl.attrs.id, null); report.skippedRendered = (report.skippedRendered || 0) + 1; return; }
       }
     }
     const isAudio = ctypes.includes('audio') && !ctypes.includes('notes');
@@ -928,8 +960,13 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
     const track = ctx.track;
     const content = firstDesc(clipEl, ['Notes', 'Audio', 'Warps', 'Clips', 'Points']);
     if (!content) return;
+    const fu = clipEl.attrs.fadeTimeUnit || unit;
+    const fadeIn = toBeats(numAttr(clipEl, 'fadeInTime', 0), fu);
+    const fadeOut = toBeats(numAttr(clipEl, 'fadeOutTime', 0), fu);
     if (content.name === 'Clips') {
-      for (const inner of children(content, 'Clip')) processClip(inner, { ...ctx, unit: contentUnit, base: t0 - ps, lo: start, hi: end });
+      // container clip (Bitwig audio clips): inner clips live on its content timeline; its fades apply at its edges
+      const outer = { start: trim > 0 ? null : start, end, fadeIn: trim > 0 ? 0 : fadeIn, fadeOut, name: clipEl.attrs.name || null };
+      for (const inner of children(content, 'Clip')) processClip(inner, { ...ctx, unit: contentUnit, base: t0 - ps, lo: start, hi: end, outer });
       return;
     }
     if (content.name === 'Points') return; // clip-level automation: not supported
@@ -972,10 +1009,13 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
     } else {
       offSec = (ps + trim) * spb(); // ps is already in beats (content unit converted)
     }
-    const fu = clipEl.attrs.fadeTimeUnit || unit;
-    const clip = createClip(target.id, { type: 'audio', sampleId, start: r6(start), length: r6(end - start), offset: r6(Math.max(0, offSec / spb())), name: clipEl.attrs.name || project.samples[sampleId].name });
-    const fi = toBeats(numAttr(clipEl, 'fadeInTime', 0), fu);
-    const fo = toBeats(numAttr(clipEl, 'fadeOutTime', 0), fu);
+    const clip = createClip(target.id, { type: 'audio', sampleId, start: r6(start), length: r6(end - start), offset: r6(Math.max(0, offSec / spb())), name: clipEl.attrs.name || ctx.outer?.name || project.samples[sampleId].name });
+    let fi = trim > 0 ? 0 : fadeIn;
+    let fo = end < t0 + dur - 1e-9 ? 0 : fadeOut;
+    if (ctx.outer) {
+      if (!fi && ctx.outer.start !== null && Math.abs(start - ctx.outer.start) < 1e-6) fi = ctx.outer.fadeIn;
+      if (!fo && Math.abs(end - ctx.outer.end) < 1e-6) fo = ctx.outer.fadeOut;
+    }
     if (fi > 0) clip.fadeIn = r6(fi);
     if (fo > 0) clip.fadeOut = r6(fo);
     project.clips.push(clip);
@@ -1084,6 +1124,7 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
   project.loop = { enabled: false, start: 0, end: len };
   project.scenes = [createScene('Scene 1')];
   report.exported.push(`${project.tracks.length} track(s), ${project.buses.length} return(s), ${project.clips.length} clip(s), ${Object.keys(project.samples).length} audio file(s)` + (app ? ` from ${app.attrs.name || '?'} ${app.attrs.version || ''}`.trimEnd() : ''));
+  if (report.skippedRendered) report.exported.push(`${report.skippedRendered} rendered audio track(s) of daW³ instruments skipped (the instruments are restored).`);
   return { project: normalizeProject(project), report };
 }
 

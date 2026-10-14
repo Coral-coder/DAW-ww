@@ -681,10 +681,27 @@ export class MixGraph {
     const g = this.ctx.createGain();
     const gain = clip.gain ?? 1;
     const fade = Math.min(0.004, dur / 4);
-    g.gain.setValueAtTime(0, time);
-    g.gain.linearRampToValueAtTime(gain, time + fade);
-    g.gain.setValueAtTime(gain, time + dur - fade);
-    g.gain.linearRampToValueAtTime(0, time + dur);
+    if (clip.fadeIn > 0 || clip.fadeOut > 0) {
+      // clip fades (beats, e.g. from DAWproject imports): linear in / out over the clip's own timeline
+      const t0 = Math.max(0, ev.offset * spb);
+      const clipDur = clip.length * spb;
+      const fi = Math.max(0, (clip.fadeIn || 0) * spb);
+      const fo = Math.max(0, (clip.fadeOut || 0) * spb);
+      const env = (tc) => gain * (fi > 0 ? Math.min(1, tc / fi) : 1) * (fo > 0 ? Math.min(1, Math.max(0, clipDur - tc) / fo) : 1);
+      const end = time + dur;
+      g.gain.setValueAtTime(0, time);
+      g.gain.linearRampToValueAtTime(env(t0 + fade), time + fade);
+      if (fi > t0 + fade && time + fi - t0 < end) g.gain.linearRampToValueAtTime(env(fi), time + fi - t0);
+      const foStart = time + (clipDur - fo) - t0;
+      if (fo > 0 && foStart > time + fade && foStart < end) g.gain.linearRampToValueAtTime(env(clipDur - fo), foStart);
+      g.gain.linearRampToValueAtTime(env(t0 + dur - fade), end - fade);
+      g.gain.linearRampToValueAtTime(0, end);
+    } else {
+      g.gain.setValueAtTime(0, time);
+      g.gain.linearRampToValueAtTime(gain, time + fade);
+      g.gain.setValueAtTime(gain, time + dur - fade);
+      g.gain.linearRampToValueAtTime(0, time + dur);
+    }
     src.connect(g);
     g.connect(e.strip.input);
     src.start(time, offSec, dur + 0.001);
