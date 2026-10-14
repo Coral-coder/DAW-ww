@@ -155,7 +155,7 @@ Every shortcut can be rebound under Preferences → Shortcuts.
 | run it | `npm install` then `npm run mac:dev` |
 | build it | `npm run mac:build` → `dist/daW3-<version>-arm64.dmg` / `-x64.dmg` (+ `.zip`) |
 | or fetch it | GitHub → Actions → *Mac app* → latest run → artifact **daW3-mac** |
-| first launch | the build is ad-hoc signed, not notarized: right-click → *Open*, or `xattr -dr com.apple.quarantine /Applications/daW3.app` |
+| first launch | the build is ad-hoc signed, not notarized. Drag it to Applications, then in Terminal: `xattr -dr com.apple.quarantine /Applications/daW3.app` (or System Settings → Privacy & Security → *Open Anyway*). Without that, macOS says the downloaded app "is damaged" |
 | to sign it properly | set `CSC_LINK` / `CSC_KEY_PASSWORD` (Developer ID cert) and `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`, change `build.mac.identity` from `"-"` to your identity, add `"hardenedRuntime": true` and `"notarize": true` |
 | the icon | `npm run mac:icon` regenerates `build/icon.png` |
 | your audio interface | **daW³ → Audio & Plugin Settings… (⌘,)**: switch on the *native audio engine*, pick the output / input device, output pair, input channels, sample rate and buffer size (32–1024); *Measure* times the round trip with a loopback ping (recordings are shifted by it) |

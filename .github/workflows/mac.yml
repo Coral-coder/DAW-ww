@@ -43,7 +43,7 @@ jobs:
             "$n/daw3-link" --version
           done
       - name: Pack .dmg files
-        run: sh scripts/make-dmg.sh
+        run: bash scripts/make-dmg.sh
       - uses: actions/upload-artifact@v4
         with:
           name: daW3-mac
