@@ -490,6 +490,8 @@ export function createArrangeView(app) {
     peaks.set(sampleId, e);
     if (!engine.decodeSample) { e.status = 'error'; e.failedAt = performance.now(); return e; }
     Promise.resolve().then(() => engine.decodeSample(sampleId)).then((buf) => {
+      // long samples stream (engine/stream): their overview comes from the PCM cache, no buffer in memory
+      if (buf?.streamed && buf.peaks) { Object.assign(e, { status: 'ready', ...buf.peaks }); invalidate(); return; }
       if (!buf || !buf.getChannelData) throw new Error('no buffer');
       const n = buf.length;
       const bucket = 256;

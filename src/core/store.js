@@ -15,7 +15,14 @@ export class Store extends Emitter {
     this._pendingEmit = false;
     this._lastLabel = null;
     this._lastTime = 0;
+    this.guards = []; // edit guards: {capture(project), check(captured, project) -> violation|null, restore(violation, project)}
   }
+
+  /**
+   * Install an edit guard (e.g. core/freeze.js createFreezeGuard): checked after every top-level transaction; a
+   * violation is rolled back by the guard and reported as store.on('blocked', {label, message}).
+   */
+  addGuard(guard) { this.guards.push(guard); return () => { this.guards = this.guards.filter((g) => g !== guard); }; }
 
   get() { return this.project; }
 
@@ -47,12 +54,21 @@ export class Store extends Emitter {
       this._lastLabel = label;
       this._lastTime = now;
     }
+    const caps = this._batchDepth === 0 && this.guards.length ? this.guards.map((g) => g.capture(this.project)) : null;
     this._batchDepth++;
     let result;
     try {
       result = fn(this.project);
     } finally {
       this._batchDepth--;
+    }
+    if (caps) {
+      this.guards.forEach((g, i) => {
+        const v = g.check(caps[i], this.project);
+        if (!v) return;
+        g.restore(v, this.project);
+        this.emit('blocked', { label, message: v.message, detail: v });
+      });
     }
     if (this._batchDepth === 0) {
       this.project.modifiedAt = new Date().toISOString();

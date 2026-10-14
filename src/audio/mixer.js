@@ -815,6 +815,10 @@ export class MixGraph {
 
   _playAudioClip(e, ev, time, spb) {
     const clip = ev.clip;
+    // long samples stream from the PCM cache (stream/streamer.js) instead of an AudioBuffer
+    const stream = this.o.getSampleStream?.(clip.sampleId);
+    if (stream) { this._playStream(e, ev, time, spb, stream); return; }
+    if (this.o.isStreamed?.(clip.sampleId)) return; // still being prepared for streaming
     const buffer = this.o.getSampleBuffer(clip.sampleId);
     if (!buffer) return;
     const offSec = Math.max(0, ((clip.offset || 0) + ev.offset) * spb);
@@ -836,6 +840,27 @@ export class MixGraph {
     const rec = { src, g };
     this.sources.add(rec);
     src.onended = () => { this.sources.delete(rec); try { g.disconnect(); } catch { /* */ } };
+  }
+
+  _playStream(e, ev, time, spb, stream) {
+    const clip = ev.clip;
+    const offSec = Math.max(0, ((clip.offset || 0) + ev.offset) * spb);
+    if (offSec >= stream.duration) return;
+    const dur = Math.min(ev.dur * spb, stream.duration - offSec);
+    if (dur <= 0.002) return;
+    const g = this.ctx.createGain();
+    const gain = clip.gain ?? 1;
+    const fade = Math.min(0.004, dur / 4);
+    g.gain.setValueAtTime(0, time);
+    g.gain.linearRampToValueAtTime(gain, time + fade);
+    g.gain.setValueAtTime(gain, time + dur - fade);
+    g.gain.linearRampToValueAtTime(0, time + dur);
+    g.connect(e.strip.input);
+    let voice;
+    try { voice = this.o.playStream(stream, g, time, offSec, dur + 0.001); } catch (err) { this.onError(err); try { g.disconnect(); } catch { /* */ } return; }
+    const rec = { src: voice, g };
+    this.sources.add(rec);
+    voice.onended = () => { this.sources.delete(rec); try { g.disconnect(); } catch { /* */ } };
   }
 
   /** Stop everything that is sounding (transport stop / seek). */

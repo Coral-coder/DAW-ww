@@ -185,7 +185,7 @@ function collectFrozen(out, track, mode, b0, b1, opts) {
   const L = track.frozen.loop;
   if (!(L > 0)) return;
   const loopClip = { ...clip, length: L };
-  let k = Math.ceil((b0 - EPS) / L);
+  let k = Math.ceil((b0 - EPS) / L) || 0; // (no -0)
   if (opts.jump) {
     const cur = Math.floor((b0 + EPS) / L) * L;
     if (cur < b0 - EPS) out.push({ type: 'audio', trackId: track.id, beat: b0, clip: loopClip, offset: b0 - cur, dur: cur + L - b0 });

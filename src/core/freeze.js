@@ -115,3 +115,74 @@ export function sampleInUse(project, sampleId, exceptTrackId = null) {
   }
   return false;
 }
+
+// ------------------------------------------------------------------------------------------- edit guard
+/** The parts of a frozen track's state that its frozen audio depends on (JSON, deterministic). */
+function soundState(project, track) {
+  const f = track.frozen;
+  const mode = FREEZE_MODES.includes(f.mode) ? f.mode : 'postFx';
+  const keepLane = (l) => {
+    const t = String(l.target);
+    if (/^inst:/.test(t)) return true;
+    if (/^(fx|fxen|cable):/.test(t)) return mode !== 'preFx';
+    if (/^(volume|pan)$/.test(t)) return mode === 'postFader';
+    return false;
+  };
+  const clips = project.clips.filter((c) => c.trackId === track.id).map((c) => ({ ...c }));
+  const patterns = Object.values(project.patterns || {}).filter((p) => p.trackId === track.id);
+  return JSON.stringify({
+    type: track.type, instrument: track.instrument ?? null, code: track.code ?? null, codeSound: track.codeSound ?? null,
+    fx: mode === 'preFx' ? null : (track.fx || []), patch: mode === 'preFx' ? null : (track.patch ?? null),
+    volume: mode === 'postFader' ? track.volume : null, pan: mode === 'postFader' ? track.pan : null,
+    active: f.renderMode === 'pattern' ? track.activePatternId : null,
+    lanes: (track.automation || []).filter(keepLane), clips, patterns,
+  });
+}
+
+/**
+ * Store guard (see Store.addGuard) that blocks edits to the sound of frozen tracks: any transaction that changes
+ * what a frozen track's audio was rendered from is rolled back for that track and reported with FROZEN_HINT.
+ * Renaming, recolouring, mute / solo, sends, the fader (unless frozen post-fader), deleting the track, changing the
+ * tempo (the freeze goes stale and the track plays live) and unfreezing stay possible.
+ */
+export function createFreezeGuard() {
+  return {
+    capture(project) {
+      const out = [];
+      for (const t of project.tracks) {
+        if (!isFrozen(t)) continue;
+        out.push({
+          id: t.id, sampleId: t.frozen.sampleId, sig: soundState(project, t),
+          track: JSON.parse(JSON.stringify(t)),
+          clips: project.clips.filter((c) => c.trackId === t.id).map((c) => JSON.parse(JSON.stringify(c))),
+          patterns: Object.values(project.patterns || {}).filter((p) => p.trackId === t.id).map((p) => JSON.parse(JSON.stringify(p))),
+        });
+      }
+      return out;
+    },
+    /** -> { message, trackIds } when a frozen track's sound was edited, else null. */
+    check(before, project) {
+      const bad = [];
+      for (const b of before) {
+        const t = project.tracks.find((x) => x.id === b.id);
+        if (!t || !isFrozen(t) || t.frozen.sampleId !== b.sampleId) continue; // deleted / unfrozen / refrozen
+        if (soundState(project, t) !== b.sig) bad.push(b);
+      }
+      return bad.length ? { message: FROZEN_HINT, trackIds: bad.map((b) => b.id), entries: bad } : null;
+    },
+    restore(violation, project) {
+      for (const b of violation.entries) {
+        const i = project.tracks.findIndex((x) => x.id === b.id);
+        if (i < 0) continue;
+        const keep = project.tracks[i];
+        // put the sound back, keep the harmless edits made in the same transaction (name, colour, mute…)
+        project.tracks[i] = { ...b.track, name: keep.name, color: keep.color, mute: keep.mute, solo: keep.solo, arm: keep.arm, sends: keep.sends, ...(keep.frozen?.mode === 'postFader' ? {} : { volume: keep.volume, pan: keep.pan }) };
+        const nonLane = (l) => !/^(inst|fx|fxen|cable):/.test(String(l.target)) && !(b.track.frozen.mode === 'postFader' && /^(volume|pan)$/.test(String(l.target)));
+        project.tracks[i].automation = [...(b.track.automation || []).filter((l) => !nonLane(l)), ...(keep.automation || []).filter(nonLane)];
+        project.clips = [...project.clips.filter((c) => c.trackId !== b.id), ...b.clips];
+        for (const id of Object.keys(project.patterns)) if (project.patterns[id].trackId === b.id) delete project.patterns[id];
+        for (const p of b.patterns) project.patterns[p.id] = p;
+      }
+    },
+  };
+}

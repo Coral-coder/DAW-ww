@@ -14,6 +14,7 @@
 //   }
 //   Integer formats clamp to the legal range after dither (never wrap); float keeps everything.
 // decodeWav(arrayBuffer) -> { sampleRate, bitDepth, float, channels: Float32Array[] }   (PCM 8/16/24/32, float 32/64)
+// wavInfo(arrayBuffer) / readWavFrames(arrayBuffer, info, from, count) -> header / a decoded frame range (streaming)
 // wavBlob(buffers, opts) -> Blob
 
 function asChannels(buffers, opts) {
@@ -118,49 +119,66 @@ export function encodeWav(buffers, opts = {}) {
   return ab;
 }
 
-/** Parse a RIFF/WAVE file (PCM 8/16/24/32-bit int, IEEE float 32/64, WAVE_FORMAT_EXTENSIBLE). */
-export function decodeWav(arrayBuffer) {
-  const view = new DataView(arrayBuffer instanceof ArrayBuffer ? arrayBuffer : arrayBuffer.buffer.slice(arrayBuffer.byteOffset, arrayBuffer.byteOffset + arrayBuffer.byteLength));
-  const tag = (o) => String.fromCharCode(view.getUint8(o), view.getUint8(o + 1), view.getUint8(o + 2), view.getUint8(o + 3));
-  if (view.byteLength < 12 || tag(0) !== 'RIFF' || tag(8) !== 'WAVE') throw new Error('Not a WAV file');
-  let fmt = null;
-  let dataOff = -1, dataLen = 0;
-  for (let o = 12; o + 8 <= view.byteLength;) {
-    const id = tag(o);
-    const size = view.getUint32(o + 4, true);
-    if (id === 'fmt ') {
-      let format = view.getUint16(o + 8, true);
-      if (format === 0xfffe && size >= 40) format = view.getUint16(o + 8 + 24, true); // extensible: sub-format GUID
-      fmt = { format, channels: view.getUint16(o + 10, true), sampleRate: view.getUint32(o + 12, true), bits: view.getUint16(o + 22, true) };
-    } else if (id === 'data') {
-      dataOff = o + 8;
-      dataLen = Math.min(size, view.byteLength - dataOff);
-      break;
+const toView = (ab) => (ab instanceof DataView ? ab : new DataView(ab instanceof ArrayBuffer ? ab : ab.buffer.slice(ab.byteOffset, ab.byteOffset + ab.byteLength)));
+
+/**
+ * WAV header info without decoding: { format (1 int | 3 float), channels, sampleRate, bitDepth, dataOffset, frames }
+ * (null when the bytes are not a supported WAV). Pair with readWavFrames() to decode a range (streaming).
+ */
+export function wavInfo(arrayBuffer) {
+  try {
+    const view = toView(arrayBuffer);
+    const tag = (o) => String.fromCharCode(view.getUint8(o), view.getUint8(o + 1), view.getUint8(o + 2), view.getUint8(o + 3));
+    if (view.byteLength < 12 || tag(0) !== 'RIFF' || tag(8) !== 'WAVE') return null;
+    let fmt = null;
+    for (let o = 12; o + 8 <= view.byteLength;) {
+      const id = tag(o);
+      const size = view.getUint32(o + 4, true);
+      if (id === 'fmt ') {
+        let format = view.getUint16(o + 8, true);
+        if (format === 0xfffe && size >= 40) format = view.getUint16(o + 8 + 24, true);
+        fmt = { format, channels: view.getUint16(o + 10, true), sampleRate: view.getUint32(o + 12, true), bitDepth: view.getUint16(o + 22, true) };
+      } else if (id === 'data' && fmt) {
+        const dataOffset = o + 8;
+        const len = Math.min(size, view.byteLength - dataOffset);
+        if (!(fmt.format === 1 && [8, 16, 24, 32].includes(fmt.bitDepth)) && !(fmt.format === 3 && [32, 64].includes(fmt.bitDepth))) return null;
+        return { ...fmt, dataOffset, frames: Math.floor(len / ((fmt.bitDepth / 8) * fmt.channels)) };
+      }
+      o += 8 + size + (size % 2);
     }
-    o += 8 + size + (size % 2);
-  }
-  if (!fmt || dataOff < 0) throw new Error('Malformed WAV file');
-  const { format, channels, sampleRate, bits } = fmt;
+  } catch { /* */ }
+  return null;
+}
+
+/** Decode `count` frames from frame `from` of a WAV (info from wavInfo) -> Float32Array per channel. */
+export function readWavFrames(arrayBuffer, info, from = 0, count = info.frames) {
+  const view = toView(arrayBuffer);
+  const n = Math.max(0, Math.min(count, info.frames - from));
+  const { channels, bitDepth: bits } = info;
+  const float = info.format === 3;
   const bps = bits / 8;
-  const frames = Math.floor(dataLen / (bps * channels));
-  const out = Array.from({ length: channels }, () => new Float32Array(frames));
-  const float = format === 3;
-  if (!float && format !== 1) throw new Error(`Unsupported WAV format ${format}`);
-  let p = dataOff;
-  for (let i = 0; i < frames; i++) {
+  const out = Array.from({ length: channels }, () => new Float32Array(n));
+  let p = info.dataOffset + from * bps * channels;
+  for (let i = 0; i < n; i++) {
     for (let c = 0; c < channels; c++) {
       let v;
       if (float) v = bits === 64 ? view.getFloat64(p, true) : view.getFloat32(p, true);
       else if (bits === 8) v = (view.getUint8(p) - 128) / 128;
       else if (bits === 16) v = view.getInt16(p, true) / 32768;
       else if (bits === 24) { let x = view.getUint8(p) | (view.getUint8(p + 1) << 8) | (view.getUint8(p + 2) << 16); if (x & 0x800000) x -= 0x1000000; v = x / 8388608; }
-      else if (bits === 32) v = view.getInt32(p, true) / 2147483648;
-      else throw new Error(`Unsupported WAV bit depth ${bits}`);
+      else v = view.getInt32(p, true) / 2147483648;
       out[c][i] = v;
       p += bps;
     }
   }
-  return { sampleRate, bitDepth: bits, float, channels: out };
+  return out;
+}
+
+/** Parse a RIFF/WAVE file (PCM 8/16/24/32-bit int, IEEE float 32/64, WAVE_FORMAT_EXTENSIBLE). */
+export function decodeWav(arrayBuffer) {
+  const info = wavInfo(arrayBuffer);
+  if (!info) throw new Error('Not a supported WAV file');
+  return { sampleRate: info.sampleRate, bitDepth: info.bitDepth, float: info.format === 3, channels: readWavFrames(arrayBuffer, info) };
 }
 
 /** Convenience: encodeWav -> Blob (browser / Node 18+). */
