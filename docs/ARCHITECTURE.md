@@ -188,8 +188,13 @@ input). Browser: `inputs.js` (input sources + InputManager), `capture-processor.
   mode. Monitoring `off | auto | on` (`monitorActive`: auto = while armed when stopped / recording inside the punch,
   not during playback). Per-track peak + latched clip meters (`level(id)`, click the header meter to clear).
   Rebinds on engine `'context'` (sample-rate change).
-* **Capture** — the `daw3-capture` AudioWorklet stamps every block with its context frame (sample-accurate); where
-  AudioWorklet is missing or stalls (2.5 s), a ScriptProcessor tap (input = 2 buffers before `playbackTime`, ±1 quantum).
+* **Capture** — the `daw3-capture` AudioWorklet stamps every block with its context frame (sample-accurate; Chromium
+  hands a node's first `process()` a stale `currentFrame`, so a chunk starting there takes its frame from the next
+  quantum); where AudioWorklet is missing or stalls (2.5 s), a ScriptProcessor tap. A ScriptProcessor's input is *not*
+  at a fixed distance from `playbackTime` (Chromium: 2·N + 128…256 frames, varying per block, quanta can be skipped), so
+  the tap carries a pilot channel — a looping frame-index ramp started at a known frame — and stamps every contiguous
+  128-frame run from it (`pilotFrame`): both taps are frame-exact, dropouts become gaps in place
+  (`tools/browser-check/record-check.mjs`).
 * **Alignment / latency** — captured frame F is heard-time beat `anchor.beat + (F/sr − roundTrip − anchor.time)·bpm/60`
   (anchor = the scheduler's first anchor, heard time). **Tempo / meter maps**: the anchor carries the scheduler's
   `TempoMap` and the cycle range, and `timing.js` (`beatAtTime` / `timeAtBeat` / `songBeat`) integrates the *unwrapped*
@@ -444,7 +449,15 @@ esbuild (build time only; it applies three small, checked superdough patches —
 * `computePdc({sampleRate, enabled, tracks:[{id, latency, sends}], buses, master})` → per-route compensation. The
   `MixGraph` puts `DelayLink`s on each track→master link and each send link (`ChannelStrip.setCompensation`) so
   every route meets at the master input; `graph.latency` = whole-mix delay, `graph.latencyReport()`,
-  `graph.updatePdc()` (also called when a plugin reports its latency). Plugboard: longest in→out path.
+  `graph.updatePdc()` (also called when a plugin reports its latency).
+* Inside a strip (`alignInserts` in latency.js, `ChannelStrip.alignment()`): the insert section — plugboard graph or the
+  serial chain — is aligned too: parallel branches are delayed to the slowest before they meet (every cable is a
+  `DelayLink`), and a keyed effect's key (in-board port-1 cable or an external sidechain from another strip's `post`)
+  meets the audio it keys: the earlier one waits (an external key later than the ducked audio lengthens that strip).
+  `MixGraph.updatePdc` iterates the key arrivals (they depend on the plan) to a fixed point; key links are `DelayLink`s.
+  Strip latency = aligned in→out latency. `project.pdc === false` turns this off too (old behaviour).
+* Tempo-synced LFOs: each effect's `env.getBeatAt(t)` returns the beat at `t + heard` (`heard` = total latency − when the
+  effect's input arrives after dispatch), so LFO phases line up with the beat at the speakers, not at the insert.
 * Realtime: the scheduler pre-rolls every event by `graph.latency` (`getPreroll`); anchors / `beatAt` /
   `getPosition` / `engine.beatAtTime(t)` stay in *heard* time, so recording alignment (item 2) needs no change.
   Fader automation is timed per strip (`faderOffsets`); the metronome joins after the master section.
@@ -587,8 +600,16 @@ sendModes:{busId:'pre'|'post'}, output (busId), padOutputs:{padKey: busId}`; bus
     every breakpoint); pitch-preserving modes stream through the `daw3-warp` **AudioWorklet** (`worklet.js`, sample PCM
     posted once per context) and fall back to a main-thread render of the same `WarpRenderer` (LRU cache) when the worklet
     is unavailable / still loading (addModule gives up after 8 s). Offline renders / export always use the precomputed path.
-  - Warped clips are scheduled once per play (like any audio clip): editing the tempo while a long clip plays takes
-    effect at the next start / seek.
+  - **Live tempo edits**: when the tempo map changes while playing (`engine._retimeOnTempoEdit`; maps are cached by
+    content, so a new map object = an edit) every warped voice spanning the scheduler's next window boundary
+    (`scheduler.boundary()`: where the scheduler itself switches maps) is re-curved from there
+    (`WarpPlayer.retime` → `markers.spliceCurve`): worklet voices get `{type:'curve'}` and `WarpRenderer.setCurve` carries
+    on seamlessly (grain / slice state kept), repitch re-schedules `playbackRate`, cached-fallback voices restart from
+    the boundary; the clip gain envelope is re-laid under the new map.
+  - **Streamed (long) samples** warp too: the voice gets a stream-worker port (`SampleStreamer.openPort`) instead of the
+    PCM, and a sliding `SourceWindow` (`warp/window.js`, chunk-aligned, 12 chunks + mono mix) follows
+    `WarpRenderer.neededRange()`; the renderer reads through `base` (bit-identical to the in-memory render). No full
+    decode; a late chunk renders silence for that block (underrun) and the clip stays in time.
 * **Quantize / groove** (`src/time/groove.js`): `quantizeWarp(clip, transients, {grid, strength, swing, groove})` puts warp
   markers on the transients pulled toward the timeline grid (two hits in one slot: only the closer moves);
   `extractGroove` / `grooveFromNotes` / `grooveFromAudio` → `GrooveTemplate {grid, length, offsets, velocities}` (stored in
@@ -728,6 +749,43 @@ Instrument type `'strudel'` plays a superdough *patch* (`params` = Strudel contr
   overrides in `GENRE_STRUDEL`, dance-music hooks never a soft EP), the old def's preset as `fallbackPreset`; guitars,
   brass, saxes, fiddles, orchestral solos keep their multisamples; drums keep sampled machines. `opts.strudel: false`
   (or `soundfonts: false`) keeps the built-in instruments.
+
+## Testing AudioWorklets (headless Chromium, `tools/browser-check/`)
+
+**Why `addModule()` hung in automation**: not the sandbox, the audio sink or the headless mode — plain
+`chrome --headless` without DevTools runs worklets fine (realtime and offline). Playwright attaches every page with
+`Target.setAutoAttach({waitForDebuggerOnStart: true, filter: [iframe, worker, service_worker]})`; Chromium (140) still
+parks every new AudioWorklet thread (target type `worklet`) waiting for a debugger although the filter excludes it, and
+nobody attaches or resumes it — so `addModule()` never settles (always on an `AudioContext`, often on an
+`OfflineAudioContext`; `data:` URLs sometimes slip through). Flags (`--no-sandbox`, `--disable-features=AudioServiceOut
+OfProcess`, `--alsa-output-device=null`, fake media, headless shell vs new headless vs Xvfb) change nothing.
+
+**Recipe**: open a second CDP session on the page *before* it creates audio contexts, auto-attach worklet targets
+(waiting) and detach them immediately — detaching releases the wait:
+
+```js
+const cdp = await page.context().newCDPSession(page);
+cdp.on('Target.attachedToTarget', (e) => cdp.send('Target.detachFromTarget', { sessionId: e.sessionId }).catch(() => {}));
+await cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true, filter: [{ type: 'worklet' }] });
+```
+
+`tools/browser-check/browser.mjs` does this (`launch()` / `enableWorklets(page)`, plus autoplay / fake-media flags and
+`serveRepo()` = `scripts/serve.js` on a free port, killed by PID). playwright-core comes from `$PLAYWRIGHT_CORE`, the
+repo / cwd `node_modules` or `/tmp/claude-0/pw`; Chromium from `$CHROME` or `/opt/pw-browsers/chromium-*`. Checks (each
+exits non-zero on failure):
+
+| script | verifies |
+|---|---|
+| `worklet-smoke.mjs` | blob + every daW³ worklet module loads (realtime + offline) and processors produce audio |
+| `loudness-check.mjs` | `daw3-loudness` worklet vs `measureLoudness` (Node DSP): integrated LUFS ±0.2 LU, true peak ±0.2 dB |
+| `warp-check.mjs` | warped drum loop on the grid at 90 / 120 / 150 BPM (< 3 ms); live tempo edit retimes a playing clip |
+| `record-check.mjs` | capture worklet and ScriptProcessor fallback stamp an impulse at its exact frame, chunks contiguous |
+| `stream-check.mjs` | 10-minute WAV streams, seeks, stays in sync; warped (beats / tones) streamed clips, no full decode |
+| `superdough-check.mjs` | supersaw through superdough's worklet realtime and offline; level vs the worklet-free stand-in |
+| `faust-check.mjs` | Faust instrument (realtime) and instrument → effect (offline); `FAUSTWASM_DIR=<unpacked npm pack>` serves jsDelivr locally, else skipped when the CDN is unreachable |
+
+`harness.js` (served, imported by the page code): `makeEngine(project)`, `wavSample`, `captureOutput(ctx, node)`
+(sample-accurate worklet recorder), `onsets`, `drumLoop`.
 
 ## Licensing
 

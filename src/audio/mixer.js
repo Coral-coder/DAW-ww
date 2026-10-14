@@ -34,7 +34,7 @@ import { INSTRUMENT_DEFS } from './defs.js';
 import { EFFECT_DEFS } from './effect-defs.js';
 import { resolveInstrument } from './instruments.js';
 import { sanitizePatch, patchStructureKey, topoOrder, resolveKeyLinks, PATCH_IN, PATCH_OUT } from '../core/patch.js';
-import { computePdc, faderOffsets } from './latency.js';
+import { computePdc, faderOffsets, alignInserts } from './latency.js';
 import { needsShapedEnvelope, envelopePoints } from '../record/clips.js';
 import { frozenMode, bypassesInserts, bypassesFader, frozenLaneFilter } from '../core/freeze.js';
 import { spanOf } from '../time/tempo-map.js';
@@ -194,6 +194,8 @@ export class ChannelStrip {
     this.fxKey = '';
     this.patchNodes = []; // split/mix junction GainNodes of the current patch
     this.cables = new Map(); // cableId -> GainNode (plugboard mode)
+    this.links = new Map(); // cableId ('s:<fxId>' / 's:out' in serial mode) -> DelayLink (branch / key alignment)
+    this.keyArrive = {}; // fxId -> s after the strip input at which its external sidechain key arrives (MixGraph)
     this.sends = new Map(); // busId -> GainNode
     this.vals = {};
     this.sendVals = {}; // static send amounts (restored when send automation ends)
@@ -244,7 +246,11 @@ export class ChannelStrip {
           old.delete(def.id);
         } else {
           try {
-            e = { id: def.id, type: def.type, fx: (this.env.createEffect || createEffect)(this.ctx, def, this.env) };
+            const ent = { id: def.id, type: def.type, heard: 0 };
+            // tempo-synced LFOs: the audio passing this effect at ctx time t is HEARD at t + ent.heard (PDC)
+            const env = { ...this.env, getBeatAt: (t) => this.env.getBeatAt?.(t + ent.heard) ?? null };
+            ent.fx = (this.env.createEffect || createEffect)(this.ctx, def, env);
+            e = ent;
             const fx = e.fx;
             if (fx.ready && typeof fx.ready.then === 'function') fx.ready.then(() => { if (fx.refreshLatency?.()) this.onLatency?.(); }, () => {});
           } catch (err) {
@@ -259,13 +265,15 @@ export class ChannelStrip {
       try { this.inStage.disconnect(); } catch { /* */ }
       for (const e of next) { try { e.fx.output.disconnect(); } catch { /* */ } }
       for (const g of [...this.patchNodes, ...this.cables.values()]) { try { g.disconnect(); } catch { /* */ } }
+      for (const l of this.links.values()) { try { l.node?.disconnect(); } catch { /* */ } }
+      this.links = new Map();
       this.patchNodes = [];
       this.cables = new Map();
       this.cableOv.clear(); // fresh cable GainNodes start at their static gain
       if (!sp) {
         let prev = this.inStage;
-        for (const e of next) { prev.connect(e.fx.input); prev = e.fx.output; }
-        prev.connect(this.post);
+        for (const e of next) { this.links.set('s:' + e.id, new DelayLink(this.ctx, prev, e.fx.input)); prev = e.fx.output; }
+        this.links.set('s:out', new DelayLink(this.ctx, prev, this.post));
       } else {
         this._wirePatch(sp, next);
       }
@@ -312,43 +320,64 @@ export class ChannelStrip {
       g.gain.value = c.gain;
       g._v = c.gain;
       src.connect(g);
-      g.connect(dst);
+      this.links.set(c.id, new DelayLink(this.ctx, g, dst)); // (delayed when its branch must wait: alignment())
       this.cables.set(c.id, g);
     }
   }
 
   /**
-   * Latency (s) of the insert section, input -> post: the sum of the serial chain, or with a plugboard patch
-   * the longest path from 'in' to 'out' (parallel branches are not aligned against each other).
+   * The insert section as an alignment graph (latency.js alignInserts): the serial chain (in -> fx… -> out) or the
+   * plugboard (port-1 cables = in-board sidechain keys); `keyArrive` = external sidechain keys.
    */
-  get insertLatency() {
+  _alignGraph() {
     const lat = (fx) => { const l = Number(fx?.latency); return Number.isFinite(l) && l > 0 ? l : 0; };
-    if (!this._sp) return this.effects.reduce((a, e) => a + lat(e.fx), 0);
+    const sr = this.ctx.sampleRate;
+    if (!this._sp) {
+      const nodes = this.effects.map((e) => ({ id: e.id, latency: lat(e.fx) }));
+      const ids = ['in', ...this.effects.map((e) => e.id), 'out'];
+      const cables = ids.slice(1).map((id, i) => ({ id: 's:' + id, from: ids[i], to: id }));
+      return { sampleRate: sr, nodes, cables, keys: { ...this.keyArrive }, fxNode: (fxId) => fxId };
+    }
     const sp = this._sp;
     const fxOf = new Map(this.effects.map((e) => [e.id, e.fx]));
-    const nodeLat = new Map(sp.nodes.map((n) => [n.id, n.kind === 'fx' ? lat(fxOf.get(n.fxId)) : 0]));
-    const incoming = new Map();
-    for (const c of sp.cables) {
-      if ((c.to.port || 0) !== 0) continue; // port 1 = sidechain key, not part of the audio path
-      if (!incoming.has(c.to.node)) incoming.set(c.to.node, []);
-      incoming.get(c.to.node).push(c.from.node);
+    const nodeOfFx = new Map();
+    const nodes = [];
+    for (const n of sp.nodes) {
+      if (n.kind === 'fx') { if (!fxOf.has(n.fxId)) continue; nodeOfFx.set(n.fxId, n.id); nodes.push({ id: n.id, latency: lat(fxOf.get(n.fxId)) }); }
+      else nodes.push({ id: n.id, latency: 0 });
     }
-    const memo = new Map();
-    const arrive = (id, depth = 0) => { // latency at the node's input; -Infinity = unreachable from 'in'
-      if (id === PATCH_IN) return 0;
-      if (memo.has(id)) return memo.get(id);
-      if (depth > 256) return -Infinity;
-      memo.set(id, -Infinity); // cycle guard
-      let best = -Infinity;
-      for (const from of incoming.get(id) || []) {
-        const a = arrive(from, depth + 1);
-        if (a > -Infinity) best = Math.max(best, a + (from === PATCH_IN ? 0 : nodeLat.get(from) || 0));
-      }
-      memo.set(id, best);
-      return best;
-    };
-    const l = arrive(PATCH_OUT);
-    return l > 0 ? l : 0;
+    const cables = sp.cables.map((c) => ({ id: c.id, from: c.from.node, to: c.to.node, port: c.to.port || 0 }));
+    const keys = {};
+    for (const [fxId, t] of Object.entries(this.keyArrive)) if (nodeOfFx.has(fxId)) keys[nodeOfFx.get(fxId)] = t;
+    return { sampleRate: sr, nodes, cables, keys, fxNode: (fxId) => nodeOfFx.get(fxId) };
+  }
+
+  /**
+   * Alignment plan of the insert section: { latency (input -> post, s), cable: {cableId: s}, key: {fxId: s} (delay
+   * for the external key), at: {fxId: s} (when the effect's aligned inputs arrive, after the strip input) }.
+   * Parallel plugboard branches are delayed to the slowest one before they meet; keys meet the audio they key.
+   */
+  alignment() {
+    const g = this._alignGraph();
+    const r = alignInserts(g);
+    const key = {}, at = {};
+    for (const e of this.effects) {
+      const nid = g.fxNode(e.id);
+      if (nid == null) continue;
+      if (nid in r.key) key[e.id] = r.key[nid];
+      if (nid in r.arrive) at[e.id] = r.arrive[nid];
+    }
+    return { latency: r.latency, cable: r.cable, key, at };
+  }
+
+  /** Latency (s) of the insert section, input -> post (aligned: the slowest branch / key; see alignment()). */
+  get insertLatency() { return this.alignment().latency; }
+
+  /** Put the alignment delays on the cables (MixGraph.updatePdc). -> the plan. */
+  applyAlignment(enabled = true) {
+    const plan = this.alignment();
+    for (const [id, link] of this.links) link.set(enabled ? plan.cable[id] || 0 : 0);
+    return plan;
   }
 
   /** PDC: compensation delays (s) for the main output and per send ({busId: s}). */
@@ -735,7 +764,7 @@ export class MixGraph {
    */
   _syncKeys(project) {
     const links = resolveKeyLinks(project);
-    const want = new Map(); // fxId -> { keyIn, src }
+    const want = new Map(); // fxId -> { keyIn, src, srcStrip, dstStrip }
     if (links.size) {
       for (const s of this._strips()) {
         for (const e of s.effects) {
@@ -743,20 +772,21 @@ export class MixGraph {
           const keyIn = e.fx.keyInput;
           if (!srcId || !keyIn) continue;
           const src = this.tracks.get(srcId)?.strip || this.buses.get(srcId);
-          if (src && src !== s) want.set(e.id, { keyIn, src: src.post });
+          if (src && src !== s) want.set(e.id, { keyIn, src: src.post, srcStrip: src, dstStrip: s });
         }
       }
     }
     this.keyLinks ||= new Map();
     for (const [id, l] of this.keyLinks) {
       const w = want.get(id);
-      if (w && w.keyIn === l.keyIn && w.src === l.src) continue;
-      try { l.src.disconnect(l.keyIn); } catch { /* already gone */ }
+      if (w && w.keyIn === l.keyIn && w.src === l.src) { l.dstStrip = w.dstStrip; l.srcStrip = w.srcStrip; continue; }
+      try { l.link.dispose(); } catch { /* already gone */ }
       this.keyLinks.delete(id);
     }
     for (const [id, w] of want) {
       if (this.keyLinks.has(id)) continue;
-      try { w.src.connect(w.keyIn); this.keyLinks.set(id, w); } catch (err) { this.onError(err); }
+      // a DelayLink: PDC delays the key when the ducked audio reaches the ducker later (updatePdc)
+      try { this.keyLinks.set(id, { ...w, link: new DelayLink(this.ctx, w.src, w.keyIn) }); } catch (err) { this.onError(err); }
     }
   }
 
@@ -766,24 +796,69 @@ export class MixGraph {
    * compensation delay. Called after each sync and whenever a plugin reports its latency.
    */
   updatePdc(project = this._project) {
+    const enabled = project?.pdc !== false;
+    const keyLinks = [...(this.keyLinks || new Map()).entries()];
+    const strips = [...this._strips()];
+    // sidechain keys meet the audio they key: a key's arrival (source `post` time) depends on the PDC plan and
+    // can lengthen the keyed strip (its audio waits for a late key) — iterate to a fixed point (keys form a DAG)
+    for (const s of strips) s.keyArrive = {};
+    let plan = null, tIn = null;
+    for (let pass = 0; pass < 6; pass++) {
+      plan = this._planPdc(project, enabled);
+      tIn = this._inputTimes(plan);
+      if (!enabled) break;
+      let changed = false;
+      for (const [fxId, l] of keyLinks) {
+        const src = l.srcStrip, dst = l.dstStrip;
+        if (!tIn.has(src) || !tIn.has(dst)) continue;
+        const arrive = Math.round((tIn.get(src) + src.insertLatency - tIn.get(dst)) * this.ctx.sampleRate) / this.ctx.sampleRate;
+        if (dst.keyArrive[fxId] !== arrive) { dst.keyArrive[fxId] = arrive; changed = true; }
+      }
+      if (!changed) break;
+    }
+    this.pdc = plan.pdc;
+    // apply: in-strip alignment (branches / keys), key link delays, per-route compensation, LFO heard offsets
+    const total = this.latency;
+    let lfoShift = false;
+    for (const s of strips) {
+      const a = s.applyAlignment(enabled);
+      for (const e of s.effects) {
+        const heard = enabled && tIn.has(s) ? total - (tIn.get(s) + (a.at[e.id] || 0)) : 0;
+        if (Math.abs((e.heard || 0) - heard) > 1e-9) { e.heard = heard; lfoShift = true; }
+      }
+    }
+    for (const [fxId, l] of keyLinks) l.link.set(enabled ? l.dstStrip.alignment().key[fxId] || 0 : 0);
+    for (const t of plan.tracks) {
+      const e = this.tracks.get(t.id);
+      // a track routed into a bus: its main out is compensated like a send to that bus
+      e.strip.setCompensation(t.outBus ? this.pdc.trackSend[t.id]?.[t.outBus] || 0 : this.pdc.trackOut[t.id], this.pdc.trackSend[t.id]);
+    }
+    if (lfoShift) this.syncLfos(); // (no-op while stopped)
+    if (plan.prevTotal !== this.pdc.total) this.o.onLatency?.(this.pdc);
+    return this.pdc;
+  }
+
+  _planPdc(project, enabled) {
     const tracks = [];
     for (const [id, e] of this.tracks) {
       const inst = Number(e.instrument?.latency);
       const sends = [...e.strip.sends.keys()];
       const outBus = this._busIdOf(e.strip.outDest);
       if (outBus && !sends.includes(outBus)) sends.push(outBus);
-      tracks.push({ id, latency: e.strip.insertLatency + (Number.isFinite(inst) && inst > 0 ? inst : 0), sends, outBus });
+      tracks.push({ id, latency: e.strip.insertLatency + (Number.isFinite(inst) && inst > 0 ? inst : 0), sends, outBus, inst: Number.isFinite(inst) && inst > 0 ? inst : 0 });
     }
     const buses = [...this.buses].map(([id, s]) => ({ id, latency: s.insertLatency }));
-    const prev = this.pdc?.total;
-    this.pdc = computePdc({ sampleRate: this.ctx.sampleRate, enabled: project?.pdc !== false, tracks, buses, master: this.master.insertLatency });
-    for (const t of tracks) {
-      const e = this.tracks.get(t.id);
-      // a track routed into a bus: its main out is compensated like a send to that bus
-      e.strip.setCompensation(t.outBus ? this.pdc.trackSend[t.id]?.[t.outBus] || 0 : this.pdc.trackOut[t.id], this.pdc.trackSend[t.id]);
-    }
-    if (prev !== this.pdc.total) this.o.onLatency?.(this.pdc);
-    return this.pdc;
+    const pdc = computePdc({ sampleRate: this.ctx.sampleRate, enabled, tracks, buses, master: this.master.insertLatency });
+    return { pdc, tracks, prevTotal: this.pdc?.total };
+  }
+
+  /** When each strip's input hears an event dispatched at 0 (compensated graph): Map(strip -> s). */
+  _inputTimes({ pdc, tracks }) {
+    const m = new Map();
+    for (const t of tracks) m.set(this.tracks.get(t.id).strip, t.inst);
+    for (const [id, s] of this.buses) m.set(s, pdc.align - (pdc.busLatency[id] || 0));
+    m.set(this.master, pdc.align);
+    return m;
   }
 
   _busIdOf(node) {
