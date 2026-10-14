@@ -40,6 +40,7 @@ export class Store extends Emitter {
    * Mutate the project inside fn(project). Records an undo step.
    * opts.coalesce: merge with previous step if same label within 800ms (knob drags).
    * opts.undo === false: no undo step (transient things like playhead / UI-only fields).
+   * opts.guard === false: skip the edit guards (addGuard) — for whole-project restores (version history).
    */
   transact(label, fn, opts = {}) {
     const recordUndo = opts.undo !== false;
@@ -54,7 +55,7 @@ export class Store extends Emitter {
       this._lastLabel = label;
       this._lastTime = now;
     }
-    const caps = this._batchDepth === 0 && this.guards.length ? this.guards.map((g) => g.capture(this.project)) : null;
+    const caps = this._batchDepth === 0 && this.guards.length && opts.guard !== false ? this.guards.map((g) => g.capture(this.project)) : null;
     this._batchDepth++;
     let result;
     try {

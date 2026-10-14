@@ -370,12 +370,80 @@ esbuild (build time only; it applies three small, checked superdough patches —
 * Scheduling: lookahead scheduler (25 ms timer, ~120 ms horizon). Same event-collection code is
   reused for offline rendering via `OfflineAudioContext`.
 
+## Pro engine (PDC, freeze, export quality, streaming, recovery, health) — APIs for other features
+
+**Plugin delay compensation** (`src/audio/latency.js` pure, `mixer.js`, `scheduler.js`, `render.js`)
+* Every insert effect exposes `fx.latency` (s, constant whether bypassed — the bypass path is delayed to match) and
+  `fx.refreshLatency()`; instruments expose `instrument.latency`. Sources: Chromium-measured table
+  (`effectLatencyFrames(def, sr)`: compressor / limiter 6 ms pre-delay, gate 4 ms, tape 12 ms + 2x oversampling,
+  distortion / saturator oversampling, mastering), plugin-reported (WAM `getCompensationDelay()`), or a manual
+  `latency` (samples) on any effect / instrument def (Faust, odd plugins).
+* `computePdc({sampleRate, enabled, tracks:[{id, latency, sends}], buses, master})` → per-route compensation. The
+  `MixGraph` puts `DelayLink`s on each track→master link and each send link (`ChannelStrip.setCompensation`) so
+  every route meets at the master input; `graph.latency` = whole-mix delay, `graph.latencyReport()`,
+  `graph.updatePdc()` (also called when a plugin reports its latency). Plugboard: longest in→out path.
+* Realtime: the scheduler pre-rolls every event by `graph.latency` (`getPreroll`); anchors / `beatAt` /
+  `getPosition` / `engine.beatAtTime(t)` stay in *heard* time, so recording alignment (item 2) needs no change.
+  Fader automation is timed per strip (`faderOffsets`); the metronome joins after the master section.
+  Offline: the render is padded (`PDC_PAD` = 1 s) and the head trimmed → sample-identical to a latency-free graph.
+* `project.pdc === false` turns compensation off (old behaviour). `engine.getLatency()`, `engine.on('latency')`.
+
+**Freeze / bounce** (`src/core/freeze.js` pure, `src/audio/freeze.js`)
+* `track.frozen = {sampleId, mode:'preFx'|'postFx'|'postFader', renderMode:'song'|'pattern', start, length, loop?,
+  gain, bpm, at}`; the original track stays intact. `frozenMode(project, track)` says whether the freeze is in effect
+  (sample present, same transport mode, same tempo — else the track plays live again; `frozenStaleReason`).
+* While frozen the mixer instantiates no instrument / code source and (postFx/postFader) no inserts; the scheduler
+  emits the render as an audio clip (song) or a seamless loop (pattern). postFader bypasses volume / pan.
+* `engine.freezeTrack(id, {mode})`, `engine.unfreezeTrack(id)`, `engine.bounceTrack(id, {mode='postFader',
+  muteSource=true})` → new audio track id, `engine.flattenTrack(id, {mode='postFx'})`, `engine.renderTrack(id, opts)`
+  → `{buffer, info}`. Renders are 24-bit TPDF-dithered WAV samples (`sample.frozen` flag), peak-normalised with the
+  level restored by `frozen.gain` / clip gain.
+* Edits are blocked by a store guard (`createFreezeGuard`, `Store.addGuard`): a transaction changing a frozen
+  track's sound (notes, clips, instrument, inserts, code, fader for postFader) is rolled back for that track and
+  `store.on('blocked', {message})` fires (UI: toast with `FROZEN_HINT`). `store.transact(label, fn, {guard:false})`
+  skips guards (whole-project restores).
+* UI: track menu ▸ Freeze / Freeze… / Bounce / Flatten (`app.freezeMenuItems`), mixer ❄ button, arrange ❄ badge.
+
+**Export quality** (`src/io/wav.js`, re-exported by `src/audio/wav.js`; `src/audio/dsp/truepeak.js`)
+* `encodeWav(buffers, {bitDepth: 16|24|32, dither: 'none'|'tpdf', noiseShaping: 'none'|'first'|'shaped', seed,
+  sampleRate})` — buffers = AudioBuffer | Float32Array[] | {channels, sampleRate}. 32 = bit-exact float (overs kept);
+  integer formats clamp after dither (never wrap). `decodeWav`, `wavInfo`, `readWavFrames` (range decode).
+* `truePeak(channels)`, `truePeakDb`, `limitTruePeak(channels, sr, {ceilingDb=-1, lookahead, release})` — offline
+  look-ahead true-peak limiter (no latency). `renderOffline(..., {truePeakCeiling: -1})` applies it to the master;
+  `applyTruePeakLimit(audioBuffer, opts)`. The render path is float32 end to end. (Export UI: item 4.)
+
+**Long-audio streaming** (`src/audio/stream/*`)
+* Samples ≥ `STREAM_MIN_SECONDS` (30 s) are not decoded into AudioBuffers for clip playback: `SampleStreamer`
+  caches PCM chunks (32768 frames) in IndexedDB `daw3-pcm` via a module Worker (`stream-worker.js`; WAV parsed in
+  the worker, other formats decoded once with decodeAudioData and handed over), and each clip play is an
+  AudioWorkletNode `daw3-stream` (`stream-processor.js`) fed chunk by chunk over a MessagePort (3 chunks ahead,
+  linear resampling when rates differ, silence + underrun count when late). Short samples, offline renders and
+  browsers without AudioWorklet / module workers / IndexedDB use buffers. `engine.decodeSample(id)` returns a light
+  `{duration, streamed: true, peaks}` object for streamed samples (`{full: true}` forces a buffer);
+  `engine.getSamplePeaks(id)` gives the waveform overview.
+
+**Crash-safe autosave / recovery / history** (`src/io/recovery.js`, UI in `src/ui/engine-ui.js`)
+* `createRecovery({backend})`: incremental snapshots to IndexedDB `daw3-recovery` (project JSON without samples;
+  each sample stored once by content key) every 10 s when changed, on tab hide and on pagehide; sessions carry a
+  heartbeat and are marked clean on pagehide. On boot `findUnclean()` → "Recover unsaved session (time)" dialog.
+  `listSnapshots(projectId)` (last 20 per project), `loadSnapshot(id)`; main menu ▸ Version history… restores as
+  one undoable step (`restoreProject`). The older whole-project autosave (`autosave.js`) is unchanged.
+
+**Engine health** (`src/audio/monitor.js`, `engine.js`)
+* `engine.getMetrics()` → `{load, peakLoad, xruns, late, lateEvents, lateMs, latencyMs, pdcMs, sampleRate, state}`
+  (load from `AudioContext.renderCapacity` where available; xruns from `playoutStats` or audio-clock drift;
+  scheduler lateness / skipped windows). Status bar: DSP / dropouts / latency + PDC, sample-rate select, Panic.
+* `engine.panic()` (all notes off + 0.6 s master mute to kill tails; Shift+Esc), `engine.setSampleRate(rate|null)`
+  (rebuilds the context, resumes playback; `SAMPLE_RATES`; preference in localStorage `daw3-sample-rate`; emits
+  `'samplerate'` and `'context'` — anything holding nodes of the old context, e.g. the recorder, must rebind).
+
 ## IO (`src/io/*.js`)
 
 * `project-file.js`: `serializeProject(project) -> string`, `parseProjectFile(text) -> project` (validates, normalizes),
   `downloadProject(project)`, `readFileAsProject(file)`.
 * `midi.js`: `exportMidi(project, {mode}) -> Uint8Array`, `importMidi(arrayBuffer) -> {bpm, tracks:[{name, notes, isDrums}]}`.
-* `wav.js`: `encodeWav(audioBuffer, {bitDepth:16|24|32}) -> ArrayBuffer`.
+* `wav.js`: `encodeWav(buffers, {bitDepth:16|24|32, dither, noiseShaping}) -> ArrayBuffer`, `decodeWav` (see Pro engine).
+* `recovery.js`: crash-safe incremental snapshots, recovery and version history (see Pro engine).
 * `autosave.js`: IndexedDB autosave + list/restore of local projects.
 * `samples.js`: `fileToSample(file) -> Sample` (base64), `sampleToArrayBuffer(sample)`.
 

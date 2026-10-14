@@ -194,6 +194,7 @@ export function createActions(app) {
       items.push({ label: 'New pattern', icon: 'plus', onClick: () => newPattern(trackId) });
       items.push({ label: 'Export track as Strudel code', icon: 'code', onClick: () => exportCode([trackId]) });
     }
+    if (app.freezeMenuItems) items.push('-', ...app.freezeMenuItems(trackId)); // engine-ui.js: freeze / bounce / flatten
     items.push('-', { label: 'Delete track', icon: 'trash', onClick: () => deleteTrack(trackId) });
     return items;
   }
@@ -899,6 +900,7 @@ export function createActions(app) {
       { label: 'Recent (browser storage)…', icon: 'layers', onClick: () => showLocalProjects() },
       { label: 'Save / download project', icon: 'save', shortcut: 'Ctrl+S', onClick: () => saveProject() },
       { label: 'Rename project…', icon: 'pencil', onClick: () => renameProject() },
+      { label: 'Version history…', icon: 'history', onClick: () => app.showHistory?.() },
       '-',
       { label: 'Import', icon: 'upload', submenu: [
         { label: 'Audio samples…', icon: 'wave', onClick: () => importSamples() },

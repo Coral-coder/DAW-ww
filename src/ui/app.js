@@ -9,6 +9,7 @@ import { createActions } from './actions.js';
 import { createHeader } from './header.js';
 import { installKeyboard } from './keyboard.js';
 import { installAutomationRecorder } from './automation-recorder.js';
+import { installEngineUi } from './engine-ui.js';
 
 export const VIEWS = [
   { id: 'arrange', label: 'Arrange', icon: 'timeline', key: '1', module: './views/arrange.js', factory: 'createArrangeView', help: 'Timeline: place pattern & audio clips into a full song.' },
@@ -158,7 +159,7 @@ export async function createApp(rootEl) {
   const updateStatus = () => {
     const p = store.get();
     const pats = Object.keys(p.patterns).length;
-    statusRight.textContent = `${p.tracks.length} tracks · ${pats} patterns · ${p.clips.length} clips · ${engine.ctx ? (engine.ctx.sampleRate / 1000).toFixed(1) + ' kHz' : 'audio idle'} · ${store.canUndo() ? 'Ctrl+Z to undo' : ''}`;
+    statusRight.textContent = `${p.tracks.length} tracks · ${pats} patterns · ${p.clips.length} clips · ${store.canUndo() ? 'Ctrl+Z to undo' : ''}`;
   };
 
   app.subscribe((r) => {
@@ -171,6 +172,7 @@ export async function createApp(rootEl) {
 
   installKeyboard(app);
   installAutomationRecorder(app);
+  const engineUi = installEngineUi(app, status); // health meter, panic, sample rate, freeze, recovery / history
 
   await showView(ui.get('view'));
   app.panels = {
@@ -181,6 +183,7 @@ export async function createApp(rootEl) {
 
   // Restore last session (autosave) or offer the welcome screen.
   await app.actions.boot();
+  await engineUi.afterBoot();
   updateStatus();
   app.setStatus('Ready. Press Space to play, ? for help.');
   return app;

@@ -1541,9 +1541,11 @@ export function createArrangeView(app) {
         el.classList.toggle('selected', selected);
         el.classList.toggle('is-muted', !!t.mute);
         if (name.textContent !== t.name) name.textContent = t.name;
-        const icn = typeIcon(t);
+        const frozen = !!t.frozen?.sampleId;
+        el.classList.toggle('is-frozen', frozen);
+        const icn = frozen ? 'snow' : typeIcon(t);
         if (ic.dataset.icon !== icn) { ic.dataset.icon = icn; ic.replaceChildren(icon(icn, 14)); }
-        ic.title = typeName(t);
+        ic.title = frozen ? `${typeName(t)} — frozen (plays its rendered audio; unfreeze from the track menu to edit)` : typeName(t);
         mute.setValue(!!t.mute);
         solo.setValue(!!t.solo);
         arm.setValue(!!t.arm);

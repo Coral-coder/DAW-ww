@@ -17,6 +17,7 @@ import { sampleToArrayBuffer } from '../../io/samples.js';
 
 export const STREAM_MIN_SECONDS = 30;
 const CHUNK_FRAMES = 32768;
+const WORKLET_TIMEOUT = 6000;
 
 /** Long enough to stream? Uses sample.duration, else estimates from the payload size (~1.4 MB/s for WAV). */
 export function isLongSample(sample) {
@@ -52,8 +53,15 @@ export class SampleStreamer {
       if (e.data.error) c.reject(new Error(e.data.error)); else c.resolve(e.data);
     };
     this.worker.onerror = (e) => this.onError(new Error(`Stream worker: ${e.message || 'failed'}`));
-    if (!workletLoaded.has(ctx)) workletLoaded.set(ctx, ctx.audioWorklet.addModule(new URL('./stream-processor.js', import.meta.url).href));
+    if (!workletLoaded.has(ctx)) {
+      // never wait forever: some browsers stall on addModule — streaming is then off and samples play from memory
+      const add = ctx.audioWorklet.addModule(new URL('./stream-processor.js', import.meta.url).href);
+      const stall = new Promise((_, reject) => setTimeout(() => reject(new Error('AudioWorklet did not load')), WORKLET_TIMEOUT));
+      workletLoaded.set(ctx, Promise.race([add, stall]));
+    }
+    this.broken = false;
     this.ready = workletLoaded.get(ctx);
+    this.ready.catch(() => { this.broken = true; });
   }
 
   _call(msg, transfer = []) {
@@ -67,7 +75,7 @@ export class SampleStreamer {
   handle(id) { return this.metas.get(id) || null; }
 
   /** Is this sample streamed (long, and not failed)? Callers then must not decode it into a buffer for clips. */
-  streams(id, sample) { return !this.failed.has(id) && isLongSample(sample); }
+  streams(id, sample) { return !this.broken && !this.failed.has(id) && isLongSample(sample); }
 
   prepare(id, sample) {
     if (this.metas.has(id)) return Promise.resolve(this.metas.get(id));
@@ -107,7 +115,7 @@ export class SampleStreamer {
     }, (e) => {
       this.preparing.delete(id);
       this.failed.add(id);
-      this.onError(new Error(`Could not stream "${sample.name}": ${e?.message || e} — it plays from memory instead.`));
+      if (!this.broken) this.onError(new Error(`Could not stream "${sample.name}": ${e?.message || e} — it plays from memory instead.`));
       throw e;
     });
     this.preparing.set(id, p);

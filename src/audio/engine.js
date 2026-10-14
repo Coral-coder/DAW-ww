@@ -158,7 +158,10 @@ export class AudioEngine extends Emitter {
     if (!this.ctx) return;
     for (const id of keys) {
       // long samples stream from the PCM cache (no AudioBuffer); everything else is decoded up front
-      if (this._streams(id)) this.streamer.prepare(id, project.samples[id]).then(() => this.emit('samples', { id, streamed: true }), () => {});
+      if (this._streams(id)) {
+        this.streamer.prepare(id, project.samples[id]).then(() => this.emit('samples', { id, streamed: true }),
+          () => { if (this.project.samples?.[id]) this.decodeSample(id, { full: true }).catch(() => {}); }); // fall back to memory
+      }
       else if (!this.buffers.has(id)) this.decodeSample(id).catch(() => {});
     }
   }

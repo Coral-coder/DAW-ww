@@ -32,12 +32,16 @@ export const workletsLoaded = (ctx) => workletOk.get(ctx) === true;
  * to `ctx`. Never blocks for long: if a browser stalls on addModule, Strudel still plays everything that
  * doesn't need a worklet.
  */
+let workletsStalled = false; // addModule hung once in this browser (some headless / locked-down builds)
 function ensureWorklets(sd, ctx) {
+  // An OfflineAudioContext with a pending addModule never finishes rendering: once addModule has stalled here,
+  // offline renders (export / freeze) go without worklets instead of hanging forever.
+  if (!workletCtx.has(ctx) && workletsStalled && isOfflineCtx(ctx)) workletCtx.set(ctx, Promise.resolve());
   if (!workletCtx.has(ctx)) {
     const urls = typeof sd.daw3WorkletUrls === 'function' ? sd.daw3WorkletUrls() : [];
     const load = Promise.all(urls.map((u) => ctx.audioWorklet?.addModule(u))).then(() => { if (urls.length && ctx.audioWorklet) workletOk.set(ctx, true); }, (e) => console.warn('[strudel] AudioWorklets unavailable:', e?.message || e));
     let timer;
-    const timeout = new Promise((resolve) => { timer = setTimeout(() => { console.warn('[strudel] AudioWorklets are taking long to load — continuing without waiting'); resolve(); }, WORKLET_TIMEOUT); });
+    const timeout = new Promise((resolve) => { timer = setTimeout(() => { workletsStalled = true; console.warn('[strudel] AudioWorklets are taking long to load — continuing without waiting'); resolve(); }, WORKLET_TIMEOUT); });
     workletCtx.set(ctx, Promise.race([load, timeout]).finally(() => clearTimeout(timer)));
   }
   return workletCtx.get(ctx);
