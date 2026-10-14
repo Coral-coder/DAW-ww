@@ -1285,7 +1285,7 @@ export function createDevicePanel(app) {
       if (f) { f.params = f.params || {}; f.params[k] = v; }
     }, { coalesce: true }), { owner: tgt.id, prefix: `fx:${fx.id}:` });
     shell.body.appendChild(h('div.dv-params', pb.el));
-    const plugUpd = def.plugin ? pluginEffectEditor(app, shell.body, fx, { edit: (lbl, fn, o) => editTarget(tgt, lbl, (ow) => { const f = ow.fx.find((x) => x.id === fx.id); if (f) { f.params = f.params || {}; fn(f.params); } }, o) }) : null;
+    const plugUpd = def.plugin ? pluginEffectEditor(app, shell.body, fx, { owner: tgt.id, edit: (lbl, fn, o) => editTarget(tgt, lbl, (ow) => { const f = ow.fx.find((x) => x.id === fx.id); if (f) { f.params = f.params || {}; fn(f.params); } }, o) }) : null;
     return {
       el: shell.el,
       update(c) {

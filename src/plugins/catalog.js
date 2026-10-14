@@ -145,6 +145,17 @@ export const CATALOG = [
 ];
 
 /** Categories in catalog order (optionally for one kind / type). */
+/**
+ * Native plugins (Mac app): replace the catalog's 'native' entries with this list (from the
+ * plugin database, src/native/plugin-db.js catalogEntries). The kind only appears once registered.
+ */
+export function setNativeEntries(entries = []) {
+  for (let i = CATALOG.length - 1; i >= 0; i--) if (CATALOG[i].kind === 'native') CATALOG.splice(i, 1);
+  CATALOG.unshift(...entries);
+  if (entries.length) KIND_LABELS.native = 'Native (VST3 / AU / CLAP)';
+  else delete KIND_LABELS.native;
+}
+
 export function catalogCategories(filter = {}) {
   const out = [];
   for (const e of CATALOG) {

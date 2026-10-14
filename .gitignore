@@ -3,4 +3,7 @@ node_modules/
 *.log
 /tmp/
 /scratch/
+dist/
+desktop/native/third_party/*/
+desktop/native/build/
 *.whl

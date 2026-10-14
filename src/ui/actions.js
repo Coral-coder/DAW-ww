@@ -24,6 +24,7 @@ import { splitTopLevel as splitStrudelTopLevel, loadStrudel } from '../code/stru
 import { repairStrudel, diagnose, salvageParts } from '../code/repair.js';
 import { saveLocal, listLocal, loadLocal, deleteLocal, createAutosaver } from '../io/autosave.js';
 import { codeToPatterns, patternsToCode } from '../code/convert.js';
+import { versionLabel } from '../version.js';
 
 /** Where daW³'s complete source code lives (offered in the app — AGPL-3.0 §13). */
 export const SOURCE_URL = 'https://github.com/Coral-coder/daw3';
@@ -500,6 +501,7 @@ export function createActions(app) {
     try {
       const result = await engine.renderOffline({
         startBeat: 0, endBeat, stems, mode: songMode ? 'song' : 'pattern',
+        onProgress: (f) => { prog.firstChild.style.width = `${Math.round(35 + f * 55)}%`; }, // realtime bounce (native plugins)
         // shown when Strudel-engine code tracks had to be exported with daW³ instruments
         onNotice: (msg) => { if (!exportNoticeShown) toast(msg, { level: 'warn', timeout: 9000 }); exportNoticeShown = true; },
       });
@@ -1015,9 +1017,12 @@ export function createActions(app) {
         { label: 'Command palette', icon: 'search', shortcut: app.control.shortcutLabel('palette.open'), onClick: () => app.control.openPalette() },
       ] : []),
       { label: `Computer keyboard piano (\`)`, icon: 'keyboard', onClick: () => { app.keyboardPiano.enabled = !app.keyboardPiano.enabled; toast(`Keyboard piano ${app.keyboardPiano.enabled ? 'ON' : 'OFF'}`); } },
+      { label: 'Pocket layout (phone / touch)', icon: 'music', onClick: () => import('../mobile/mode.js').then((m) => m.switchLayout('pocket')) },
       { label: `Theme: ${ui.get('theme') === 'dark' ? 'switch to light' : 'switch to dark'}`, icon: 'sun', onClick: () => ui.set({ theme: ui.get('theme') === 'dark' ? 'light' : 'dark' }) },
       { label: 'Help & shortcuts', icon: 'help', shortcut: '?', onClick: () => showHelp() },
       { label: 'About / credits & source code', icon: 'code', onClick: () => showAbout() },
+      '-',
+      { label: versionLabel(), icon: 'sparkles', onClick: () => showAbout() },
     ];
   }
 
@@ -1329,9 +1334,17 @@ export function createActions(app) {
   }
 
   // AGPL §13: everyone using daW³ over the network is offered its complete source code
+  /** " · desktop app for macOS / Windows / Linux" when running in the desktop shell. */
+  function nativeLabel() {
+    const plat = typeof window !== 'undefined' && window.daw3Native?.platform;
+    if (!plat) return ' · web app';
+    return ` · desktop app (${{ darwin: 'macOS', win32: 'Windows', linux: 'Linux' }[plat] || plat})`;
+  }
+
   function showAbout() {
     const link = (href, text) => h('a', { href, target: '_blank', rel: 'noopener' }, text || href);
     const body = h('div.about',
+      h('p.about-version', h('b', versionLabel()), nativeLabel()),
       h('p', h('b', 'daW³'), ' — a browser DAW. Free software under the ',
         link('https://www.gnu.org/licenses/agpl-3.0.html', 'GNU Affero General Public License v3.0 or later'), '.'),
       h('p', h('b', 'Source code: '), link(SOURCE_URL), ' — you may use, study, change and share it under the same license.'),
@@ -1348,7 +1361,7 @@ export function createActions(app) {
   }
 
   // ---------------------------------------------------------------- boot / autosave
-  async function boot() {
+  async function boot({ welcome = true } = {}) {
     let restored = false;
     try {
       const list = await listLocal();
@@ -1365,7 +1378,7 @@ export function createActions(app) {
       }
     } catch (e) { console.warn('autosave restore failed', e); }
     try { createAutosaver(store, { intervalMs: 4000 }); } catch (e) { console.warn('autosave unavailable', e); }
-    if (!restored && !new URLSearchParams(location.search).has('nowelcome')) showWelcome();
+    if (!restored && welcome && !new URLSearchParams(location.search).has('nowelcome')) showWelcome();
     ui.set({ booted: true }); // panels that remember per-project state (the guide) can now check which project is open
   }
 

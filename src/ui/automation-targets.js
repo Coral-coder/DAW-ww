@@ -41,12 +41,12 @@ export function ownerView(project, id) {
 
 /** Faust plugin controls of a plugin def ({type, params}) as ParamDefs keyed 'values.<address>'. */
 function faustDefs(def) {
-  if (def?.type !== 'faust') return [];
+  if (def?.type !== 'faust' && def?.type !== 'native') return [];
   const list = getStatus(pluginKey(def))?.info?.params || [];
   return list.map((p) => ({
     key: `values.${p.address}`, label: p.label || p.address, type: p.type === 'bool' ? 'bool' : 'number',
     min: p.min ?? 0, max: p.max ?? 1, step: p.step, default: p.init ?? p.min ?? 0,
-    curve: p.scale === 'log' && p.min > 0 ? 'log' : p.scale === 'exp' ? 'exp' : 'lin', section: p.section || 'Faust',
+    curve: p.scale === 'log' && p.min > 0 ? 'log' : p.scale === 'exp' ? 'exp' : 'lin', section: p.section || (def.type === 'native' ? 'Plugin' : 'Faust'),
   }));
 }
 

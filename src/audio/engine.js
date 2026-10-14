@@ -15,6 +15,7 @@ import { Scheduler, CodeCache } from './scheduler.js';
 import { renderOffline as renderOfflineImpl, decodeSampleData, findSampleIdByName } from './render.js';
 import { prefetchCodeSamples } from './code-instrument.js';
 import { activeLanes, automationOwner, valueAt } from '../core/automation.js';
+import { nativeAudioForEngine } from '../native/client.js';
 import { createFreezeGuard } from '../core/freeze.js';
 import * as freeze from './freeze.js';
 import { EngineMonitor } from './monitor.js';
@@ -78,18 +79,24 @@ export class AudioEngine extends Emitter {
     this._initPromise = (async () => {
       const AC = globalThis.AudioContext || globalThis.webkitAudioContext;
       if (!AC) throw new Error('Web Audio API is not supported in this browser');
+      // Mac app: the native audio engine (device / rate / buffer size from Audio Settings) — null in browsers;
+      // its context options win over the in-browser sample-rate choice
+      const native = await nativeAudioForEngine().catch(() => null);
+      const nativeOpts = native?.contextOptions() || {};
       let ctx;
       try {
-        ctx = new AC(this.sampleRate ? { latencyHint: 'interactive', sampleRate: this.sampleRate } : { latencyHint: 'interactive' });
+        ctx = new AC({ latencyHint: 'interactive', ...(this.sampleRate ? { sampleRate: this.sampleRate } : {}), ...nativeOpts });
       } catch (e) {
         // the device / browser refused the rate: fall back to its default
         this._error(new Error(`Sample rate ${this.sampleRate} Hz is not available (${e?.message || e}) — using the device default.`));
         this.sampleRate = null;
-        ctx = new AC({ latencyHint: 'interactive' });
+        ctx = new AC({ latencyHint: 'interactive', ...nativeOpts });
       }
       this.ctx = ctx;
+      this.native = native;
+      const destination = native ? await native.attachOutput(ctx).catch(() => ctx.destination) : ctx.destination;
       this.graph = new MixGraph(ctx, {
-        destination: ctx.destination,
+        destination,
         getBpm: () => this.project.bpm,
         getBeatAt: (t) => this.scheduler?.beatAt(t) ?? null,
         getSampleBuffer: (id) => this.getSampleBuffer(id),
@@ -552,7 +559,17 @@ export class AudioEngine extends Emitter {
 
   // ------------------------------------------------------------------ rendering
   /** See render.js. Uses (and fills) the engine's decoded-sample cache. */
-  renderOffline(opts = {}) {
+  async renderOffline(opts = {}) {
+    // Mac app: native effects / realtime-only plugins can't run in an OfflineAudioContext -> realtime bounce
+    if (this.native) {
+      const { nativeExportMode, realtimeBounce } = await import('../native/export.js');
+      const m = nativeExportMode(this.project);
+      if (m.mode === 'realtime') {
+        opts.onNotice?.(`Realtime bounce: ${m.reason}, so the song plays through once while it is recorded${opts.stems ? ' (stems: master only)' : ''}.`);
+        const buf = await realtimeBounce(this, { startBeat: opts.startBeat ?? 0, endBeat: opts.endBeat, tail: opts.tail ?? 2, onProgress: opts.onProgress, signal: opts.signal });
+        return opts.stems ? { master: buf } : buf;
+      }
+    }
     return renderOfflineImpl(this.project, {
       ...opts,
       sampleCache: this.buffers,
@@ -610,18 +627,36 @@ export class AudioEngine extends Emitter {
    * Switch the AudioContext sample rate (44100 / 48000 / 96000 … or null = device default). Rebuilds the context
    * and the mix graph; playback resumes where it was. Rejects / falls back if the device refuses the rate.
    */
-  async setSampleRate(rate) {
+  setSampleRate(rate) {
+    // one switch at a time (the native device's 'audio-config' event may ask for the same rate again meanwhile)
+    const run = () => this._setSampleRate(rate);
+    this._rateChange = (this._rateChange || Promise.resolve()).then(run, run);
+    return this._rateChange;
+  }
+
+  /** fn() (may be async) runs before the context is torn down by a sample-rate switch — e.g. to save plugin state. */
+  onBeforeRebuild(fn) { (this._rebuildHooks ||= new Set()).add(fn); return () => this._rebuildHooks.delete(fn); }
+
+  async _setSampleRate(rate) {
     rate = rate ? Number(rate) : null;
+    // Mac app with the native engine on: the device itself switches rate (the stream is renegotiated in place)
+    const nat = this.native;
+    if (rate && nat?.enabled && nat.config?.sampleRate !== rate) {
+      try { await nat.setDeviceRate(rate); } catch (e) { this._error(new Error(`The audio device refused ${rate} Hz: ${e?.message || e}`)); }
+    }
     if (rate === this.sampleRate && (!this.ctx || !rate || this.ctx.sampleRate === rate)) return this.ctx?.sampleRate ?? null;
+    if (this.ctx && nat?.enabled && rate && nat.config?.sampleRate !== rate) return this.ctx.sampleRate; // the device stayed at its rate
     this.sampleRate = rate;
     if (!this.ctx) return null;
     const wasPlaying = this._playing;
     const pos = this.getPosition();
     if (wasPlaying) this.pause();
     this.stopAudition();
+    for (const fn of this._rebuildHooks || []) { try { await fn(); } catch (e) { this._error(e); } }
     try { this.graph?.dispose(); } catch { /* */ }
     try { this.streamer?.dispose(); } catch { /* */ }
     const old = this.ctx;
+    this.native?.detachOutput?.(old);
     this.ctx = null;
     this.graph = null;
     this.scheduler = null;

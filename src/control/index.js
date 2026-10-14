@@ -249,7 +249,11 @@ export function installControl(app) {
     stop: () => { if (engine.isPlaying) actions.togglePlay(); },
     setBeat: (b) => actions.setPosition(b),
     now,
-  }, { url: settings.link.url });
+  }, {
+    url: settings.link.url,
+    // Mac app: Ableton Link is built in (the daw3-link process) — started on connect, no bridge to run
+    start: typeof window !== 'undefined' && window.daw3Native?.link ? () => window.daw3Native.link.start().then((r) => r?.url) : null,
+  });
   link.on('status', () => bus.emit());
   if (settings.link.enabled) link.connect(settings.link.url);
 

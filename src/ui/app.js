@@ -20,9 +20,14 @@ export const VIEWS = [
   { id: 'code', label: 'Code', icon: 'code', key: '6', module: './views/code.js', factory: 'createCodeView', help: 'Strudel-style live coding; import & expand .strudel files.' },
   { id: 'patch', label: 'Plugboard', icon: 'plug', key: '7', module: './views/patch.js', factory: 'createPatchView', help: 'Plugboard: patch effects with cables — parallel chains, splits, sidechain ducking, whole-song routing.' },
   { id: 'setlist', label: 'Setlist', icon: 'sparkles', key: '8', module: './views/setlist.js', factory: 'createSetlistView', help: 'Setlist: an endless DJ set — pick a genre and key, every layer loops and evolves phrase by phrase; energy arc, key moves, per-layer control.' },
+  { id: 'decks', label: 'Decks', icon: 'headphones', key: '9', module: './views/decks.js', factory: 'createDecksView', help: 'Decks: import music (BPM, key / Camelot, phrases detected), mix on two decks, slice loops to pads, sampler, arrangement or the Setlist.' },
 ];
 
-export async function createApp(rootEl) {
+/**
+ * The app core shared by the desktop layout and the Pocket (phone) layout: store, UI state, audio engine,
+ * rAF-batched render subscriptions, project normalizers and the action API.
+ */
+export function createCore() {
   const store = new Store();
   const ui = new UIState();
   const engine = new AudioEngine(store);
@@ -69,6 +74,12 @@ export async function createApp(rootEl) {
 
   app.actions = createActions(app);
   import('./plugins-dialog.js').then((m) => m.installPluginUi(app)).catch((e) => console.warn('[plugins] UI', e)); // SoundFont / Faust / WAM plugins
+  return app;
+}
+
+export async function createApp(rootEl) {
+  const app = createCore();
+  const { store, ui, engine } = app;
 
   // ---- layout ----
   const header = createHeader(app);
@@ -191,6 +202,8 @@ export async function createApp(rootEl) {
 
   // Restore last session (autosave) or offer the welcome screen.
   await app.actions.boot();
+  // Mac app (Electron): native menus / Finder open-file / save dialogs. Not loaded in the browser.
+  if (window.daw3Native) import('./native.js').then((m) => m.installNative(app)).catch((e) => console.warn('[native]', e));
   await engineUi.afterBoot();
   updateStatus();
   app.setStatus('Ready. Press Space to play, ? for help.');
