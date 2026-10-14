@@ -367,9 +367,16 @@ test('DAWproject import of a foreign (Bitwig-style) file: mapping, placeholders,
   assert.equal(bass.fx[0].params.ratio, 4);
   assert.equal(bass.fx[0].params.threshold, -12);
   assert.deepEqual(bass.foreignDevices.map((d) => d.deviceName), ['Soothe2']);
-  assert.equal(q.buses.length, 1);
-  assert.equal(q.buses[0].name, 'Hall');
-  assert.equal(bass.sends[q.buses[0].id], 0.3);
+  // the "Band" group track becomes a folder whose group channel is its summing bus; "Hall" stays a return
+  assert.deepEqual(q.buses.map((b) => b.name), ['Band', 'Hall']);
+  const [band, hall] = q.buses;
+  assert.equal(bass.sends[hall.id], 0.3);
+  assert.ok(near(band.volume, 0.5));
+  assert.equal(bass.output, band.id, 'routed into the group channel');
+  assert.equal(q.mixer.folders.length, 1);
+  assert.equal(q.mixer.folders[0].busId, band.id);
+  assert.equal(bass.folderId, q.mixer.folders[0].id);
+  assert.ok(!loop.folderId && !loop.output);
   assert.ok(loop.mute && loop.solo && near(loop.volume, 0.177125));
   // clips: disabled clip skipped, notes as pattern, nested Bitwig audio clip flattened with warp offset + fade
   const bc = q.clips.filter((c) => c.trackId === bass.id);

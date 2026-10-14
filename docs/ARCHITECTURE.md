@@ -180,6 +180,9 @@ input). Browser: `inputs.js` (input sources + InputManager), `capture-processor.
   mixer (`_clipEnvelope`) schedules `envelopePoints()` (curved fades sampled in 24 linear ramps, gain envelope, 4 ms
   de-click) for clips with curved fades / a gain envelope; other clips keep the old envelope (bit-identical renders).
   Flatten comp / consolidate render with `mixClipsToPcm`, the same math. `songLengthBeats` / `defaultEndBeat` count comps.
+  Everything that renders or exports goes through `trackClips` too — mixdown / stem exports, the mixing-engineer stems
+  (`stemRenderPlan` counts comp-only tracks), MIDI export (`collectTrackNotes` writes the comp of MIDI takes) and
+  DAWproject (comp as clips + takes as muted lanes, see Interchange): comps never need flattening first.
 * **Inputs** — an input source is `{id, label, kind:'browser'|'native', channels}`: getUserMedia device ids ('default'),
   or `window.daw3Native.audio.listInputs()` / `openInput(ctx, id) -> {node, channels, latency, close}` (ids
   `native:…`, multi-channel interfaces). `InputManager` opens the sources armed audio tracks (and tracks monitoring 'on')
@@ -513,7 +516,11 @@ sendModes:{busId:'pre'|'post'}, output (busId), padOutputs:{padKey: busId}`; bus
 * **VCA** `{id,name,volume (linear),mute,members:[track|bus id],automation:[lane 'volume']}`: no audio passes through;
   member gain = fader × Π VCA gains (dB sum). VCAs are automation owners (`automationOwner`, recorder snapshot); the engine
   turns `vcaCombinedLane` (product of every VCA lane over the member) into ramps on the strip's `vcaGain` node, so VCA
-  automation multiplies with the member's own fader automation.
+  automation multiplies with the member's own fader automation. Arrange shows one row per VCA (above the bus / master
+  rows, `ownerInfo` kind `'vca'`, violet): "A" opens its level lane (`'volume'`, linear 0..`VCA_MAX`, square-law lane
+  scale so 0 dB sits mid-lane) — draw / edit / ramps / LFO shapes like any lane, touch / latch / write recording from the
+  mixer's VCA fader; while a VCA is being written `setAutomationOverride(vcaId, 'volume')` makes its members follow the
+  live fader.
 * **Solo** (`soloState`, `isAudible` — used by `scheduler.isTrackAudible`): SIP mutes non-soloed tracks except
   `soloSafe`; AFL / PFL never touch the main mix or exports — soloed channels feed `graph.cue` (post-VCA / pre-fader) and
   the monitor output switches to the cue bus (realtime only). `toggleSolo(p, id, {exclusive})`.
@@ -538,8 +545,20 @@ sendModes:{busId:'pre'|'post'}, output (busId), padOutputs:{padKey: busId}`; bus
   song / loop / selection / custom bars, `formatFileName` tokens, `detectTail`, `stemTargets` all / selected / buses /
   groups, `stemProject` pre / post fader, with / without master), `io/wav-meta.js` (LIST/INFO + iXML: title, artist,
   ISRC…), `audio/export.js` `runExport` (renders at 44.1–96 kHz, tail detection, normalisation, WAV 16/24/32f + dither /
-  noise shaping, AAC / MP3 via WebCodecs when `lossyFormats()` says so, consistent stem start / length, report). Several
-  files download as one ZIP with `export-report.txt`.
+  noise shaping, lossy formats, consistent stem start / length, report). Several files download as one ZIP with
+  `export-report.txt`.
+* **Lossy export** — **MP3** in every browser: `io/mp3.js` `encodeMp3` drives the vendored LAME port
+  (`vendor/lamejs/lame.mjs`, LGPL-3.0, imported lazily inside the module Worker `audio/encode-worker.js`; main-thread
+  fallback), CBR 128–320 kbps or average-bitrate VBR (the ABR loop ported from LAME), joint stereo at 32 / 44.1 / 48 kHz
+  (other render rates are rendered at 44.1 / 48 kHz: `encodeRate`), a Xing / Info + LAME tag frame (frame count, seek
+  TOC, encoder delay / padding → gapless decoders return exactly the source length) and an ID3v2.3 tag (title, artist,
+  album, ISRC, year, BPM, comment, cover APIC). **AAC** (`.m4a`) and **Opus** (`.ogg`) through WebCodecs `AudioEncoder`
+  when `formatSupport()` finds an encoder (Chromium on Linux has Opus, no AAC): `io/mp4.js` `muxM4a` (ftyp / moov with
+  an edit list hiding the encoder priming, mp4a + esds, stts / stsc / stsz / stco, iTunes `ilst` metadata incl. covr,
+  ISRC and iTunSMPB) and `io/ogg.js` `muxOggOpus` (OpusHead pre-skip, OpusTags with METADATA_BLOCK_PICTURE, 48 kHz
+  granules trimming the padding). The dialog lists every format; ones the browser can't write are disabled with the
+  reason as tooltip. Normalisation / the true-peak limiter run before encoding; the encoded file is decoded back
+  (`decodeAudioData`) and the report adds its measured LUFS / true peak / duration ("Encoded file").
 
 ## Tempo map, meters & audio warping (`src/time/*`, `src/audio/warp/*`)
 
@@ -605,6 +624,8 @@ sendModes:{busId:'pre'|'post'}, output (busId), padOutputs:{padKey: busId}`; bus
   `downloadProject(project)`, `readFileAsProject(file)`.
 * `midi.js`: `exportMidi(project, {mode}) -> Uint8Array`, `importMidi(arrayBuffer) -> {bpm, tracks:[{name, notes, isDrums}]}`.
 * `wav.js`: `encodeWav(buffers, {bitDepth:16|24|32, dither, noiseShaping}) -> ArrayBuffer`, `decodeWav` (see Pro engine).
+* `mp3.js` / `mp4.js` / `ogg.js`: MP3 (LAME) encoding + frame / Xing / ID3 parsing, the .m4a muxer and the Ogg Opus muxer
+  (see "Lossy export"); each has a reader used by the tests and the report.
 * `recovery.js`: crash-safe incremental snapshots, recovery and version history (see Pro engine).
 * `autosave.js`: IndexedDB autosave + list/restore of local projects.
 * `samples.js`: `fileToSample(file) -> Sample` (base64), `sampleToArrayBuffer(sample)`.
@@ -622,12 +643,22 @@ Menu: File → Import / Export → *DAWproject…*, *For mixing engineer (stems 
 * `dawproject.js` — [DAWproject 1.0](https://github.com/bitwig/dawproject) (Bitwig, Studio One, Cubase…):
   `exportDawproject(project, {renders, sampleInfo}) -> {bytes, report}`, `importDawproject(bytes) -> {project, report}`.
   * Tracks → `<Track><Channel>` (Volume linear 0..2, Pan normalized 0..1 ↔ −1..1, Mute, Solo), buses → `role="effect"`
-    channels with post-fader `<Send>`s, master → `role="master"`. Group (`submix`) tracks are flattened on import.
+    channels with post-fader `<Send>`s, master → `role="master"`. A track's main output into a bus (`track.output`) is the
+    channel `destination`. **Folders** → group tracks (`contentType="tracks"`, members nested inside); a folder's summing
+    bus is its `role="submix"` channel (members' destination). Import: a top-level group track becomes a folder, its
+    group channel the folder's summing bus (nested groups join the outer folder). **VCAs, mixer link groups, solo mode
+    and folder flags** have no DAWproject 1.0 element: they go to `daw3/mixer.json` in the archive (members by Track
+    id), daW³ restores them, other DAWs see the folders and the member faders (`report.unmapped` says so).
   * Instruments / code tracks → `<BuiltinDevice deviceRole="instrument" deviceID="daw3.instrument.<type>">` named after
     the preset, every number/enum/bool param as a `*Parameter` (automation targets) + a JSON State file
     (`plugins/*.json`, `format: 'daw3-device'`) that restores the device exactly in daW³ (referenced samples are
     exported with it). Compressor / Limiter / Gate / EQ (eq3, eq8) → the spec's generic `<Compressor>` /
     `<Limiter>` / `<NoiseGate>` / `<Equalizer>` (ratio ↔ percent `1−1/r`); other effects → `BuiltinDevice audioFX`.
+  * **Take lanes** (Recording): the comp is written as the track lane's active clips (segments with their crossfades,
+    `comment="daw3:comp:<takeId>:<start>:<end>"`), every take lane as a nested `<Lanes>` of disabled (= muted) clips
+    (`comment="daw3:take:{id, pass, srcLength, gain}"`). Other DAWs play the comp and keep the takes as muted lanes;
+    daW³'s import rebuilds `takeLanes` / `comp` (comp clips whose takes are gone stay ordinary clips; a foreign nested
+    lane of only disabled clips becomes a take lane). No need to flatten comps before exporting.
   * Pattern clips → `<Clip playStart=offset loopStart=0 loopEnd=patternLength><Notes>` with the notes **unrolled**
     over the played range: loop-aware and loop-ignoring importers both play the right notes; the importer keeps
     `[loopStart, loopEnd)` as the pattern and dedupes identical clips into one shared pattern. Velocity = `vel`
@@ -735,4 +766,7 @@ daW³ is AGPL-3.0-or-later (`LICENSE`), because it ships Strudel (AGPL-3.0-or-la
 https://codeberg.org/uzu/strudel). Third-party licenses of the vendored bundles: `vendor/strudel/licenses/` and
 `vendor/strudel/VERSION`. AGPL §13: the app offers its source to every user — main menu ▸ "About / credits & source
 code" and the Help dialog link to `SOURCE_URL` (`src/ui/actions.js`); keep that link pointing at the deployed code.
+MP3 export uses lamejs 1.2.1 (pure-JS LAME 3.99, LGPL-3.0 — combinable with AGPL-3.0; it stays a separate, replaceable
+library loaded at runtime): `vendor/lamejs/` holds it with `LICENSE` (LGPL-3.0 + GPL-3.0 texts), `README.txt` and
+`daw3-modifications.diff` (ES-module export, ABR loop port, encoder delay / padding getter).
 
