@@ -98,3 +98,29 @@ test('warp: Re-Pitch honours transpose (rate × 2^(st/12) on top of the tempo ra
   assert.ok(Math.abs(zc(mk('repitch', 12)) - 100) <= 1);
   assert.ok(Math.abs(zc(mk('off', 12)) - 50) <= 1); // warp off: transpose does nothing
 });
+
+import { BUILTIN_GROOVES, grooveLibrary, findGroove, grooveNotes, mpcSwingGroove, grooveFromNotes } from '../src/time/groove.js';
+
+test('groove library: MPC 16th swing presets + project grooves; apply with strength / to selected notes only', () => {
+  const g58 = findGroove({}, 'mpc16-58');
+  assert.ok(g58 && g58.builtin);
+  assert.equal(g58.grid, 0.25);
+  assert.ok(Math.abs(g58.offsets[1] - 0.04) < 1e-9); // 58% of an 8th pair: the off 16th is 0.04 beats late
+  assert.equal(g58.offsets[0], 0);
+  assert.ok(Math.abs(mpcSwingGroove(66).offsets[1] - 0.08) < 1e-9);
+  assert.ok(BUILTIN_GROOVES.some((g) => g.id === 'mpc16-71'));
+  const extracted = grooveFromNotes([{ start: 0, vel: 1 }, { start: 0.3, vel: 0.5 }], { grid: 0.25, length: 1, name: 'mine' });
+  const lib = grooveLibrary({ grooves: [extracted] });
+  assert.equal(lib[lib.length - 1].name, 'mine');
+  assert.equal(findGroove({ grooves: [extracted] }, extracted.id), extracted);
+  const notes = [0, 0.25, 0.5, 0.75].map((s, i) => ({ id: 'n' + i, pitch: 60, start: s, dur: 0.2, vel: 0.8 }));
+  const full = grooveNotes(notes, g58, { strength: 1 });
+  assert.deepEqual(full.map((n) => n.start), [0, 0.29, 0.5, 0.79]);
+  const half = grooveNotes(notes, g58, { strength: 0.5 });
+  assert.deepEqual(half.map((n) => n.start), [0, 0.27, 0.5, 0.77]);
+  const sel = grooveNotes(notes, g58, { strength: 1, noteIds: new Set(['n1']) });
+  assert.deepEqual(sel.map((n) => n.start), [0, 0.29, 0.5, 0.75]);
+  const acc = grooveNotes(notes, g58, { strength: 0, velStrength: 1 });
+  assert.equal(acc[1].vel, 0.85);
+  assert.equal(notes[1].start, 0.25); // input untouched
+});

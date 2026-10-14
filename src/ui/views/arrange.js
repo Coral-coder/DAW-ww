@@ -17,6 +17,7 @@ import { collapsedHidden, folderHeadOf } from '../../core/mixer-model.js';
 import { createTempoLane, drawRulerBars, drawMeterGrid } from '../tempo-lane.js';
 import { songTempoMap } from '../../time/tempo-map.js';
 import { openWarpEditor } from '../warp-editor.js';
+import { openGrooveDialog } from '../groove-dialog.js';
 import { sourceTimeFn } from '../../audio/warp/markers.js';
 import { createArrangeRec } from './arrange-rec.js';
 import { splitClipAt } from '../../record/clips.js';
@@ -2017,6 +2018,7 @@ export function createArrangeView(app) {
       { label: n > 1 ? `Duplicate ${n} clips` : 'Duplicate', icon: 'copy', shortcut: 'Ctrl+D', onClick: duplicateSelection },
       { label: 'Split at playhead', icon: 'scissors', shortcut: 'S', disabled: !(ph > clip.start + EPS && ph < clip.start + clip.length - EPS), onClick: () => splitSelectionAt(ph, [clip.id]) },
       { label: 'Split at loop / punch range', icon: 'scissors', onClick: () => { const lp = get().punch?.enabled ? get().punch : get().loop; const ids = n > 1 ? selIds() : [clip.id]; splitSelectionAt(lp.end, ids); splitSelectionAt(lp.start, ids); } },
+      pat ? { label: 'Apply groove…', icon: 'magnet', title: `Swing / groove the notes of “${pat.name}”${clip.type === 'pattern' ? ' (every clip that uses this pattern)' : ''}`, onClick: () => openGrooveDialog(app, { patternId: pat.id, where: 'shared by every clip that uses it' }) } : null,
       pat ? { label: 'Make unique (own copy of the pattern)', icon: 'layers', onClick: () => makeUnique(clip.id) } : null,
       pat || clip.type === 'pattern' ? { label: 'Choose pattern', icon: 'music', submenu: [
         ...pats.map((pt) => ({ label: `${pt.id === clip.patternId ? '● ' : ''}${pt.name}`, onClick: () => setClipPattern(clip.id, pt.id) })),

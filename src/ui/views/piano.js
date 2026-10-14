@@ -6,6 +6,7 @@ import { DRUM_PADS, beatsPerBar, patternsForTrack } from '../../core/model.js';
 import { uid, clamp, createRng } from '../../core/util.js';
 import * as T from '../../theory/index.js';
 import { isTyping } from '../keyboard.js';
+import { openGrooveDialog } from '../groove-dialog.js';
 
 // Generators are optional for this view (arpeggiate); load lazily so a missing module can't break it.
 let gen = null;
@@ -856,6 +857,7 @@ export function createPianoView(app) {
         { label: 'Starts 50%', onClick: () => quantize(0.5) },
         { label: 'Starts + ends 100%', onClick: () => quantize(1, true) },
       ] },
+      { label: 'Apply groove…', icon: 'magnet', title: 'Move notes toward a groove template (MPC swing presets or grooves extracted from audio / patterns)', disabled: !cur.pat, onClick: () => openGrooveDialog(app, { patternId: cur.pat.id, noteIds: selected.size ? new Set(selected) : null }) },
       { label: 'Humanize', icon: 'sparkles', submenu: [
         { label: 'Subtle (timing + velocity)', onClick: () => humanize(0.012, 0.06) },
         { label: 'Medium', onClick: () => humanize(0.025, 0.12) },

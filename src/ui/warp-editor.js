@@ -9,7 +9,7 @@ import { h, startDrag, fitCanvas } from './dom.js';
 import { button, select, toggle, numberField, modal, toast, contextMenu } from './components.js';
 import { WARP_MODES, WARP_MODE_LABELS, isWarped, secAtBeat, beatAtSec, autoWarp, addMarker, moveMarker, removeMarker, setWarpBpm, normalizeMarkers, warpedLength } from '../audio/warp/markers.js';
 import { analyzeBuffer } from '../audio/warp/analyze.js';
-import { quantizeWarp, grooveFromAudio, applyGrooveToNotes } from '../time/groove.js';
+import { quantizeWarp, grooveFromAudio, findGroove, grooveNotes, grooveLibrary } from '../time/groove.js';
 import { songTempoMap } from '../time/tempo-map.js';
 import { setTempoPoint } from '../time/tempo-edit.js';
 
@@ -110,12 +110,15 @@ export async function extractClipGroove(app, clipId, { grid = 0.25, length = 4 }
 }
 
 /** Apply a stored groove to a pattern's notes. */
+// (built-in MPC swing presets + project.grooves; opts: strength, velStrength 0..1, noteIds = only those notes)
 export function applyGrooveToPattern(app, patternId, grooveId, opts = {}) {
+  const g = findGroove(app.store.get(), grooveId);
+  if (!g) return false;
   app.store.transact('Apply groove', (p) => {
     const pat = p.patterns[patternId];
-    const g = (p.grooves || []).find((x) => x.id === grooveId);
-    if (pat && g) pat.notes = applyGrooveToNotes(pat.notes, g, opts);
+    if (pat) pat.notes = grooveNotes(pat.notes, g, opts);
   });
+  return true;
 }
 
 // ------------------------------------------------------------------ editor UI
@@ -138,7 +141,7 @@ export function openWarpEditor(app, clipId) {
   const qStrength = numberField({ value: 100, min: 0, max: 100, step: 5, width: 44, title: 'Quantize strength %' });
   const qSwing = numberField({ value: 0, min: 0, max: 100, step: 5, width: 44, title: 'Swing %' });
   const qGrid = select({ options: [{ value: '1', label: '1/4' }, { value: '0.5', label: '1/8' }, { value: '0.25', label: '1/16' }, { value: '0.125', label: '1/32' }], value: '0.25', title: 'Quantize grid' });
-  const grooveSel = select({ options: [{ value: '', label: 'Grid' }, ...(get().grooves || []).map((g) => ({ value: g.id, label: g.name }))], value: '', title: 'Quantize to the straight grid or to a groove template' });
+  const grooveSel = select({ options: [{ value: '', label: 'Grid' }, ...grooveLibrary(get()).map((g) => ({ value: g.id, label: g.name }))], value: '', title: 'Quantize to the straight grid or to a groove template' });
 
   const body = h('div.warp-editor',
     h('div.warp-row',
@@ -154,7 +157,7 @@ export function openWarpEditor(app, clipId) {
     h('div.warp-row',
       h('span.hlabel', 'Quantize'), qGrid, h('span.hlabel', 'Strength'), qStrength, h('span.hlabel', 'Swing'), qSwing, grooveSel,
       button('Quantize audio', async () => {
-        const g = (get().grooves || []).find((x) => x.id === grooveSel.value) || null;
+        const g = findGroove(get(), grooveSel.value);
         await quantizeClip(app, clipId, { grid: Number(qGrid.value) || 0.25, strength: (qStrength.value ?? 100) / 100, swing: (qSwing.value ?? 0) / 100, groove: g });
       }, { icon: 'magnet', cls: 'small', title: 'Warp markers on the transients, pulled to the grid / groove' }),
       button('Extract groove', () => extractClipGroove(app, clipId), { icon: 'sparkles', cls: 'small', title: 'Save this clip’s timing / accents as a groove template (apply it to MIDI from the piano roll or here)' })),

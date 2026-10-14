@@ -1,0 +1,8 @@
+/* fix/polish: groove dialog, hardware check, responsive header / device panel overflow */
+
+/* ---- Apply groove dialog */
+.groove-dialog { display: flex; flex-direction: column; gap: 10px; }
+.groove-dialog .hrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.groove-sketch-host { background: var(--bg-2, #15171c); border-radius: 6px; padding: 6px; }
+.groove-sketch { display: flex; align-items: flex-end; height: 44px; gap: 0; }
+.groove-slot { display: block; box-sizing: border-box; border-left: 2px solid var(--accent, #f80); background: color-mix(in srgb, var(--accent, #f80) 25%, transparent); margin: 0 1px; }
