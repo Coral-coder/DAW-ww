@@ -255,7 +255,7 @@ function shortcutsTab(app, rerender) {
     let cat = null;
     const rows = [];
     for (const cmd of cmds) {
-      if (cmd.category !== cat) { cat = cmd.category; rows.push(h('tr.ctl-cat', h('td', { colspan: 3 }, cat))); }
+      if (cmd.category !== cat) { cat = cmd.category; rows.push(h('tr.ctl-cat', h('td', { colspan: 3 }, cat, cmd.scope && cmd.scope !== 'global' ? h('span.muted', ' — only in this view (the same keys can do something else in other views)') : null))); }
       const chips = map.keysFor(cmd.id).map((k) => {
         const x = h('button.ctl-chip-x', { type: 'button', title: 'Remove this shortcut' }, '×');
         x.addEventListener('click', () => { map.unbind(cmd.id, k); map.save(); rerender(); });

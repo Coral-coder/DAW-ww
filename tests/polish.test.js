@@ -148,3 +148,40 @@ test('priority+ overflow: hides the highest priorities first until the row fits'
   assert.deepEqual(fitPlan(items, 650, 600), [4, 2]);
   assert.deepEqual(fitPlan(items, 1000, 600), [4, 2, 3, 1]); // never the prio-0 item
 });
+
+import { buildCommands } from '../src/control/commands.js';
+import { ShortcutMap } from '../src/control/shortcuts.js';
+import { VIEW_COMMANDS, VIEW_SCOPES } from '../src/control/view-commands.js';
+
+test('shortcuts: view-scoped commands share the rebindable map; same key in different views, no default conflicts', () => {
+  let viewNow = 'piano';
+  const calls = [];
+  const app = { ui: { get: (k) => (k === 'view' ? viewNow : null), set: (o) => { if (o.view) viewNow = o.view; } }, actions: {}, store: { get: () => ({ tracks: [] }) },
+    viewActions: { piano: { delete: () => { calls.push('piano.delete'); return true; } }, arrange: { delete: () => { calls.push('arrange.delete'); return false; } } } };
+  const reg = buildCommands(app);
+  const map = new ShortcutMap(reg);
+  assert.deepEqual(map.conflicts(), []);
+  for (const s of Object.keys(VIEW_SCOPES)) assert.ok(VIEW_COMMANDS.some((c) => c.scope === s), s);
+  assert.equal(map.match('delete', { view: 'piano' }).id, 'piano.delete');
+  assert.equal(map.match('delete', { view: 'arrange' }).id, 'arrange.delete');
+  assert.equal(map.match('delete', { view: 'code' }), null);
+  assert.equal(map.match('s', { view: 'arrange' }).id, 'arrange.split');
+  assert.equal(map.match('space', { view: 'piano' }).id, 'transport.play'); // globals still work in views
+  assert.equal(map.matchScope('space', 'piano'), null);
+  assert.equal(reg.get('piano.delete').run({}), true);
+  assert.equal(reg.get('arrange.delete').run({}), false); // nothing selected: the key falls through
+  // rebinding is per command: piano delete on "x" leaves arrange's Delete alone
+  map.set('piano.delete', ['x']);
+  assert.equal(map.match('x', { view: 'piano' }).id, 'piano.delete');
+  assert.equal(map.match('delete', { view: 'arrange' }).id, 'arrange.delete');
+  assert.equal(map.match('delete', { view: 'piano' }), null);
+  // the same chord in two views is not a conflict; with a global command it is
+  map.set('mixer.mute', ['x']);
+  assert.deepEqual(map.conflicts(), []);
+  map.set('mixer.mute', ['space']);
+  assert.ok(map.conflicts().some((c) => c.chord === 'space'));
+  // from the palette (no event) a view command opens its view first
+  viewNow = 'mixer';
+  assert.equal(reg.get('piano.selectAll').run(), true);
+  assert.equal(viewNow, 'piano');
+});

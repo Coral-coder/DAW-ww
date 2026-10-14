@@ -2542,30 +2542,33 @@ export function createArrangeView(app) {
   // ------------------------------------------------------------------ keyboard
   function onKey(e) {
     if (!visible || isTyping(e) || document.querySelector('.modal-backdrop')) return;
-    const modk = e.ctrlKey || e.metaKey;
-    const k = e.key.toLowerCase();
-    const n = selIds().length;
-    let handled = true;
-    if ((k === 'delete' || k === 'backspace') && !modk && e.shiftKey) { if (!n) return; recUi.rippleDeleteClips(selIds()); setSel([]); }
-    else if ((k === 'delete' || k === 'backspace') && !modk) { if (!n) return; deleteSelection(); }
-    else if (k === 's' && !modk && !e.shiftKey && !e.altKey) { if (!splitSelectionAt(pos())) return; }
-    else if (modk && k === 'd') { if (!n) return; duplicateSelection(); }
-    else if (modk && k === 'c') { if (!copySelection()) return; }
-    else if (modk && k === 'x') { if (!copySelection()) return; deleteSelection(); }
-    else if (modk && k === 'v') { if (!clipboard) return; pasteAt(snapB(pos(), null, Math.floor)); }
-    else if (modk && k === 'a') setSel(get().clips.map((c) => c.id));
-    else if (!modk && (k === 'arrowleft' || k === 'arrowright')) {
-      if (!n) return;
-      const step = e.shiftKey ? bpbNow() : (snapStep() || 0.25);
-      nudge(k === 'arrowleft' ? -step : step, 0);
-    } else if (!modk && (k === 'arrowup' || k === 'arrowdown')) {
-      if (!n) return;
-      nudge(0, k === 'arrowup' ? -1 : 1);
-    } else if (k === 'escape' && !modk) { if (!n) return; setSel([]); }
-    else handled = false;
-    if (handled) { e.preventDefault(); e.stopImmediatePropagation(); }
+    // rebindable view-scoped commands (src/control/view-commands.js — Preferences → Shortcuts)
+    const cmd = app.shortcuts?.matchScope(e, 'arrange');
+    if (!cmd) return;
+    if (e.repeat && !cmd.repeat) { e.preventDefault(); return; }
+    if (arrangeActions[cmd.action]?.(e) === false) return;
+    e.preventDefault(); e.stopImmediatePropagation();
   }
   window.addEventListener('keydown', onKey, true);
+  const withSel = (fn) => () => { if (!selIds().length) return false; fn(); return true; };
+  const arrangeActions = {
+    delete: withSel(() => deleteSelection()),
+    rippleDelete: withSel(() => { recUi.rippleDeleteClips(selIds()); setSel([]); }),
+    split: () => !!splitSelectionAt(pos()),
+    duplicate: withSel(() => duplicateSelection()),
+    copy: () => !!copySelection(),
+    cut: () => { if (!copySelection()) return false; deleteSelection(); return true; },
+    paste: () => { if (!clipboard) return false; pasteAt(snapB(pos(), null, Math.floor)); return true; },
+    selectAll: () => { setSel(get().clips.map((c) => c.id)); return true; },
+    deselect: withSel(() => setSel([])),
+    nudgeLeft: withSel(() => nudge(-(snapStep() || 0.25), 0)),
+    nudgeRight: withSel(() => nudge(snapStep() || 0.25, 0)),
+    nudgeBarLeft: withSel(() => nudge(-bpbNow(), 0)),
+    nudgeBarRight: withSel(() => nudge(bpbNow(), 0)),
+    laneUp: withSel(() => nudge(0, -1)),
+    laneDown: withSel(() => nudge(0, 1)),
+  };
+  app.viewActions = { ...(app.viewActions || {}), arrange: arrangeActions };
 
   // ------------------------------------------------------------------ sync
   function syncToolbar() {

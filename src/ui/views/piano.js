@@ -1636,22 +1636,35 @@ export function createPianoView(app) {
     if (!visible || !cur.pat || isTyping(e) || e.defaultPrevented) return;
     if (document.querySelector('.modal-backdrop')) return;
     if (e.key === 'Escape' && document.querySelector('.ctx-menu')) return; // let the open menu close first
-    const mod = e.ctrlKey || e.metaKey;
-    const k = e.key;
-    let handled = true;
-    if ((k === 'Delete' || k === 'Backspace') && !mod) { if (selected.size) deleteSel(); else handled = false; }
-    else if (mod && (k === 'a' || k === 'A')) selectAll();
-    else if (mod && (k === 'c' || k === 'C') && !e.shiftKey) { if (!copySel()) handled = false; }
-    else if (mod && (k === 'x' || k === 'X')) { if (copySel()) deleteSel(); else handled = false; }
-    else if (mod && (k === 'v' || k === 'V')) { if (clipboard) paste(); else handled = false; }
-    else if (mod && (k === 'd' || k === 'D')) { if (selected.size) duplicateRight(); else handled = false; }
-    else if (k === 'Escape' && !mod) { if (selected.size) { selected.clear(); drawAll(); } else handled = false; }
-    else if (!mod && (k === 'ArrowLeft' || k === 'ArrowRight') && selected.size) nudge((k === 'ArrowLeft' ? -1 : 1) * (e.altKey ? 1 / 32 : gridStep()), 0);
-    else if (!mod && (k === 'ArrowUp' || k === 'ArrowDown') && selected.size) nudge(0, k === 'ArrowUp' ? 1 : -1, e.shiftKey);
-    else if (!mod && !e.altKey && (k === 'q' || k === 'Q') && !app.keyboardPiano?.enabled) quantize(1);
-    else handled = false;
-    if (handled) { e.preventDefault(); e.stopImmediatePropagation(); drawAll(); }
+    // rebindable view-scoped commands (src/control/view-commands.js — Preferences → Shortcuts)
+    const cmd = app.shortcuts?.matchScope(e, 'piano');
+    if (!cmd) return;
+    if (e.repeat && !cmd.repeat) { e.preventDefault(); return; }
+    const r = pianoActions[cmd.action]?.(e);
+    if (r === false) return;
+    e.preventDefault(); e.stopImmediatePropagation(); drawAll();
   }, true);
+  const sel0 = (fn) => (e) => { if (!cur.pat || !selected.size) return false; fn(e); return true; };
+  const pianoActions = {
+    delete: sel0(() => deleteSel()),
+    selectAll: () => { if (!cur.pat) return false; selectAll(); return true; },
+    copy: () => (cur.pat && copySel() ? true : false),
+    cut: () => { if (!cur.pat || !copySel()) return false; deleteSel(); return true; },
+    paste: () => { if (!cur.pat || !clipboard) return false; paste(); return true; },
+    duplicate: sel0(() => duplicateRight()),
+    deselect: sel0(() => { selected.clear(); drawAll(); }),
+    nudgeLeft: sel0(() => nudge(-gridStep(), 0)),
+    nudgeRight: sel0(() => nudge(gridStep(), 0)),
+    nudgeLeftFine: sel0(() => nudge(-1 / 32, 0)),
+    nudgeRightFine: sel0(() => nudge(1 / 32, 0)),
+    up: sel0(() => nudge(0, 1, false)),
+    down: sel0(() => nudge(0, -1, false)),
+    octaveUp: sel0(() => nudge(0, 1, true)),
+    octaveDown: sel0(() => nudge(0, -1, true)),
+    quantize: () => { if (!cur.pat || app.keyboardPiano?.enabled) return false; quantize(1); return true; },
+    groove: () => { if (!cur.pat) return false; openGrooveDialog(app, { patternId: cur.pat.id, noteIds: selected.size ? new Set(selected) : null }); return true; },
+  };
+  app.viewActions = { ...(app.viewActions || {}), piano: pianoActions };
 
   // ---------------------------------------------------------------- render cycle
   function showEmpty(kind) {
