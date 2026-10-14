@@ -35,7 +35,9 @@ export const workletsLoaded = (ctx) => workletOk.get(ctx) === true;
 function ensureWorklets(sd, ctx) {
   if (!workletCtx.has(ctx)) {
     const urls = typeof sd.daw3WorkletUrls === 'function' ? sd.daw3WorkletUrls() : [];
-    const load = Promise.all(urls.map((u) => ctx.audioWorklet?.addModule(u))).then(() => { if (urls.length && ctx.audioWorklet) workletOk.set(ctx, true); }, (e) => console.warn('[strudel] AudioWorklets unavailable:', e?.message || e));
+    // one module at a time: concurrent addModule() calls on one context can stall forever in Chromium (and a
+    // pending addModule blocks an OfflineAudioContext's rendering — WAV export would hang)
+    const load = urls.reduce((chain, u) => chain.then(() => ctx.audioWorklet?.addModule(u)), Promise.resolve()).then(() => { if (urls.length && ctx.audioWorklet) workletOk.set(ctx, true); }, (e) => console.warn('[strudel] AudioWorklets unavailable:', e?.message || e));
     let timer;
     const timeout = new Promise((resolve) => { timer = setTimeout(() => { console.warn('[strudel] AudioWorklets are taking long to load — continuing without waiting'); resolve(); }, WORKLET_TIMEOUT); });
     workletCtx.set(ctx, Promise.race([load, timeout]).finally(() => clearTimeout(timer)));
