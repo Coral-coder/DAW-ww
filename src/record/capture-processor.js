@@ -3,6 +3,8 @@
 // Messages out: {type:'peaks', peaks:[per channel 0..1+], frame} ~every 1024 frames (meters / clip detection)
 //               {type:'chunk', frame (context frame of data[c][0]), data: Float32Array[] } while recording
 //               {type:'stopped', frame}
+// Chromium hands a node's FIRST process() call a stale currentFrame (0 / the previous quantum's value), every later
+// call is exact: a chunk that starts on that first quantum gets its frame from the next one (frames are contiguous).
 /* global sampleRate, currentFrame, registerProcessor, AudioWorkletProcessor */
 const CHUNK = 8192;
 
@@ -16,6 +18,7 @@ class CaptureProcessor extends AudioWorkletProcessor {
     this.bufFrame = 0;
     this.peaks = new Float32Array(this.channels);
     this.meterFrames = 0;
+    this.calls = 0;
     this.port.onmessage = (e) => {
       const m = e.data || {};
       if (m.cmd === 'start') { this.rec = true; this.buf = null; this.fill = 0; }
@@ -25,6 +28,7 @@ class CaptureProcessor extends AudioWorkletProcessor {
 
   flush() {
     if (!this.buf || !this.fill) return;
+    if (this.bufFrame == null) this.bufFrame = currentFrame - this.fill; // stop on the 2nd quantum: best estimate
     const data = this.buf.map((d) => d.slice(0, this.fill));
     this.port.postMessage({ type: 'chunk', frame: this.bufFrame, data }, data.map((d) => d.buffer));
     this.buf = null;
@@ -34,6 +38,8 @@ class CaptureProcessor extends AudioWorkletProcessor {
   process(inputs, outputs) {
     const inp = inputs[0] || [];
     const n = inp[0]?.length || 128;
+    const trusted = this.calls++ > 0; // see header
+    if (this.rec && this.buf && this.bufFrame == null && trusted) this.bufFrame = currentFrame - this.fill;
     for (let c = 0; c < this.channels; c++) {
       const d = inp[c];
       if (!d) continue;
@@ -48,7 +54,7 @@ class CaptureProcessor extends AudioWorkletProcessor {
       this.meterFrames = 0;
     }
     if (this.rec) {
-      if (!this.buf) { this.buf = Array.from({ length: this.channels }, () => new Float32Array(CHUNK)); this.fill = 0; this.bufFrame = currentFrame; }
+      if (!this.buf) { this.buf = Array.from({ length: this.channels }, () => new Float32Array(CHUNK)); this.fill = 0; this.bufFrame = trusted ? currentFrame : null; }
       const room = CHUNK - this.fill;
       const k = Math.min(room, n);
       for (let c = 0; c < this.channels; c++) {
@@ -60,7 +66,7 @@ class CaptureProcessor extends AudioWorkletProcessor {
         this.flush();
         if (k < n) { // rest of this block starts the next chunk
           this.buf = Array.from({ length: this.channels }, () => new Float32Array(CHUNK));
-          this.bufFrame = currentFrame + k;
+          this.bufFrame = trusted ? currentFrame + k : null;
           for (let c = 0; c < this.channels; c++) { const d = inp[c] || inp[0]; if (d) this.buf[c].set(d.subarray(k), 0); }
           this.fill = n - k;
         }

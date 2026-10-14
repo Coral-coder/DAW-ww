@@ -98,6 +98,7 @@ export class AudioEngine extends Emitter {
         getSampleAnalysis: (id) => this.project.samples?.[id]?.analysis || null, // warp: transients (beats mode)
         isStreamed: (id) => this._streams(id),
         playStream: (meta, dest, when, off, dur) => this.streamer.play(meta, dest, when, off, dur),
+        openStreamPort: (meta) => this.streamer.openPort(meta), // warped streamed clips (warp/worklet.js)
         onError: (e) => this._error(e),
         onLatency: (pdc) => this.emit('latency', this.getLatency()),
       });
@@ -131,6 +132,7 @@ export class AudioEngine extends Emitter {
     try { this.codeCache.refresh(project); } catch (e) { this._error(e); }
     if (this.graph) {
       const bpmChanged = this.graph.bpm !== project.bpm;
+      this._retimeOnTempoEdit(project);
       try { this.graph.sync(project); } catch (e) { this._error(e); }
       if (bpmChanged && this._playing) {
         // re-align tempo-synced LFOs once the scheduler has anchored the new tempo
@@ -139,6 +141,20 @@ export class AudioEngine extends Emitter {
       }
     }
     this._syncSamples(project);
+  }
+
+  /**
+   * Live tempo / tempo-map edit while playing: warped clips already sounding follow the new map from the
+   * scheduler's next window boundary — where the scheduler itself switches maps — instead of the next start / seek.
+   */
+  _retimeOnTempoEdit(project) {
+    const map = tempoMapFor(project, project.mode); // cached by content: a new object means a tempo edit
+    const prev = this._retimeMap;
+    this._retimeMap = map;
+    if (!prev || prev === map || !this._playing) return;
+    const b = this.scheduler?.boundary();
+    if (!b) return;
+    try { this.graph.retimeClips(map, b.dispatch, b.beat); } catch (e) { this._error(e); }
   }
 
   _onLoad() {
@@ -381,6 +397,7 @@ export class AudioEngine extends Emitter {
     let beat = Number.isFinite(opts.from) ? opts.from : Math.max(0, this._pos);
     if (p.mode === 'song' && p.loop?.enabled && p.loop.end > p.loop.start && beat >= p.loop.end) beat = p.loop.start;
     this._playing = true;
+    this._retimeMap = tempoMapFor(p, p.mode);
     const delay = Number.isFinite(opts.at) ? Math.max(0.02, opts.at - this.ctx.currentTime - (this.scheduler.preroll || 0)) : undefined;
     const t0 = this.scheduler.start(beat, delay);
     this.graph.syncLfos(t0);
