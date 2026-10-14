@@ -1,0 +1,5 @@
+setcpm(90/4)
+$: note("<[c3,e3,g3,b3] [a2,c3,e3,g3]>").s("piano").velocity(".8 .6").room(.3)
+$: note("e5(3,8) g5(5,8,2)").s("gm_vibraphone").delay(.4)
+$: s("bd(3,8), hh(7,16), sd(2,8,4)").bank("AkaiLinn")
+$: note("c3 [e3 g3]").s("sawtooth").vowel("<a o e>").gain(.5)

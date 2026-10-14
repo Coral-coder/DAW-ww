@@ -1,0 +1,4 @@
+// polymeter + slow signals on long notes
+$: note("{c4 d4 e4}%4").s("triangle").gain(saw.range(.3, .7).slow(3))
+$: s("{bd sd hh}%8").bank("RolandTR606")
+$: note("<c2 g1>/2").s("supersaw").hpf(sine.range(40, 400).slow(6)).postgain(.8)
