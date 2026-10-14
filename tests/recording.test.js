@@ -374,3 +374,25 @@ test('placeTakes fills free lanes before adding new ones', () => {
   assert.equal(t.takeLanes.length, 2);
   assert.equal(t.takeLanes[0].takes.length, 2);
 });
+
+test('mixer schedules the shaped envelope for comp / curved-fade clips; song length counts comps', async () => {
+  const { MixGraph } = await import('../src/audio/mixer.js');
+  const { songLengthBeats } = await import('../src/core/model.js');
+  const { defaultEndBeat } = await import('../src/audio/scheduler.js');
+  const calls = [];
+  const g = { gain: { setValueAtTime: (v, t) => calls.push(['set', v, t]), linearRampToValueAtTime: (v, t) => calls.push(['ramp', v, t]) } };
+  const clip = { type: 'audio', start: 0, length: 4, gain: 1, fadeIn: 1, fadeInShape: 'eqp' };
+  MixGraph.prototype._clipEnvelope.call({}, g, clip, { offset: 0 }, 10, 2, 0.5);
+  assert.deepEqual(calls[0], ['set', 0, 10]);
+  const pts = envelopePoints(clip, 0, 2, 0.5);
+  assert.equal(calls.length, pts.length);
+  calls.slice(1).forEach((c, i) => { assert.equal(c[0], 'ramp'); assert.ok(near(c[1], pts[i + 1].v) && near(c[2], 10 + pts[i + 1].t)); });
+  // plain clips keep the old linear envelope (bit-identical renders)
+  const c2 = [];
+  MixGraph.prototype._clipEnvelope.call({}, { gain: { setValueAtTime: (v, t) => c2.push(['set', v, t]), linearRampToValueAtTime: (v, t) => c2.push(['ramp', v, t]) } }, { gain: 0.5 }, { offset: 0 }, 1, 1, 0.5);
+  assert.deepEqual(c2.map((x) => x[0]), ['set', 'ramp', 'set', 'ramp']);
+  // a project whose only audio is a comp still has its length
+  const { p } = threeTakeTrack();
+  assert.equal(songLengthBeats(p), 8);
+  assert.equal(defaultEndBeat(p, 'song'), 8);
+});

@@ -221,7 +221,8 @@ function collectCode(out, project, track, b0, b1, bpb, opts) {
 export function defaultEndBeat(project, mode = project.mode) {
   const bpb = beatsPerBar(project);
   if (mode === 'song') {
-    const end = project.clips.reduce((m, c) => Math.max(m, c.start + c.length), 0);
+    let end = project.clips.reduce((m, c) => Math.max(m, c.start + c.length), 0);
+    for (const t of project.tracks) for (const sg of t.comp || []) end = Math.max(end, sg.end); // take-lane comps
     return Math.max(bpb, Math.ceil(end / bpb - 1e-9) * bpb);
   }
   let longest = 0;

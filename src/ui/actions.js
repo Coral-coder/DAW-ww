@@ -1133,7 +1133,7 @@ export function createActions(app) {
   function showHelp() {
     const sc = [
       ['Space', 'Play / pause'], ['Enter', 'Stop (twice: return to start)'], ['1 – 7', 'Arrange, Scenes, Step Rack, Piano Roll, Mixer, Code, Plugboard'],
-      ['P', 'Toggle Pattern / Song mode'], ['L', 'Toggle loop'], ['M', 'Metronome'], ['R', 'Record'], ['Shift+A', 'Arm automation recording (move any control while playing)'], ['`', 'Computer keyboard piano'],
+      ['P', 'Toggle Pattern / Song mode'], ['L', 'Toggle loop'], ['M', 'Metronome'], ['R', 'Record'], ['Shift+R', 'Capture MIDI (what you just played)'], ['S', 'Split selected clips at the playhead (Arrange)'], ['Shift+Del', 'Ripple delete (Arrange)'], ['Shift+A', 'Arm automation recording (move any control while playing)'], ['`', 'Computer keyboard piano'],
       ['Z…M / Q…P', 'Play notes (keyboard piano on)'], ['- / =', 'Octave down / up'], ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'],
       ['Ctrl/Cmd+K', 'Command palette — search every action'], ['Ctrl+Shift+M', 'MIDI learn mode (map hardware knobs to any control)'],
       ['Ctrl+S / Ctrl+O', 'Save / open project'], ['Ctrl+E', 'Export WAV'], ['B / D / A', 'Toggle browser / device / assistant panels'],

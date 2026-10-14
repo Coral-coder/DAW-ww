@@ -226,6 +226,7 @@ export function createRecorder(app, { toast: toastFn = null } = {}) {
     }
     if (!recorded.length && !byTrack.size) {
       if (s.audioIds.length) toast('Nothing was recorded.', { level: 'warn' });
+      app.setStatus?.('');
       em.emit('session', { active: false });
       return null;
     }
@@ -255,6 +256,7 @@ export function createRecorder(app, { toast: toastFn = null } = {}) {
     for (const [id, b] of buffers) engine.buffers?.set(id, b);
     if (buffers.length) engine.emit?.('samples', {});
     toast(`Recorded — ${report.join(' · ')}`, { level: 'success' });
+    app.setStatus?.(`Recorded: ${report.join(' · ')}. Show the take lanes with “T” on the track header to comp.`);
     em.emit('session', { active: false, report });
     em.emit('takes');
     return report;
