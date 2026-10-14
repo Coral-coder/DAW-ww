@@ -79,3 +79,22 @@ test('key spelling: chord symbols, setlist and code speller agree with the key',
   assert.equal(noteSpeller({ key: { root: 3, scale: 'minor' } })(66), 'gb4');
   assert.equal(noteSpeller({ key: { root: 9, scale: 'minor' } })(66), 'f#4');
 });
+
+import { repitchRates, curveRates } from '../src/audio/warp/markers.js';
+import { WarpRenderer } from '../src/audio/warp/core.js';
+
+test('warp: Re-Pitch honours transpose (rate × 2^(st/12) on top of the tempo ratio)', () => {
+  const pts = [{ t: 0, s: 0 }, { t: 1, s: 0.5 }, { t: 2, s: 1.5 }];
+  assert.deepEqual(curveRates(pts).map((r) => r.rate), [0.5, 1]);
+  assert.deepEqual(repitchRates(pts, 12).map((r) => r.rate), [1, 2]);
+  assert.ok(Math.abs(repitchRates(pts, 7)[1].rate - 2 ** (7 / 12)) < 1e-12);
+  assert.deepEqual(repitchRates(pts, 0), curveRates(pts));
+  // renderer: a 100 Hz sine played at tempo ratio 1 with +12 st comes out at 200 Hz
+  const sr = 8000, x = new Float32Array(sr * 2);
+  for (let i = 0; i < x.length; i++) x[i] = Math.sin(2 * Math.PI * 100 * i / sr);
+  const zc = (y) => { let n = 0; for (let i = 1; i < y.length; i++) if (y[i - 1] < 0 && y[i] >= 0) n++; return n; };
+  const mk = (mode, transpose) => new WarpRenderer({ channels: [x], srcRate: sr, outRate: sr, curve: [{ t: 0, s: 0 }, { t: 0.5, s: 0.5 }], mode, transpose }).renderAll()[0];
+  assert.ok(Math.abs(zc(mk('repitch', 0)) - 50) <= 1);
+  assert.ok(Math.abs(zc(mk('repitch', 12)) - 100) <= 1);
+  assert.ok(Math.abs(zc(mk('off', 12)) - 50) <= 1); // warp off: transpose does nothing
+});
