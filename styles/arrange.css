@@ -156,3 +156,22 @@
 }
 .arr-heads.tiny .arr-th-in { display: none; }
 :root[data-theme="light"] .arr-ah-val.live { color: color-mix(in srgb, var(--tc, var(--accent)) 60%, #000); }
+
+/* tempo track (src/ui/tempo-lane.js) */
+.tempo-lane { display: grid; grid-template-columns: var(--arr-head-w, 210px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); overflow: hidden; border-bottom: 1px solid var(--line); background: var(--bg); flex: none; }
+.tempo-lane.hidden { display: none; }
+.tempo-lane-head { display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 0 8px; background: var(--bg-2); border-right: 1px solid var(--line); min-width: 0; }
+.tempo-lane-title { display: flex; align-items: baseline; gap: 8px; font-size: 12px; font-weight: 600; color: var(--text); white-space: nowrap; }
+.tempo-lane-now { font: 600 11px var(--mono); color: var(--accent-2); }
+.tempo-lane-btns { display: flex; gap: 4px; }
+.tempo-lane-canvas { width: 100%; height: 100%; min-height: 0; display: block; cursor: crosshair; touch-action: none; }
+
+/* clip warp editor (src/ui/warp-editor.js) */
+.warp-editor { display: flex; flex-direction: column; gap: 8px; }
+.warp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.warp-row .hfield { display: inline-flex; align-items: center; gap: 4px; }
+.warp-wave { height: 220px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.warp-canvas { width: 100%; height: 100%; display: block; cursor: ew-resize; touch-action: none; }
+.warp-info { font: 11px var(--mono); color: var(--text-2); }
+.warp-help { font-size: 11px; color: var(--text-3); margin: 0; }
+.tempo-now { font: 600 10px var(--mono); color: var(--accent-2); margin-left: 4px; }

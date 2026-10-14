@@ -13,6 +13,10 @@ import {
 import { splitKey } from '../../core/automation-record.js';
 import { targetGroups as autoTargetGroups, targetInfo as autoTargetInfo, ownerView, formatLaneValue } from '../automation-targets.js';
 import { isTyping } from '../keyboard.js';
+import { createTempoLane, drawRulerBars, drawMeterGrid } from '../tempo-lane.js';
+import { songTempoMap } from '../../time/tempo-map.js';
+import { openWarpEditor } from '../warp-editor.js';
+import { sourceTimeFn } from '../../audio/warp/markers.js';
 
 // ----------------------------------------------------------------------------- constants
 const RULER_H = 22;
@@ -215,6 +219,12 @@ export function createArrangeView(app) {
   const snapB = (b, ev, fn = Math.round) => {
     const s = ev && (ev.ctrlKey || ev.metaKey) ? 0 : snapStep();
     if (!s) return b;
+    if (snapMode === 'bar' && songTempoMap(get()).meters.length > 1) { // meter changes: snap to real bar lines
+      const m = songTempoMap(get()), bar = m.barAt(b);
+      if (fn === Math.floor) return bar.start;
+      if (fn === Math.ceil) return bar.offset < 1e-7 ? bar.start : m.barStart(bar.bar + 1);
+      return bar.offset < bar.length / 2 ? bar.start : m.barStart(bar.bar + 1);
+    }
     const q = fn === Math.floor ? Math.floor(b / s + 1e-7) : fn === Math.ceil ? Math.ceil(b / s - 1e-7) : Math.round(b / s);
     return q * s;
   };
@@ -296,7 +306,11 @@ export function createArrangeView(app) {
     h('p.arr-empty-tip', 'Tip: drag samples or presets from the Browser and drop audio, .strudel or project files anywhere on this view.')));
 
   const body = h('div.arr-body', corner, top, heads, lanes, headResizer, empty);
-  const el = h('div.arr', toolbar, banner, body);
+  // tempo track (time/tempo-map.js): tempo points / ramps / meter changes, locked to the timeline scroll
+  const tempoLane = createTempoLane(app, { getPpb: () => ppb, getHeadW: () => headW, getScroller: () => scroller, snapB: (b, ev, fn) => snapB(b, ev, fn), pos: () => pos(), invalidate: () => invalidate() });
+  const tempoBtn = toggle({ label: 'Tempo', value: tempoLane.shown, title: 'Show the tempo track: tempo changes, ramps and time-signature changes', onChange: (v) => tempoLane.toggle(v) });
+  toolbar.insertBefore(tempoBtn, moreBtn);
+  const el = h('div.arr', toolbar, banner, tempoLane.el, body);
 
   // ------------------------------------------------------------------ theme
   function readTheme() {
@@ -452,7 +466,7 @@ export function createArrangeView(app) {
   }
   function drawNow() {
     if (!visible) return;
-    try { drawLanes(); drawTop(); updatePlayhead(); } catch (e) { console.error('[arrange draw]', e); }
+    try { drawLanes(); drawTop(); updatePlayhead(); tempoLane.draw(); } catch (e) { console.error('[arrange draw]', e); }
   }
 
   // ------------------------------------------------------------------ pattern preview cache (offscreen canvases)
@@ -560,7 +574,11 @@ export function createArrangeView(app) {
       ctx.fillRect(xOf(loop.start), 0, (loop.end - loop.start) * ppb, Math.max(0, lanesBottom));
     }
     // grid
-    if (lanesBottom > 0) drawGrid(ctx, W, lanesBottom, b0, b1, bpb, sx);
+    if (lanesBottom > 0) {
+      const tmap = songTempoMap(p);
+      if (tmap.meters.length > 1) drawMeterGrid(ctx, tmap, { sx, ppb, H: lanesBottom, b0, b1, theme, sub: snapStep() < 1 ? snapStep() : 0 });
+      else drawGrid(ctx, W, lanesBottom, b0, b1, bpb, sx);
+    }
     for (const m of markers) {
       if (m.beat < b0 || m.beat > b1) continue;
       ctx.fillStyle = rgba(hexToRgb(markerColor(p, m)), 0.45);
@@ -832,7 +850,7 @@ export function createArrangeView(app) {
       ctx.restore();
       return;
     }
-    const spb = 60 / p.bpm;
+    const tOf = sourceTimeFn(c, songTempoMap(p)); // warp markers / tempo map: content beat -> sample seconds
     const amp = (ch / 2) * Math.min(2, c.gain ?? 1);
     const px0 = Math.max(Math.floor(x), 0), px1 = Math.min(Math.ceil(x + c.length * ppb), W);
     const n = pk.min.length;
@@ -840,7 +858,7 @@ export function createArrangeView(app) {
     ctx.beginPath();
     for (let px = px0; px < px1; px++) {
       const beatA = (px + sx) / ppb - c.start + (c.offset || 0);
-      const ta = beatA * spb, tb = (beatA + 1 / ppb) * spb;
+      const ta = tOf(beatA), tb = tOf(beatA + 1 / ppb);
       if (ta >= pk.duration) break;
       if (tb < 0) continue;
       const ia = Math.max(0, Math.floor(ta / pk.bucketSec));
@@ -875,7 +893,7 @@ export function createArrangeView(app) {
     const st = Math.min(snapStep() || 0, 1);
     return st ? Math.round(b / st) * st : b;
   };
-  const posLabel = (b) => `${Math.floor(b / bpbNow()) + 1}.${+(mod(b, bpbNow()) + 1).toFixed(2)}`;
+  const posLabel = (b) => { const m = songTempoMap(get()); if (m.meters.length > 1) { const x = m.barAt(b); return `${x.bar + 1}.${+(x.offset / x.unit + 1).toFixed(2)}`; } return `${Math.floor(b / bpbNow()) + 1}.${+(mod(b, bpbNow()) + 1).toFixed(2)}`; };
 
   let autoHover = null; // { laneId, idx }  hovered/dragged point (for highlight)
 
@@ -1336,7 +1354,10 @@ export function createArrangeView(app) {
     ctx.fillStyle = theme.bg;
     ctx.fillRect(0, RULER_H + MARK_H, W, LOOP_H);
 
-    // ruler
+    // ruler (meter changes: bars through the meter map + meter labels)
+    const tmap = songTempoMap(p);
+    if (tmap.meters.length > 1) drawRulerBars(ctx, tmap, { sx, ppb, W, H: RULER_H, theme });
+    else {
     const barPx = bpb * ppb;
     let labelStep = 1;
     while (labelStep * barPx < 42) labelStep *= 2;
@@ -1368,6 +1389,7 @@ export function createArrangeView(app) {
         }
       }
     }
+    } // constant meter
     // song end marker
     if (p.clips.length) {
       const ex = songLengthBeats(p) * ppb - sx;
@@ -1437,6 +1459,7 @@ export function createArrangeView(app) {
     if (!visible) return;
     const p = get();
     const x = updatePlayhead();
+    tempoLane.tick();
     if (ui.get('followPlayhead') !== false && engine.isPlaying && p.mode === 'song' && !dragging) {
       const W = scroller.clientWidth;
       if (x > W * 0.92 || x < 0) {
@@ -1961,6 +1984,7 @@ export function createArrangeView(app) {
         }
       })) },
       clip.type === 'audio' ? { label: 'Gain', icon: 'volume', submenu: [-12, -6, -3, 0, 3, 6].map((db) => ({ label: `${db > 0 ? '+' : ''}${db} dB${Math.abs(20 * Math.log10(clip.gain ?? 1) - db) < 0.5 ? '  ●' : ''}`, onClick: () => store.transact('Clip gain', (pp) => { const c = pp.clips.find((x) => x.id === clip.id); if (c) c.gain = +Math.pow(10, db / 20).toFixed(4); }) })) } : null,
+      clip.type === 'audio' ? { label: 'Warp / tempo…', icon: 'wave', title: 'Clip warp editor: warp mode, markers, transpose, detect tempo, quantize', onClick: () => openWarpEditor(app, clip.id) } : null,
       { label: 'Loop this clip', icon: 'loop', onClick: () => setLoop(clip.start, clip.start + clip.length) },
       '-',
       { label: n > 1 ? `Delete ${n} clips` : 'Delete', icon: 'trash', shortcut: 'Del', onClick: deleteSelection },
@@ -2177,7 +2201,7 @@ export function createArrangeView(app) {
       if (pk.idx >= 0) deletePoint(hit.track.id, hit.auto.lane.id, pk.idx);
       return;
     }
-    if (hit.clip) { openClipEditor(hit.clip); return; }
+    if (hit.clip) { if (hit.clip.type === 'audio') openWarpEditor(app, hit.clip.id); else openClipEditor(hit.clip); return; }
     if (tool !== 'pointer') return;
     if (hit.track.type === 'instrument') createClipAt(hit.track, hit.beat);
     else if (hit.track.type === 'audio') importAudioAt(hit.track, snapB(hit.beat, null, Math.floor));

@@ -173,3 +173,45 @@ test('tap tempo + tempo from selection length', () => {
   close(m2.bpmAt(20), 120);
   normalizeTempoMap(p2);
 });
+
+import { quantizeWarp, extractGroove, grooveFromNotes, applyGrooveToNotes, quantizeNotes, gridTarget, grooveFromAudio } from '../src/time/groove.js';
+import { secAtBeat, beatAtSec } from '../src/audio/warp/markers.js';
+
+test('audio quantize: transients pulled to the grid by strength (with swing)', () => {
+  // a loose 120 BPM performance: 16th hits with ±20 ms errors
+  const err = [0.012, -0.018, 0.02, -0.006, 0.015, -0.02, 0.004, 0.01];
+  const trans = err.map((e, k) => k * 0.125 + 0.002 + e).map((s) => Math.max(0, s));
+  const clip = { start: 4, length: 4, offset: 0, warp: { mode: 'beats', markers: [{ beat: 0, sec: 0 }, { beat: 4, sec: 2 }], bpm: 120 } };
+  const w = quantizeWarp(clip, trans, { grid: 0.25, strength: 1 });
+  for (const s of trans) { const b = beatAtSec(w, s); close(b, Math.round(b / 0.25) * 0.25, 1e-6, 'on grid'); }
+  const half = quantizeWarp(clip, trans, { grid: 0.25, strength: 0.5 });
+  trans.forEach((s, k) => { const before = s * 2, target = k * 0.25; close(beatAtSec(half, s), before + 0.5 * (target - before), 1e-6, 'half strength'); });
+  const sw = quantizeWarp(clip, trans, { grid: 0.25, strength: 1, swing: 0.5 });
+  close(beatAtSec(sw, trans[1]), 0.25 + 0.0625, 1e-6, 'odd 16th swung');
+  close(gridTarget(1.26, 0.25, 0).target, 1.25);
+  // a clip that starts off the bar: grid is the timeline's
+  const off = quantizeWarp({ ...clip, start: 5 }, trans, { grid: 0.25 });
+  for (const s of trans) { const b = beatAtSec(off, s) + 5; close(b, Math.round(b / 0.25) * 0.25, 1e-6, 'timeline grid'); }
+});
+
+test('groove: extract from MIDI / audio, apply to notes', () => {
+  // MPC-ish 16th swing: odd 16ths late by 0.04 beats, accents on 8ths
+  const notes = [];
+  for (let k = 0; k < 32; k++) notes.push({ id: `n${k}`, pitch: 42, start: k * 0.25 + (k % 2 ? 0.04 : 0), dur: 0.1, vel: k % 2 ? 0.5 : 1 });
+  const g = grooveFromNotes(notes, { grid: 0.25, length: 1 });
+  assert.equal(g.offsets.length, 4);
+  g.offsets.forEach((o, i) => close(o, i % 2 ? 0.04 : 0, 1e-9));
+  close(g.velocities[1], 0.5, 1e-9);
+  const straight = [0, 0.25, 0.5, 0.75, 1, 1.25].map((s, i) => ({ id: `s${i}`, pitch: 60, start: s, dur: 0.2, vel: 0.8 }));
+  const grooved = applyGrooveToNotes(straight, g, { strength: 1, velStrength: 1 });
+  assert.deepEqual(grooved.map((n) => n.start), [0, 0.29, 0.5, 0.79, 1, 1.29]);
+  assert.deepEqual(grooved.map((n) => n.vel), [1, 0.5, 1, 0.5, 1, 0.5]);
+  const halfway = applyGrooveToNotes(straight, g, { strength: 0.5 });
+  close(halfway[1].start, 0.27, 1e-9);
+  // audio: transients through the clip warp
+  const clip = { start: 0, offset: 0, warp: { markers: [{ beat: 0, sec: 0 }, { beat: 4, sec: 2 }], bpm: 120 } };
+  const ga = grooveFromAudio(clip, notes.map((n) => secAtBeat(clip.warp, n.start)), { grid: 0.25, length: 1 });
+  ga.offsets.forEach((o, i) => close(o, i % 2 ? 0.04 : 0, 1e-9));
+  assert.deepEqual(quantizeNotes([{ start: 0.3 }, { start: 0.49 }], { grid: 0.25 }).map((n) => n.start), [0.25, 0.5]);
+  assert.equal(extractGroove([], { grid: 0.5, length: 2 }).offsets.length, 4);
+});

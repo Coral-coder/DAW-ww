@@ -153,3 +153,32 @@ test('analysis + auto-warp: detects the loop tempo and puts bar markers on its d
   assert.ok(w.markers.length >= 4);
   for (const m of w.markers.slice(0, 4)) close(m.sec, m.beat * 60 / bpm, 0.012, `marker ${m.beat}`);
 });
+
+test('AudioWorklet processor (stubbed scope): streams the warp in 128-frame blocks, starts on time, ends', async () => {
+  let Proc = null;
+  globalThis.AudioWorkletProcessor = class { constructor() { this.port = { onmessage: null, posted: [], postMessage(m) { this.posted.push(m); } }; } };
+  globalThis.registerProcessor = (name, cls) => { if (name === 'daw3-warp') Proc = cls; };
+  globalThis.sampleRate = SR;
+  globalThis.currentTime = 0;
+  await import(`../src/audio/warp/worklet.js?t=${Date.now()}`);
+  assert.ok(Proc, 'registered');
+  const x = drumLoop(120, 4);
+  const when = 0.01;
+  const p = new Proc({ processorOptions: { sampleId: 's1', when, mode: 'beats', curve: [{ t: 0, s: 0 }, { t: 2.5, s: 2 }], slices: onsets(x), transpose: 0 } });
+  p.port.onmessage({ data: { type: 'sample', id: 's1', sr: SR, channels: [x] } });
+  const out = new Float32Array(Math.round(3 * SR));
+  let alive = true, f = 0;
+  while (alive && f < out.length) {
+    globalThis.currentTime = f / SR;
+    const blk = [new Float32Array(128), new Float32Array(128)];
+    alive = p.process([], [blk]);
+    out.set(blk[0].subarray(0, Math.min(128, out.length - f)), f);
+    f += 128;
+  }
+  assert.equal(alive, false, 'ended');
+  assert.ok(p.port.posted.some((m) => m.type === 'ended'));
+  const on = onsets(out);
+  assert.equal(on.length, 8);
+  on.forEach((t, k) => close(t, when + k * 0.3125, 0.004, `hit ${k}`));
+  delete globalThis.AudioWorkletProcessor; delete globalThis.registerProcessor; delete globalThis.sampleRate; delete globalThis.currentTime;
+});

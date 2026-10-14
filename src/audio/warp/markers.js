@@ -149,6 +149,9 @@ export function autoWarp(analysis, duration, { beatsPerBar = 4, maxLoopSec = 60 
   const spb = 60 / bpm;
   const trans = analysis?.transients || [];
   let down = analysis?.downbeat ?? 0;
+  // loops (short files starting with a hit) start on their downbeat: bar-phase detection is ambiguous on
+  // loops with a kick every 2 beats, the cut point is not
+  if (duration < 32 && trans.length && trans[0] < 0.03) down = trans[0];
   const bar = spb * beatsPerBar;
   while (down - bar > -0.03) down -= bar; // earliest bar start (30 ms slack: detection jitter)
   if (down < 0.03) down = Math.max(0, down < 0 && down > -0.03 ? 0 : down);
@@ -195,3 +198,12 @@ export function setWarpBpm(warp, bpm) {
 
 /** Transient positions as content beats. */
 export const transientBeats = (warp, transients) => (transients || []).map((s) => beatAtSec(warp, s));
+
+/** Sample seconds at content beat c of `clip` placed on the timeline of tempo map `map` (drawing / editing). */
+export function sourceTimeFn(clip, map) {
+  if (isWarped(clip)) return (c) => secAtBeat(clip.warp, c);
+  const cs = clip.start, off = clip.offset || 0;
+  if (map.isConstant) { const spb = 60 / map.bpm; return (c) => c * spb; }
+  const base = off * map.spbAt(cs), s0 = map.secAt(cs);
+  return (c) => base + map.secAt(cs + c - off) - s0;
+}

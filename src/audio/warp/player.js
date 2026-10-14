@@ -27,8 +27,13 @@ export function loadWarpWorklet(ctx) {
     st.promise = Promise.resolve(false);
     return st.promise;
   }
-  st.promise = ctx.audioWorklet.addModule(new URL('./worklet.js', import.meta.url).href)
-    .then(() => { st.status = 'ready'; return true; }, (e) => { st.status = 'failed'; st.error = e; console.warn('[warp] AudioWorklet unavailable — using the offline warp cache', e?.message || e); return false; });
+  // some (sandboxed / headless) browsers never settle addModule: give up after 8 s and keep the offline cache path
+  const timeout = new Promise((resolve) => setTimeout(() => resolve('timeout'), 8000));
+  st.promise = Promise.race([ctx.audioWorklet.addModule(new URL('./worklet.js', import.meta.url).href), timeout])
+    .then((r) => {
+      if (r === 'timeout') { st.status = 'failed'; console.warn('[warp] AudioWorklet did not load — using the offline warp cache'); return false; }
+      st.status = 'ready'; return true;
+    }, (e) => { st.status = 'failed'; st.error = e; console.warn('[warp] AudioWorklet unavailable — using the offline warp cache', e?.message || e); return false; });
   return st.promise;
 }
 export const warpWorkletStatus = (ctx) => workletState.get(ctx)?.status || 'none';

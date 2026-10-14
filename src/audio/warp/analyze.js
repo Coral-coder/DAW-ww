@@ -13,6 +13,13 @@ export function analyzeChannels(channels, sr, { maxSec = 90, beatsPerBar = 4, mi
   const tempo = detectTempo(onset, { minBpm, maxBpm, beatsPerBar });
   const transients = detectTransients(onset.env, onset.fps, { sensitivity: 0.6, minGap: 0.045 })
     .map((t) => refineOnset(chs, sr, t));
+  // a hit right at the start has no "before" in the onset envelope: add it from the waveform
+  if (!transients.length || transients[0] > 0.03) {
+    let head = 0, all = 0;
+    const x = chs[0], n10 = Math.min(x.length, Math.round(0.01 * sr));
+    for (let i = 0; i < x.length; i += 7) { const a = Math.abs(x[i]); if (a > all) all = a; if (i < n10 && a > head) head = a; }
+    if (all > 0 && head > all * 0.1) transients.unshift(0);
+  }
   // short loops: the length is the best tempo hint (a loop is a whole number of bars / beats)
   const dur = (channels[0]?.length || 0) / sr;
   let { bpm } = tempo;

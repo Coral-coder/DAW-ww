@@ -755,7 +755,7 @@ export function createActions(app) {
   }
 
   /** Create an audio clip for a sample at a beat position (creates an audio track if needed). */
-  async function placeSample(sampleId, { trackId, start = 0 } = {}) {
+  async function placeSample(sampleId, { trackId, start = 0, warp = true } = {}) {
     const p = get();
     const s = p.samples[sampleId];
     if (!s) return;
@@ -766,10 +766,16 @@ export function createActions(app) {
       try { const buf = await engine.decodeSample(sampleId); dur = buf.duration; } catch { dur = 2; }
     }
     const lengthBeats = Math.max(0.25, Math.round((dur * get().bpm) / 60 * 4) / 4);
+    let clipId = null;
     store.transact('Place sample', (pp) => {
-      pp.clips.push(createClip(track.id, { type: 'audio', sampleId, start, length: lengthBeats, name: s.name }));
+      const c = createClip(track.id, { type: 'audio', sampleId, start, length: lengthBeats, name: s.name });
+      clipId = c.id;
+      pp.clips.push(c);
       if (pp.samples[sampleId] && !pp.samples[sampleId].duration) pp.samples[sampleId].duration = dur;
     });
+    // auto-warp (src/ui/warp-editor.js): tempo / transient analysis -> warp markers; loops follow the song tempo
+    if (warp && !s.frozen) import('./warp-editor.js').then((m) => m.autoWarpClip(app, clipId)).catch((e) => console.warn('[warp] auto-warp', e));
+    return clipId;
   }
 
   /** Load a sample into a new (or given) sampler track. */

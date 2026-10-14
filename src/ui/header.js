@@ -1,10 +1,11 @@
 // Top bar: main menu, transport, tempo/key/genre, mode switch, master meter.
+import { tempoMapFor, songTempoMap } from '../time/tempo-map.js';
+import { TapTempo, tapTempoToMap } from '../time/tempo-edit.js';
 import { h, icon } from './dom.js';
 import { numberField, select, contextMenu, meter, knob, markAuto } from './components.js';
 import { AUTO_MODES } from './automation-recorder.js';
 import { SCALES, pitchClassName } from '../theory/index.js';
 import { GENRES } from '../gen/genres.js';
-import { beatsPerBar } from '../core/model.js';
 import { overriddenLanes } from '../core/automation.js';
 
 export function createHeader(app) {
@@ -53,18 +54,17 @@ export function createHeader(app) {
   lcd.addEventListener('click', () => { lcdTime = !lcdTime; });
 
   const bpm = numberField({ value: p0.bpm, min: 20, max: 400, step: 1, width: 54, title: 'Tempo (BPM) — drag or type', onChange: (v, { final }) => { if (final && store.get().bpm === v) return; store.transact('Tempo', (p) => { p.bpm = v; }, { coalesce: !final }); } });
-  const tapTimes = [];
-  const tap = h('button.btn.small', { title: 'Tap tempo' }, 'TAP');
+  const tapper = new TapTempo();
+  const tap = h('button.btn.small', { title: 'Tap tempo (song with tempo changes: sets the tempo of the bar under the playhead)' }, 'TAP');
   tap.addEventListener('click', () => {
-    const now = performance.now();
-    if (tapTimes.length && now - tapTimes[tapTimes.length - 1] > 2000) tapTimes.length = 0;
-    tapTimes.push(now);
-    if (tapTimes.length >= 3) {
-      const d = (tapTimes[tapTimes.length - 1] - tapTimes[0]) / (tapTimes.length - 1);
-      const v = Math.round(60000 / d);
-      if (v >= 20 && v <= 400) store.transact('Tap tempo', (p) => { p.bpm = v; });
-    }
+    const v = tapper.tap(performance.now());
+    if (!(v >= 20 && v <= 400) || tapper.times.length < 3) return;
+    const p = store.get();
+    const map = songTempoMap(p);
+    const at = p.mode === 'song' && !map.isConstant ? map.barAt(Math.max(0, engine.getPosition?.() || 0)).start : 0;
+    store.transact('Tap tempo', (pp) => tapTempoToMap(pp, at, Math.round(v)), { coalesce: true });
   });
+  const tempoNow = h('span.tempo-now', { title: 'Tempo at the playhead (the song has tempo changes — see the Tempo track in Arrange)' });
   const sigOptions = ['4/4', '3/4', '6/8', '5/4', '7/8', '2/4', '12/8', '7/4'].map((s) => ({ value: s, label: s }));
   const sig = select({ options: sigOptions, value: p0.timeSig.join('/'), title: 'Time signature', onChange: (v) => store.transact('Time signature', (p) => { p.timeSig = v.split('/').map(Number); }) });
   const swing = numberField({ value: Math.round(p0.swing * 100), min: 0, max: 100, step: 1, width: 42, title: 'Swing % (applied to off-beat 16ths)', onChange: (v, { final }) => { if (final && Math.abs(store.get().swing * 100 - v) < 1e-9) return; store.transact('Swing', (p) => { p.swing = v / 100; }, { coalesce: !final }); } });
@@ -114,7 +114,7 @@ export function createHeader(app) {
     h('div.hgroup', menuBtn, logo),
     h('div.hgroup', undoBtn, redoBtn),
     h('div.hgroup', playBtn, stopBtn, recBtn, h('div.auto-arm-group', autoBtn, autoMode, reBtn), loopBtn, metroBtn, lcd),
-    h('div.hgroup', h('div.hfield', h('span.hlabel', 'BPM'), bpm), tap, h('div.hfield', h('span.hlabel', 'Sig'), sig), h('div.hfield', h('span.hlabel', 'Swing'), swing)),
+    h('div.hgroup', h('div.hfield', h('span.hlabel', 'BPM'), bpm, tempoNow), tap, h('div.hfield', h('span.hlabel', 'Sig'), sig), h('div.hfield', h('span.hlabel', 'Swing'), swing)),
     h('div.hgroup', h('div.hfield', h('span.hlabel', 'Key'), keyRoot), h('div.hfield', h('span.hlabel', 'Scale'), keyScale), h('div.hfield', h('span.hlabel', 'Genre'), genre)),
     h('div.hgroup', modeSwitch),
     h('div.hgroup', genBtn),
@@ -154,16 +154,17 @@ export function createHeader(app) {
   function frame() {
     const p = store.get();
     const pos = engine.getPosition ? engine.getPosition() : 0;
+    // tempo map (src/time): time through ramps / changes, bar.beat.step through meter changes
+    const map = tempoMapFor(p, p.mode);
     if (lcdTime) {
-      const sec = (pos * 60) / p.bpm;
+      const sec = Math.max(0, map.secAt(pos));
       lcd.textContent = `${Math.floor(sec / 60)}:${(sec % 60).toFixed(2).padStart(5, '0')}`;
     } else {
-      const bpb = beatsPerBar(p);
-      const bar = Math.floor(pos / bpb) + 1;
-      const beat = Math.floor(pos % bpb) + 1;
-      const step = Math.floor((pos % 1) * 4) + 1;
-      lcd.textContent = `${bar}.${beat}.${step}`;
+      lcd.textContent = map.formatBBT(Math.max(0, pos));
     }
+    const varying = !map.isConstant;
+    tempoNow.hidden = !varying;
+    if (varying) tempoNow.textContent = `♩${map.bpmAt(Math.max(0, pos)).toFixed(1)}`;
     playBtn.classList.toggle('on', !!engine.isPlaying);
     autoBtn.classList.toggle('writing', !!ui.get('autoArm') && !!engine.isPlaying && p.mode === 'song');
     playBtn.replaceChildren(icon(engine.isPlaying ? 'pause' : 'play', 16));
