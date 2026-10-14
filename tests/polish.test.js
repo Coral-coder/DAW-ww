@@ -185,3 +185,83 @@ test('shortcuts: view-scoped commands share the rebindable map; same key in diff
   assert.equal(reg.get('piano.selectAll').run(), true);
   assert.equal(viewNow, 'piano');
 });
+
+import { FMInstrument } from '../src/audio/fm.js';
+import { OrganInstrument } from '../src/audio/organ.js';
+import { SamplerInstrument } from '../src/audio/sampler.js';
+import { SynthInstrument } from '../src/audio/synth.js';
+import { pressureGain, timbreCutoff, timbreCents } from '../src/audio/voice-expression.js';
+
+/** Permissive Web Audio fake: every node property that isn't set is an AudioParam; param inputs are recorded. */
+function fakeCtx() {
+  class Param {
+    constructor(v = 0) { this.value = v; this.inputs = []; }
+    setValueAtTime(v) { this.value = v; return this; } setTargetAtTime(v) { this.value = v; return this; }
+    linearRampToValueAtTime(v) { this.value = v; return this; } exponentialRampToValueAtTime(v) { this.value = v; return this; }
+    setValueCurveAtTime(c) { this.value = c[c.length - 1]; return this; } cancelScheduledValues() { return this; } cancelAndHoldAtTime() { return this; }
+  }
+  const METHODS = new Set(['connect', 'disconnect', 'start', 'stop', 'setPeriodicWave', 'addEventListener', 'removeEventListener', 'getFloatTimeDomainData', 'getByteFrequencyData', 'getFloatFrequencyData', 'getFrequencyResponse']);
+  const node = (kind) => {
+    const o = { kind, outs: [] };
+    o.connect = (d) => { if (d instanceof Param) d.inputs.push(p); else o.outs.push(d); return d; };
+    o.disconnect = (d) => { if (d === undefined) o.outs = []; else o.outs = o.outs.filter((x) => x !== d); };
+    o.start = () => {}; o.stop = () => {}; o.setPeriodicWave = () => {}; o.addEventListener = () => {}; o.removeEventListener = () => {};
+    const p = new Proxy(o, { get(t, k) { if (k in t || typeof k === 'symbol' || k === 'then' || k === 'onended' || METHODS.has(k)) return t[k]; if (k === 'curve' || k === 'buffer') return t[k] ?? null; t[k] = new Param(k === 'gain' ? 1 : 0); return t[k]; } });
+    return p;
+  };
+  const ctx = { sampleRate: 48000, currentTime: 0, state: 'running', destination: node('dest') };
+  return new Proxy(ctx, { get(t, k) {
+    if (k in t) return t[k];
+    if (k === 'createPeriodicWave') return () => ({});
+    if (k === 'createBuffer') return (ch, len, sr) => { const d = Array.from({ length: ch }, () => new Float32Array(len)); return { numberOfChannels: ch, length: len, sampleRate: sr, duration: len / sr, getChannelData: (c) => d[c] }; };
+    if (typeof k === 'string' && k.startsWith('create')) return () => node(k.slice(6));
+    return undefined;
+  } });
+}
+const reached = (from, target, seen = new Set()) => { if (from === target) return true; if (seen.has(from)) return false; seen.add(from); return (from.outs || []).some((n) => reached(n, target, seen)); };
+
+test('MPE: pure maps (pressure gain, timbre cutoff / cents)', () => {
+  assert.equal(pressureGain(0), 1);
+  assert.equal(pressureGain(1), 1.5);
+  assert.equal(timbreCutoff(0.5, 0), 20000);
+  assert.equal(timbreCutoff(1, 0), 20000);
+  assert.ok(timbreCutoff(0, 0) < 200);
+  assert.ok(timbreCutoff(0.25, 1) > timbreCutoff(0.25, 0));
+  assert.equal(timbreCents(0.5, 0), 0);
+  assert.equal(timbreCents(1, 0.5), 1200 + 600);
+});
+
+test('MPE: FM, organ, sampler and synth voices take per-note bend / pressure / timbre (only the touched note)', () => {
+  const engines = [
+    ['fm', FMInstrument, {}],
+    ['organ', OrganInstrument, {}],
+    ['sampler', SamplerInstrument, {}],
+    ['synth', SynthInstrument, {}],
+  ];
+  for (const [name, E, params] of engines) {
+    const ctx = fakeCtx();
+    const out = ctx.createGain();
+    const inst = new E(ctx, out, params, {});
+    if (name === 'sampler') { const b = ctx.createBuffer(1, 48000, 48000); inst._buffer = () => b; }
+    const a = inst.noteOn(60, 0.8, 0);
+    const b = inst.noteOn(64, 0.8, 0);
+    assert.ok(a && b, name);
+    assert.ok(a.xs, `${name}: expression stage`);
+    inst.noteExpression(60, { bend: 2, pressure: 1, timbre: 0.1 }, 0);
+    assert.equal(a.xs.gain.gain.value, 1.5, `${name}: pressure -> gain`);
+    assert.equal(b.xs.gain.gain.value, 1, `${name}: other note untouched`);
+    if (name !== 'synth') {
+      assert.ok(a.mpeBend, `${name}: per-note bend source`);
+      assert.equal(a.mpeBend.offset.value, 200, `${name}: bend in cents`);
+      assert.ok(!b.mpeBend, `${name}: bend only on the touched voice`);
+      for (const d of a.detuneTargets) assert.ok(d.inputs.length >= 1, `${name}: detune target driven`);
+    }
+    if (name === 'fm' || name === 'organ') {
+      assert.ok(a.xs.filter, `${name}: timbre inserted a per-voice low-pass`);
+      assert.ok(a.xs.filter.frequency.value < 2000, `${name}: dark timbre closes the filter`);
+      assert.ok(reached(a.xs.gain, a.xs.filter) && reached(a.xs.filter, a.xs.dest), `${name}: re-routed through the filter`);
+      assert.ok(!a.xs.gain.outs.includes(a.xs.dest), `${name}: direct path removed`);
+    }
+    if (name === 'sampler') assert.equal(a.filters[0].detune.value, timbreCents(0.1, 1), 'sampler: own filter detuned');
+  }
+});

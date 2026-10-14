@@ -24,6 +24,7 @@
 // StrudelInstruments, each behind its own gain — started long and faded out on noteOff with the patch's release.
 import { StrudelInstrument, workletsLoaded } from './strudel-instrument.js';
 import { strudelValue, WORKLET_SOUNDS, WORKLET_CONTROLS } from './strudel-patches.js';
+import { exprStage, applyStage } from './voice-expression.js';
 
 const isOfflineCtx = (ctx) => typeof OfflineAudioContext !== 'undefined' && ctx instanceof OfflineAudioContext;
 const PROBE_TIMEOUT = 25000;
@@ -234,8 +235,9 @@ export class StrudelVoice {
   _newLane() {
     if (this.lanes.length >= MAX_LANES || this.disposed) return null;
     const gain = this.ctx.createGain();
-    gain.connect(this.postGain);
-    const lane = { gain, sdi: new StrudelInstrument(this.ctx, gain, { onError: warn }), pitch: null, held: false, freeAt: 0, timer: null };
+    // MPE: each held lane has its own expression stage (pressure -> gain, timbre -> low-pass; voice-expression.js)
+    const xs = exprStage(this.ctx, { node: (n) => n }, gain, this.postGain);
+    const lane = { gain, xs, sdi: new StrudelInstrument(this.ctx, gain, { onError: warn }), pitch: null, held: false, freeAt: 0, timer: null };
     this.lanes.push(lane);
     return lane;
   }
@@ -259,11 +261,25 @@ export class StrudelVoice {
     lane.gain.gain.setValueAtTime(1, t);
     lane.pitch = pitch;
     lane.held = true;
+    if (lane.xs.pressure || lane.xs.timbre !== 0.5) applyStage(lane.xs, { pressure: 0, timbre: 0.5 }, t); // neutral for the new note
     lane.freeAt = Infinity;
     const ev = this._ev();
     lane.track = this._track(t, Infinity);
     this._applyPost();
     for (const v of this._values(pitch, vel)) lane.sdi.trigger(t, v, LIVE_HOLD, ev);
+  }
+
+  /**
+   * Per-note expression (MPE) of a held live note: pressure -> that lane's gain, timbre (CC74) -> its low-pass.
+   * superdough fixes a note's pitch when it starts, so per-note bend is not possible here (returns false: the
+   * caller falls back to channel bend). The fallback / stand-in engines get the full expression.
+   */
+  noteExpression(pitch, x = {}, time) {
+    const other = this.fallback || this._standIn;
+    if (other?.noteExpression) { try { return other.noteExpression(pitch, x, time); } catch { /* */ } }
+    const t = Math.max(time ?? this.ctx.currentTime, this.ctx.currentTime);
+    for (const lane of this.lanes) if (lane.held && lane.pitch === pitch) applyStage(lane.xs, x, t);
+    return !Number.isFinite(x.bend);
   }
 
   _release(lane, t, rel) {
