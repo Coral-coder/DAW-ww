@@ -1,0 +1,22 @@
+/* Engine UI: status-bar health meter, panic, sample rate, freeze badges, version history (src/ui/engine-ui.js) */
+.eng-status { display: inline-flex; align-items: center; gap: 8px; color: var(--text-3); }
+.eng-status .hot { color: var(--warn, #ffa94d); }
+.eng-status .eng-load.hot { color: var(--danger, #ff5f6d); }
+.eng-sr { font: inherit; font-size: 11px; background: var(--bg-3, transparent); color: var(--text-2); border: 1px solid var(--line); border-radius: 4px; padding: 0 2px; height: 18px; }
+.eng-panic { font: inherit; font-size: 10px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; color: var(--text-2); background: transparent; border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; height: 18px; cursor: pointer; }
+.eng-panic:hover { color: #fff; background: var(--danger, #e03131); border-color: transparent; }
+@media (max-width: 720px) { .eng-status .eng-lat, .eng-status .eng-sr { display: none; } }
+
+.mx-btn.mx-freeze { display: inline-flex; align-items: center; justify-content: center; }
+.mx-btn.mx-freeze.on { color: #0b1c2c; background: #74c0fc; border-color: #74c0fc; }
+.mx-btn.mx-freeze.stale { background: transparent; color: #74c0fc; border-style: dashed; }
+.mx-strip.is-frozen .mx-inserts { opacity: .45; }
+.arr-th.is-frozen .arr-th-icon { color: #74c0fc; }
+.arr-th.is-frozen .arr-th-name::after { content: ' ❄'; color: #74c0fc; }
+
+.eng-history-list { display: flex; flex-direction: column; gap: 4px; max-height: 55vh; overflow: auto; }
+.eng-history-row { display: grid; grid-template-columns: 9em 7em 6em 1fr auto; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; }
+.eng-history-row:nth-child(odd) { background: var(--bg-2); }
+.eng-h-label { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; }
+.eng-h-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 560px) { .eng-history-row { grid-template-columns: 1fr auto; } .eng-history-row .muted, .eng-h-label, .eng-h-name { display: none; } }
