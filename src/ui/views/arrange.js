@@ -1094,6 +1094,7 @@ export function createArrangeView(app) {
     if (!t) return [];
     const have = new Set((t.automation || []).map((l) => l.target));
     const item = (it) => ({ label: `${have.has(it.target) ? '● ' : ''}${it.label}`, onClick: () => addLane(trackId, it.target) });
+    if (t.kind === 'vca') return targetGroups(t).flatMap((g) => g.items.map(item)); // VCAs: their level only
     const out = [];
     const fxGroups = [];
     for (const g of targetGroups(t)) {
