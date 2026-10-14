@@ -421,12 +421,17 @@ export function createActions(app) {
   engine.on?.('state', ({ playing }) => { if (!playing && audioTake && audioTake.ctxStart != null) finishAudioRecording(); });
 
   // live notes + recording
-  const liveHeld = new Map(); // pitch -> {trackId, startBeat, vel}
+  const liveHeld = new Map(); // `${trackId}|${pitch}` -> {trackId, startBeat, vel}
+  const heldKeyOf = (pitch, trackId) => {
+    if (trackId != null) return `${trackId}|${pitch}`;
+    for (const k of liveHeld.keys()) if (k.endsWith(`|${pitch}`)) return k; // any track (keyboard piano / old callers)
+    return null;
+  };
   async function liveNoteOn(pitch, vel = 0.8, trackId = ui.get('selectedTrackId')) {
     const t = get().tracks.find((x) => x.id === trackId);
     if (!t || t.type !== 'instrument') { if (!t) toast('Select an instrument track to play it'); return; }
     const held = { trackId, startBeat: engine.getPosition(), vel };
-    liveHeld.set(pitch, held);
+    liveHeld.set(`${trackId}|${pitch}`, held);
     app.emitLiveNote?.(pitch, true);
     // noteOff awaits `ready`, so a quick release during audio start-up can't leave a stuck note.
     held.ready = ensureAudio().then(() => {
@@ -434,9 +439,12 @@ export function createActions(app) {
       engine.noteOn(trackId, pitch, vel);
     }).catch(() => {});
   }
-  async function liveNoteOff(pitch) {
-    const held = liveHeld.get(pitch);
-    liveHeld.delete(pitch);
+  /** trackId: which track's note (default: the first held one of that pitch); expr: note expression to record
+   * ({bend, bendAt} from MPE / pitch bend, see src/control/router.js). */
+  async function liveNoteOff(pitch, trackId = null, expr = null) {
+    const hk = heldKeyOf(pitch, trackId);
+    const held = hk ? liveHeld.get(hk) : null;
+    liveHeld.delete(hk);
     if (!held) return;
     await held.ready;
     engine.noteOff(held.trackId, pitch);
@@ -454,13 +462,14 @@ export function createActions(app) {
       if (start >= pat.length) start -= pat.length;
       const dur = Math.max(snap, Math.round((engine.getPosition() - held.startBeat) / snap) * snap);
       store.transact('Record note', (pp) => {
-        pp.patterns[pat.id]?.notes.push(createNote(pitch, start, dur, held.vel));
+        pp.patterns[pat.id]?.notes.push(expr ? { ...createNote(pitch, start, dur, held.vel), ...expr } : createNote(pitch, start, dur, held.vel));
       });
     }
   }
 
   // Web MIDI input
   async function enableMidiInput() {
+    if (app.control) { app.control.openPrefs('midi'); return; } // src/control: device manager, routing, learn
     if (!navigator.requestMIDIAccess) { toast('Web MIDI is not supported in this browser', { level: 'warn' }); return; }
     try {
       const access = await navigator.requestMIDIAccess();
@@ -916,7 +925,11 @@ export function createActions(app) {
       '-',
       { label: 'Plugins (SoundFonts, Faust, WAM)…', icon: 'plug', onClick: () => import('./plugins-dialog.js').then((m) => m.openPluginsDialog(app)) },
       '-',
-      { label: 'Enable MIDI keyboard input', icon: 'piano', onClick: () => enableMidiInput() },
+      { label: 'MIDI devices, controllers & sync…', icon: 'piano', onClick: () => (app.control ? app.control.openPrefs('midi') : enableMidiInput()) },
+      ...(app.control ? [
+        { label: 'Preferences (shortcuts, MIDI, sync)…', icon: 'sliders', onClick: () => app.control.openPrefs() },
+        { label: 'Command palette', icon: 'search', shortcut: app.control.shortcutLabel('palette.open'), onClick: () => app.control.openPalette() },
+      ] : []),
       { label: `Computer keyboard piano (\`)`, icon: 'keyboard', onClick: () => { app.keyboardPiano.enabled = !app.keyboardPiano.enabled; toast(`Keyboard piano ${app.keyboardPiano.enabled ? 'ON' : 'OFF'}`); } },
       { label: `Theme: ${ui.get('theme') === 'dark' ? 'switch to light' : 'switch to dark'}`, icon: 'sun', onClick: () => ui.set({ theme: ui.get('theme') === 'dark' ? 'light' : 'dark' }) },
       { label: 'Help & shortcuts', icon: 'help', shortcut: '?', onClick: () => showHelp() },
@@ -1197,6 +1210,7 @@ export function createActions(app) {
       ['Space', 'Play / pause'], ['Enter', 'Stop (twice: return to start)'], ['1 – 7', 'Arrange, Scenes, Step Rack, Piano Roll, Mixer, Code, Plugboard'],
       ['P', 'Toggle Pattern / Song mode'], ['L', 'Toggle loop'], ['M', 'Metronome'], ['R', 'Record'], ['Shift+A', 'Arm automation recording (move any control while playing)'], ['`', 'Computer keyboard piano'],
       ['Z…M / Q…P', 'Play notes (keyboard piano on)'], ['- / =', 'Octave down / up'], ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'],
+      ['Ctrl/Cmd+K', 'Command palette — search every action'], ['Ctrl+Shift+M', 'MIDI learn mode (map hardware knobs to any control)'],
       ['Ctrl+S / Ctrl+O', 'Save / open project'], ['Ctrl+E', 'Export WAV'], ['B / D / A', 'Toggle browser / device / assistant panels'],
       ['Piano roll', 'Click empty = add note, drag = move, edge = resize, right-click/Alt = delete, Shift-drag = select, Ctrl+A/C/V/D'],
       ['Arrange', 'Double-click lane = new clip, drag clips, edge resize, Alt-drag = copy, Delete removes'],

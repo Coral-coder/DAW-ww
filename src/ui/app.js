@@ -171,6 +171,7 @@ export async function createApp(rootEl) {
 
   installKeyboard(app);
   installAutomationRecorder(app);
+  import('../control/index.js').then((m) => m.installControl(app)).catch((e) => console.warn('[control]', e)); // MIDI, surfaces, sync, palette
 
   await showView(ui.get('view'));
   app.panels = {
