@@ -15,6 +15,7 @@ import { SCALES, pitchClassName } from '../theory/index.js';
 import { serializeProject, parseProjectFile, downloadBlob } from '../io/project-file.js';
 import { exportMidi, importMidi } from '../io/midi.js';
 import { encodeWav } from '../io/wav.js';
+import { createMixerTools } from './mixer-tools.js';
 import { fileToSample, arrayBufferToBase64 } from '../io/samples.js';
 import { AudioRecorder, isRecordingSupported } from '../audio/recorder.js';
 import { scheduleClick } from '../audio/metronome.js';
@@ -31,6 +32,7 @@ export function createActions(app) {
   const { store, ui, engine } = app;
   const get = () => store.get();
   const rngSeed = () => (Math.random() * 2 ** 31) | 0;
+  const mixerTools = (app.mixerTools ||= createMixerTools(app)); // folders / groups / VCAs / multi-out (mixer-tools.js)
 
   // ---------------------------------------------------------------- selection
   function selectTrack(trackId) {
@@ -195,6 +197,7 @@ export function createActions(app) {
       items.push({ label: 'Export track as Strudel code', icon: 'code', onClick: () => exportCode([trackId]) });
     }
     if (app.freezeMenuItems) items.push('-', ...app.freezeMenuItems(trackId)); // engine-ui.js: freeze / bounce / flatten
+    items.push('-', ...mixerTools.trackMenuItems(trackId, app.mixerSelection?.() || []));
     items.push('-', { label: 'Delete track', icon: 'trash', onClick: () => deleteTrack(trackId) });
     return items;
   }
@@ -559,7 +562,13 @@ export function createActions(app) {
       .catch((e) => { console.error(e); toast(`Interchange failed: ${e.message}`, { level: 'error', timeout: 7000 }); });
   }
   let exportNoticeShown = false;
-  async function exportWav({ stems = false } = {}) {
+  /** Pro export dialog (src/ui/export-dialog.js): formats, loudness targets, ranges, stems, metadata, report. */
+  function exportWav({ stems = false } = {}) {
+    return import('./export-dialog.js').then((m) => m.openExportDialog(app, { stems }))
+      .catch((e) => { console.error(e); toast('Export dialog failed: ' + e.message, { level: 'error' }); return quickExportWav({ stems }); });
+  }
+  /** One-click 24-bit WAV mixdown / stems (no dialog). */
+  async function quickExportWav({ stems = false } = {}) {
     await ensureAudio();
     const p = get();
     const songMode = p.mode === 'song' && p.clips.length;
@@ -927,8 +936,9 @@ export function createActions(app) {
         { label: 'Paste Strudel code…', icon: 'code', onClick: async () => { const code = await promptText('Paste Strudel code', '', { multiline: true }); if (code) importStrudel(new File([code], 'pasted.strudel')); } },
       ] },
       { label: 'Export', icon: 'download', submenu: [
-        { label: 'Mixdown WAV', icon: 'wave', shortcut: 'Ctrl+E', onClick: () => exportWav() },
-        { label: 'Stems (WAV per track)', icon: 'layers', onClick: () => exportWav({ stems: true }) },
+        { label: 'Export audio… (WAV / loudness / stems)', icon: 'wave', shortcut: 'Ctrl+E', onClick: () => exportWav() },
+        { label: 'Quick mixdown WAV (24-bit)', icon: 'wave', onClick: () => quickExportWav() },
+        { label: 'Quick stems (WAV per track)', icon: 'layers', onClick: () => quickExportWav({ stems: true }) },
         { label: 'MIDI file', icon: 'music', onClick: () => exportMidiFile() },
         { label: 'DAWproject (Bitwig, Studio One, Cubase)…', icon: 'folder', onClick: () => interchange('exportDawprojectDialog') },
         { label: 'For mixing engineer (stems + MIDI ZIP)…', icon: 'layers', onClick: () => interchange('exportMixBundleDialog') },
@@ -1302,7 +1312,7 @@ export function createActions(app) {
     togglePlay, play, stop, setPosition, setMode, toggleRecord, liveNoteOn,
     recorder, startAudioRecording, finishAudioRecording, getCountIn, setCountIn, liveNoteOff, enableMidiInput, ensureAudio,
     setGenre, applyGenreDefaults, newProject, openProject, saveProject, renameProject, loadProjectObject,
-    exportWav, exportMidiFile, exportCode, importMidiFile, interchange, importStrudel, renderCodeToTracks, importSamples, placeSample, sampleToSampler,
+    exportWav, quickExportWav, exportMidiFile, exportCode, importMidiFile, interchange, importStrudel, renderCodeToTracks, importSamples, placeSample, sampleToSampler,
     generatePart, generateSong, newProgression, currentProgression, applyAssistantAction, showExtendDialog, extendSongBy, removeSectionAt,
     mainMenuItems, generateMenuItems, showSongWizard, showHelp, showAbout, showWelcome, showLocalProjects,
     undo: () => { const l = store.undo(); if (l) app.setStatus?.(`Undo: ${l}`); },

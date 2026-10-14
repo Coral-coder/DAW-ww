@@ -438,6 +438,47 @@ esbuild (build time only; it applies three small, checked superdough patches —
   (rebuilds the context, resumes playback; `SAMPLE_RATES`; preference in localStorage `daw3-sample-rate`; emits
   `'samplerate'` and `'context'` — anything holding nodes of the old context, e.g. the recorder, must rebind).
 
+## Pro mixer, metering & export (`src/core/mixer-model.js`, `src/audio/{mixer,meters,export}.js`, `src/io/export-plan.js`)
+
+**Data** (all optional; absent = old behaviour, bit-identical renders): `project.mixer = { soloMode: 'sip'|'afl'|'pfl',
+groups[], vcas[], folders[], snapshots[] }`; track extras `folderId, trim (dB), phase, width (0..2), soloSafe, notes,
+sendModes:{busId:'pre'|'post'}, output (busId), padOutputs:{padKey: busId}`; bus extras `folderId` (folder summing bus),
+`source:{trackId,pad}` (drum multi-out channel). `mixerOf(project)` reads with defaults, `ensureMixer` creates.
+* **Groups** `{id,name,color,members,mode:'relative'|'absolute',enabled,link:{volume,pan,mute,solo,arm,select}}`:
+  `applyLinkedEdit(p, id, key, value, {bypass})` — relative volume = same dB delta for every member (members at −∞ stay),
+  relative pan = same offset, switches absolute; transitive across groups (`linkedIds`). Mixer: Ctrl/Cmd while editing
+  = this channel only. `linkChannels` = absolute "stereo link" group. `groupSelection` for linked selection.
+* **VCA** `{id,name,volume (linear),mute,members:[track|bus id],automation:[lane 'volume']}`: no audio passes through;
+  member gain = fader × Π VCA gains (dB sum). VCAs are automation owners (`automationOwner`, recorder snapshot); the engine
+  turns `vcaCombinedLane` (product of every VCA lane over the member) into ramps on the strip's `vcaGain` node, so VCA
+  automation multiplies with the member's own fader automation.
+* **Solo** (`soloState`, `isAudible` — used by `scheduler.isTrackAudible`): SIP mutes non-soloed tracks except
+  `soloSafe`; AFL / PFL never touch the main mix or exports — soloed channels feed `graph.cue` (post-VCA / pre-fader) and
+  the monitor output switches to the cue bus (realtime only). `toggleSolo(p, id, {exclusive})`.
+* **Folders** `{id,name,collapsed,busId}`: `createFolder` (members kept contiguous), `setFolderSum` (a bus + every
+  member's `output`), `trackRows`/`collapsedHidden`/`folderHeadOf` for Arrange (collapsed members are zero-height rows,
+  their clips draw on the folder's first row) and Mixer (folder tabs). Snapshots: `captureMixerState`/`saveSnapshot`/
+  `recallMixerState(p, state, {faders,pans,switches,sends,fx})`; `resetMixer`.
+* **Strip graph** (`ChannelStrip`): input → `inStage` (trim × polarity) → inserts → post (key tap) → [lazy M/S width] →
+  `preFader` (pre-fader sends through a mute-following gain, PFL) → pan → volume → `vcaGain` (AFL) → mute → `direct` →
+  output (`setOutput`: master or a bus; PDC treats a bus-routed main out like a send). Meters tap after the mute through a
+  DelayNode with the strip's PDC compensation (PDC-aware); `getMeter` → `{l, r, rmsL, rmsR}`.
+* **Sidechain**: `compressor`, `gate`, `ducker` take `params.sourceTrackId` = any track **or bus** (`KEYED_FX`). The
+  compressor switches to a keyed gain computer (peak follower → static curve → VCA, same look-ahead / latency); the gate's
+  detector listens to the key. `resolveKeyLinks` checks loops over the whole routing graph (sends, outputs, multi-outs
+  and other keys). Drum multi-out: `DrumInstrument.setPadOutputs({pad: node})` (mixer-tools "Multi-out").
+* **Metering** (`src/audio/dsp/loudness.js`, pure): `kWeighting(sr)`, `measureLoudness(channels, sr)` → integrated /
+  momentary / short-term max / LRA / true peak (BS.1770-4 gating, EBU 3342 LRA), streaming `LoudnessMeter`,
+  `correlation`, `normalizeLoudness(channels, sr, {mode:'peak'|'lufs', target, ceiling})` (true-peak limited, refined to
+  ±0.05 LU), `LOUDNESS_PRESETS`. Realtime: `engine.getMasterAnalysis()` (`meters.js`: AudioWorklet
+  `loudness-worklet.js`, analyser fallback; vector scope, pre / post master spectrum) → Mixer ▸ Loudness panel.
+* **Export** (File ▸ Export ▸ Export audio…, Ctrl+E, `ui/export-dialog.js`): `io/export-plan.js` (pure: `resolveRange`
+  song / loop / selection / custom bars, `formatFileName` tokens, `detectTail`, `stemTargets` all / selected / buses /
+  groups, `stemProject` pre / post fader, with / without master), `io/wav-meta.js` (LIST/INFO + iXML: title, artist,
+  ISRC…), `audio/export.js` `runExport` (renders at 44.1–96 kHz, tail detection, normalisation, WAV 16/24/32f + dither /
+  noise shaping, AAC / MP3 via WebCodecs when `lossyFormats()` says so, consistent stem start / length, report). Several
+  files download as one ZIP with `export-report.txt`.
+
 ## IO (`src/io/*.js`)
 
 * `project-file.js`: `serializeProject(project) -> string`, `parseProjectFile(text) -> project` (validates, normalizes),

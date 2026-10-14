@@ -62,7 +62,7 @@ export async function createApp(rootEl) {
     store.transact('Update plugboard', (pp) => { for (const t of pp.tracks) reconcilePatch(t); }, { undo: false });
   });
   store.on('change', (_p, label) => schedule('project', label));
-  setTrackOptionsProvider(() => store.get().tracks.map((t) => ({ value: t.id, label: t.name })));
+  setTrackOptionsProvider(() => [...store.get().tracks.map((t) => ({ value: t.id, label: t.name })), ...(store.get().buses || []).map((b) => ({ value: b.id, label: `Bus: ${b.name}` }))]); // sidechain keys: tracks or buses
   ui.on('change', (changed) => schedule('ui', changed));
   app.subscribe = (fn) => { subs.add(fn); return () => subs.delete(fn); };
   app.requestRender = () => schedule('project', 'refresh');

@@ -35,6 +35,7 @@ import { EFFECT_DEFS } from './effect-defs.js';
 import { resolveInstrument } from './instruments.js';
 import { sanitizePatch, patchStructureKey, topoOrder, resolveKeyLinks, PATCH_IN, PATCH_OUT } from '../core/patch.js';
 import { computePdc, faderOffsets } from './latency.js';
+import { MasterAnalysis } from './meters.js';
 import { frozenMode, bypassesInserts, bypassesFader, frozenLaneFilter } from '../core/freeze.js';
 import { inputGain, widthMatrix, vcaGainFor, vcaCombinedLane, soloState, sendTap, outputOf } from '../core/mixer-model.js';
 
@@ -1077,6 +1078,12 @@ export class MixGraph {
     return s ? s.getMeter() : { l: 0, r: 0 };
   }
 
+  /** Loudness / scope / spectrum analysis of the master (created on first use — see meters.js). */
+  masterAnalysis() {
+    if (!this.analysis) this.analysis = new MasterAnalysis(this.ctx, this.master.input, this.out);
+    return this.analysis;
+  }
+
   /** Gain reduction (dB, <= 0) of a compressor/limiter effect anywhere in the graph. */
   getReduction(fxId) {
     for (const s of this._strips()) {
@@ -1086,6 +1093,7 @@ export class MixGraph {
   }
 
   dispose() {
+    try { this.analysis?.dispose(); } catch { /* */ }
     for (const e of this.tracks.values()) { this._disposeSources(e); e.strip.dispose(); }
     for (const s of this.buses.values()) s.dispose();
     this.master.dispose();

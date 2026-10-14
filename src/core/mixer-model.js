@@ -450,3 +450,25 @@ export function widthMatrix(width = 1) {
   const a = (1 + w) / 2, b = (1 - w) / 2;
   return { ll: a, rl: b, lr: b, rr: a };
 }
+
+/** Track ids hidden by collapsed folders (every member but the first, which stands for the folder). */
+export function collapsedHidden(project) {
+  const out = new Set();
+  const folders = new Map(mixerOf(project).folders.map((f) => [f.id, f]));
+  const seen = new Set();
+  for (const t of project?.tracks || []) {
+    const f = t.folderId && folders.get(t.folderId);
+    if (!f) continue;
+    if (!seen.has(f.id)) { seen.add(f.id); continue; }
+    if (f.collapsed) out.add(t.id);
+  }
+  return out;
+}
+
+/** The folder a track heads (it is that folder's first member), or null. */
+export function folderHeadOf(project, trackId) {
+  const t = project?.tracks?.find((x) => x.id === trackId);
+  const f = t?.folderId && mixerOf(project).folders.find((x) => x.id === t.folderId);
+  if (!f) return null;
+  return project.tracks.find((x) => x.folderId === f.id)?.id === trackId ? f : null;
+}

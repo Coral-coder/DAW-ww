@@ -318,6 +318,7 @@ export class AudioEngine extends Emitter {
       master: strip('master', project.master),
       buses: (project.buses || []).map((b) => strip(b.id, b)),
       tracks: project.tracks.map((t) => strip(t.id, t)),
+      ...(project.mixer?.vcas?.length ? { mixer: { ...project.mixer, vcas: project.mixer.vcas.map((v) => strip(v.id, v)) } } : {}),
     };
   }
 
@@ -500,6 +501,8 @@ export class AudioEngine extends Emitter {
   // ------------------------------------------------------------------ meters / analysis
   getMeter(id = 'master') { return this.graph ? this.graph.getMeter(id) : { l: 0, r: 0 }; }
   getAnalyser() { return this.graph ? this.graph.analyser : null; }
+  /** Master loudness / correlation / scope / pre-post spectrum (audio/meters.js), created on first use. */
+  getMasterAnalysis() { return this.graph ? this.graph.masterAnalysis() : null; }
   /** Gain reduction (dB) of a compressor / limiter effect by its effect id. */
   getReduction(fxId) { return this.graph ? this.graph.getReduction(fxId) : 0; }
   /** Last code-evaluation status of a code track: {ok, error, cps} | null. */

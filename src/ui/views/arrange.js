@@ -13,6 +13,7 @@ import {
 import { splitKey } from '../../core/automation-record.js';
 import { targetGroups as autoTargetGroups, targetInfo as autoTargetInfo, ownerView, formatLaneValue } from '../automation-targets.js';
 import { isTyping } from '../keyboard.js';
+import { collapsedHidden, folderHeadOf } from '../../core/mixer-model.js';
 
 // ----------------------------------------------------------------------------- constants
 const RULER_H = 22;
@@ -395,8 +396,10 @@ export function createArrangeView(app) {
     const p = get();
     const rows = [];
     let y = 0;
+    const folded = collapsedHidden(p); // members of collapsed folders (core/mixer-model.js): zero-height rows
     for (let i = 0; i < p.tracks.length; i++) {
       const t = p.tracks[i];
+      if (folded.has(t.id)) { rows.push({ t, i, y, auto: [], h: 0, hidden: true }); continue; }
       const r = { t, i, y, auto: [] };
       y += laneH;
       y = pushAuto(r, t, y);
@@ -534,6 +537,7 @@ export function createArrangeView(app) {
     // lane backgrounds (track lane + its automation lanes)
     for (let i = first; i <= last; i++) {
       const r = L.rows[i];
+      if (r.hidden) continue;
       const y = r.y - sy;
       ctx.fillStyle = i % 2 ? theme.laneB : theme.laneA;
       ctx.fillRect(0, y, W, r.h);
@@ -569,6 +573,7 @@ export function createArrangeView(app) {
     // lane separators
     for (let i = first; i <= last; i++) {
       const r = L.rows[i];
+      if (r.hidden) continue;
       ctx.fillStyle = theme.line;
       ctx.fillRect(0, r.y + r.h - sy - 1, W, 1);
       if (r.auto.length) {
@@ -578,11 +583,13 @@ export function createArrangeView(app) {
     }
 
     // code-track lanes
-    for (let i = first; i <= last; i++) if (tracks[i].type === 'code') drawCodeLane(ctx, tracks[i], L.rows[i].y - sy, W);
+    for (let i = first; i <= last; i++) if (tracks[i].type === 'code' && !L.rows[i].hidden) drawCodeLane(ctx, tracks[i], L.rows[i].y - sy, W);
 
     // clips
     const idx = new Map();
-    for (let i = first; i <= last; i++) idx.set(tracks[i].id, i);
+    let headRow = -1; // a collapsed folder shows its members' clips on its first row
+    for (let i = first; i <= last; i++) { if (!L.rows[i].hidden) headRow = i; idx.set(tracks[i].id, L.rows[i].hidden ? headRow : i); }
+    for (const [k, v] of idx) if (v < 0) idx.delete(k);
     const sel = new Set(selIds());
     const selected = [];
     ctx.font = `600 11px ${theme.font}`;
@@ -1497,7 +1504,8 @@ export function createArrangeView(app) {
     const mtr = meter({ height: 30 });
     mtr.classList.add('arr-th-meter');
     const ctrls = h('div.arr-th-ctrls', mute, solo, arm, autoBtn, vol);
-    const el = h('div.arr-th', strip, h('div.arr-th-main', h('div.arr-th-top', ic, name), ctrls, inMeter), mtr);
+    const fold = h('button.arr-th-fold', { type: 'button' });
+    const el = h('div.arr-th', strip, h('div.arr-th-main', h('div.arr-th-top', ic, name), ctrls, inMeter), mtr, fold);
 
     strip.addEventListener('click', (e) => { e.stopPropagation(); contextMenu(e, [{ header: 'Track color' }, ...colorItems((c) => upd((t) => { t.color = c; }, 'Track color'))]); });
     name.addEventListener('dblclick', () => actions.renameTrack(id));
@@ -1534,7 +1542,16 @@ export function createArrangeView(app) {
     });
     return {
       el, mtr, inFill,
-      update(t, i, selected, y) {
+      update(t, i, selected, y, hidden = false) {
+        el.classList.toggle('hidden', hidden);
+        const fh = folderHeadOf(get(), t.id);
+        el.classList.toggle('folder-head', !!fh);
+        el.classList.toggle('in-folder', !!t.folderId);
+        if (fh) {
+          fold.replaceChildren(icon(fh.collapsed ? 'chevronRight' : 'chevronDown', 11), h('span', fh.name));
+          fold.title = `Folder “${fh.name}” — click to ${fh.collapsed ? 'expand' : 'collapse'}`;
+          fold.onclick = (e) => { e.stopPropagation(); store.transact(fh.collapsed ? 'Expand folder' : 'Collapse folder', (pp) => { const f = pp.mixer?.folders?.find((x) => x.id === fh.id); if (f) f.collapsed = !f.collapsed; }); };
+        }
         el.style.top = y + 'px';
         el.style.height = laneH + 'px';
         el.style.setProperty('--tc', t.color);
@@ -1574,7 +1591,7 @@ export function createArrangeView(app) {
       seen.add(t.id);
       let hd = headers.get(t.id);
       if (!hd) { hd = makeHeader(t); headers.set(t.id, hd); headsInner.insertBefore(hd.el, addRow); }
-      hd.update(t, i, t.id === sel, L.rows[i].y);
+      hd.update(t, i, t.id === sel, L.rows[i].y, !!L.rows[i].hidden);
     });
     for (const [id, hd] of headers) if (!seen.has(id)) { hd.el.remove(); headers.delete(id); }
     syncAutoHeaders(L);
