@@ -14,8 +14,9 @@ import { encodeWav } from '../io/wav.js';
 import { arrayBufferToBase64 } from '../io/samples.js';
 import { scheduleClick } from '../audio/metronome.js';
 import { InputManager, deviceLatency, setDeviceLatency, DEFAULT_SOURCE, loadCaptureWorklet } from './inputs.js';
-import { roundTrip, beatOfFrame, beatAtTime, recordPlan, detectPing, DEFAULT_REC_PREFS } from './timing.js';
-import { computePasses, createTake, addRecordedTakes, compClips, clearTakes, findTake, takeEnd, hasTakes } from './takes.js';
+import { roundTrip, beatAtTime, recordPlan, countInPlan, planAudioTakes, detectPing, DEFAULT_REC_PREFS } from './timing.js';
+import { createTake, addRecordedTakes, compClips, clearTakes, findTake, takeEnd, hasTakes, srcSecAt } from './takes.js';
+import { songTempoMap, tempoMapFor, hasMeterChanges } from '../time/tempo-map.js';
 import { mixClipsToPcm, trackClips, reverseFrames, peakOf, normalizeGain } from './clips.js';
 import { MidiPassRecorder, buildMidiTakes, CaptureBuffer, StepInput, quantizeNote, replaceRange } from './midi.js';
 
@@ -58,6 +59,10 @@ export function createRecorder(app, { toast: toastFn = null } = {}) {
   let lastNoteTrack = null;
 
   const spb = () => 60 / get().bpm;
+  // Tempo / meter map of the arrangement (recording is a song-mode feature) when it isn't plain constant 4/4-style
+  // tempo: null keeps the original constant-tempo arithmetic (projects without a map stay bit-identical).
+  const songMap = (p = get()) => { const m = songTempoMap(p); return m.isConstant ? null : m; };
+  const barMap = (p = get()) => { const m = songTempoMap(p); return m.isConstant && !hasMeterChanges(p) ? null : m; };
   const now = () => (typeof performance !== 'undefined' ? performance.now() / 1000 : Date.now() / 1000);
 
   store.on('change', () => { if (engine.ctx) inputs.sync().catch(() => {}); });
@@ -98,9 +103,10 @@ export function createRecorder(app, { toast: toastFn = null } = {}) {
     const bpb = beatsPerBar(pp);
     const wasPlaying = engine.isPlaying;
     const pos = engine.getPosition() || 0;
+    const bm = barMap(pp); // meter-aware pre / post-roll / count-in when the project has tempo or meter changes
     const plan = recordPlan({
       pos: wasPlaying ? pos : pos, punch: pp.punch, loop: pp.loop,
-      preRollBars: wasPlaying ? 0 : prefs.preRollBars, postRollBars: prefs.postRollBars, bpb,
+      preRollBars: wasPlaying ? 0 : prefs.preRollBars, postRollBars: prefs.postRollBars, bpb, map: bm,
     });
     const s = {
       plan, recIn: plan.recIn, loop: pp.loop?.enabled ? { ...pp.loop } : null, punch: plan.punched ? { ...pp.punch } : null,
@@ -112,7 +118,7 @@ export function createRecorder(app, { toast: toastFn = null } = {}) {
     if (audioTracks.length) s.captureFrame = inputs.startCapture();
     if (wasPlaying) {
       const t = engine.ctx.currentTime;
-      s.anchor = { time: t, beat: engine.beatAtTime(t) ?? pos, bpm: pp.bpm };
+      s.anchor = { time: t, beat: engine.beatAtTime(t) ?? pos, bpm: pp.bpm, map: songTempoMap(pp), loop: s.loop };
       // punch-on-the-fly: record from now (or the punch-in when it's ahead)
       if (!plan.punched) s.recIn = s.anchor.beat;
       s.midiRec.recIn = s.recIn;
@@ -120,22 +126,30 @@ export function createRecorder(app, { toast: toastFn = null } = {}) {
       const ctx = engine.ctx;
       const bars = Math.max(0, Math.round(prefs.countInBars || 0));
       const t0 = ctx.currentTime + 0.12;
-      const sp = 60 / pp.bpm;
-      const n = bars * bpb;
-      if (n && !pp.metronome) for (let i = 0; i < n; i++) scheduleClick(ctx, engine.graph.clickOut, t0 + i * sp, i % bpb === 0);
-      if (n) app.setStatus?.(`Count-in: ${bars} bar${bars > 1 ? 's' : ''}…`);
-      await engine.play({ from: plan.playFrom - (pp.metronome ? n : 0), at: t0 + (pp.metronome ? 0 : n * sp) });
+      if (bars) app.setStatus?.(`Count-in: ${bars} bar${bars > 1 ? 's' : ''}…`);
+      if (!bm) {
+        const sp = 60 / pp.bpm;
+        const n = bars * bpb;
+        if (n && !pp.metronome) for (let i = 0; i < n; i++) scheduleClick(ctx, engine.graph.clickOut, t0 + i * sp, i % bpb === 0);
+        await engine.play({ from: plan.playFrom - (pp.metronome ? n : 0), at: t0 + (pp.metronome ? 0 : n * sp) });
+      } else {
+        // count-in through the tempo / meter map: the bars before the start at their own meter and tempo. With the
+        // metronome on the transport rolls through them (it clicks from bar 1 on; we click what lies before beat 0).
+        const ci = countInPlan(bm, plan.playFrom, bars);
+        for (const c of ci.clicks) if (!pp.metronome || c.beat < -1e-9) scheduleClick(ctx, engine.graph.clickOut, t0 + c.t, c.level);
+        await engine.play({ from: pp.metronome ? ci.from : plan.playFrom, at: t0 + (pp.metronome ? 0 : ci.sec) });
+      }
       const a = engine.scheduler.anchors[0];
-      s.anchor = { time: a.time, beat: a.beat, bpm: a.bpm };
+      s.anchor = { time: a.time, beat: a.beat, bpm: a.bpm, map: a.map, loop: s.loop };
     }
     inputs.setState({ playing: true, recording: true, punched: plan.punched, inPunch: !plan.punched });
     s.timer = setInterval(() => tick(s), 20);
     const what = [audioTracks.length ? `${audioTracks.length} audio track${audioTracks.length > 1 ? 's' : ''}` : '', midi ? 'MIDI' : ''].filter(Boolean).join(' + ');
-    app.setStatus?.(`Recording ${what}${s.loop ? ' — cycle: every loop pass becomes a take' : ''}${plan.punched ? ` — punch ${fmtBar(s.punch.start, bpb)}–${fmtBar(s.punch.end, bpb)}` : ''}. Stop (Space) to finish.`);
+    app.setStatus?.(`Recording ${what}${s.loop ? ' — cycle: every loop pass becomes a take' : ''}${plan.punched ? ` — punch ${fmtBar(s.punch.start, bpb, bm)}–${fmtBar(s.punch.end, bpb, bm)}` : ''}. Stop (Space) to finish.`);
     em.emit('session', { active: true });
     return true;
   }
-  const fmtBar = (b, bpb) => `${Math.floor(b / bpb) + 1}.${+((b % bpb) + 1).toFixed(2)}`;
+  const fmtBar = (b, bpb, bm = null) => (bm ? bm.formatBBT(b) : `${Math.floor(b / bpb) + 1}.${+((b % bpb) + 1).toFixed(2)}`);
 
   function tick(s) {
     if (session !== s || !engine.isPlaying) return;
@@ -196,22 +210,16 @@ export function createRecorder(app, { toast: toastFn = null } = {}) {
       const sr = au.sampleRate;
       const dl = deviceLatency(au.sourceId);
       const rt = roundTrip({ estimate: inputs.estimateRoundTrip(au.sourceId), calibratedMs: dl.calibratedMs ?? null, manualMs: dl.manualMs || 0 });
-      const origin = beatOfFrame(au.frame, sr, s.anchor, rt);
-      const lastBeat = origin + (au.channels[0].length / sr) / (60 / s.bpm);
-      const passes = computePasses({ u0: s.recIn, u1: Math.min(u1, lastBeat), loop: s.loop, punch: s.punch, origin, minLen: 1 });
-      if (!passes.length) continue;
-      // trim to the takes + one bar of handle on each side
-      const bpb = beatsPerBar(p);
-      const sp = 60 / s.bpm;
-      const lo = Math.max(0, Math.min(...passes.map((x) => x.offset)) - bpb);
-      const hi = Math.max(...passes.map((x) => x.offset + x.end - x.start)) + bpb;
-      const f0 = Math.max(0, Math.round(lo * sp * sr)), f1 = Math.min(au.channels[0].length, Math.round(hi * sp * sr));
-      const chans = au.channels.map((d) => d.slice(f0, f1));
-      const shift = f0 / sr / sp;
+      // passes (takes) + the audio to keep (one bar of handle on each side), through the tempo map (timing.js)
+      const plan = planAudioTakes({
+        anchor: s.anchor, frame: au.frame, frames: au.channels[0].length, sampleRate: sr, rt, recIn: s.recIn, u1,
+        loop: s.loop, punch: s.punch, bpb: beatsPerBar(p), bpm: s.bpm,
+      });
+      if (!plan) continue;
+      const chans = au.channels.map((d) => d.slice(plan.f0, plan.f1));
       const n = Object.values(p.samples || {}).filter((x) => /^Rec \d+/.test(x.name)).length + 1 + recorded.length;
       const { sample, buffer } = pcmToSample(chans, sr, `Rec ${n} · ${track.name}`);
-      const srcLength = chans[0].length / sr / sp;
-      recorded.push({ track, sample, buffer, srcLength, passes: passes.map((x) => ({ ...x, offset: x.offset - shift })) });
+      recorded.push({ track, sample, buffer, srcLength: plan.srcLength, passes: plan.passes });
       if (buffer) buffers.push([sample.id, buffer]);
     }
     // MIDI per track
@@ -235,7 +243,7 @@ export function createRecorder(app, { toast: toastFn = null } = {}) {
         const t = pp.tracks.find((x) => x.id === r.track.id);
         if (!t) continue;
         pp.samples[r.sample.id] = r.sample;
-        const takes = r.passes.map((x) => createTake({ name: '', sampleId: r.sample.id, start: x.start, length: x.end - x.start, offset: x.offset, srcLength: r.srcLength }));
+        const takes = r.passes.map((x) => createTake({ name: '', sampleId: r.sample.id, start: x.start, length: x.end - x.start, offset: x.offset, srcLength: x.srcLength ?? r.srcLength }));
         const lo = Math.min(...takes.map((x) => x.start)), hi = Math.max(...takes.map(takeEnd));
         const overlaps = pp.clips.some((c) => c.trackId === t.id && c.type === 'audio' && c.start < hi - EPS && c.start + c.length > lo + EPS)
           || (t.comp || []).some((c) => c.start < hi - EPS && c.end > lo + EPS);
@@ -315,8 +323,16 @@ export function createRecorder(app, { toast: toastFn = null } = {}) {
       pat.notes.push({ id: uid('n'), pitch: nt.pitch, start: +st.toFixed(5), dur: Math.min(q.dur, L), vel: nt.vel, ...(nt.x || {}) });
     }
     if (loose.length) {
-      const a = Math.max(0, Math.floor(Math.min(...loose.map((n) => n.start)) / bpb + EPS) * bpb);
-      const b = Math.max(a + bpb, Math.ceil(Math.max(...loose.map((n) => n.start + n.dur)) / bpb - EPS) * bpb);
+      const bm = barMap(pp);
+      const lo = Math.min(...loose.map((n) => n.start)), hiN = Math.max(...loose.map((n) => n.start + n.dur));
+      let a, b;
+      if (bm) { // whole bars of the meter map
+        a = Math.max(0, bm.barAt(Math.max(0, lo) + EPS).start);
+        b = Math.max(a + bm.barAt(a).length, bm.barStart(bm.barAt(Math.max(a, hiN) - EPS).bar + 1));
+      } else {
+        a = Math.max(0, Math.floor(lo / bpb + EPS) * bpb);
+        b = Math.max(a + bpb, Math.ceil(hiN / bpb - EPS) * bpb);
+      }
       const pat = createPattern(t.id, { name: `${t.name} rec`, length: b - a, notes: loose.map((n) => ({ id: uid('n'), pitch: n.pitch, start: +(n.start - a).toFixed(5), dur: n.dur, vel: n.vel, ...(n.x || {}) })) });
       pp.patterns[pat.id] = pat;
       pp.clips.push(createClip(t.id, { patternId: pat.id, start: a, length: b - a }));
@@ -347,7 +363,7 @@ export function createRecorder(app, { toast: toastFn = null } = {}) {
     const sr = engine.ctx?.sampleRate || [...pcm.values()][0]?.sampleRate || 48000;
     const a = Math.min(...audio.map((c) => c.start)), b = Math.max(...audio.map((c) => c.start + c.length));
     const ch = Math.max(1, ...[...pcm.values()].map((x) => Math.min(2, x.channels.length)));
-    const channels = mixClipsToPcm({ clips: audio, getPcm: (id) => pcm.get(id), bpm: get().bpm, sampleRate: sr, startBeat: a, endBeat: b, channels: ch });
+    const channels = mixClipsToPcm({ clips: audio, getPcm: (id) => pcm.get(id), bpm: get().bpm, map: songMap(), sampleRate: sr, startBeat: a, endBeat: b, channels: ch });
     const { sample, buffer } = pcmToSample(channels, sr, name);
     return { sample, buffer, start: a, length: b - a };
   }
@@ -371,9 +387,10 @@ export function createRecorder(app, { toast: toastFn = null } = {}) {
     if (!buf?.getChannelData) return;
     if (engine.isPlaying) engine.pause();
     const sp = spb();
+    const tm = songMap();
     const from = Math.min(Math.max(fromBeat ?? take.start, take.start), takeEnd(take) - 0.01);
-    const off = (take.offset + from - take.start) * sp;
-    const dur = (takeEnd(take) - from) * sp;
+    const off = tm ? srcSecAt(tm, take, from) : (take.offset + from - take.start) * sp;
+    const dur = tm ? tm.span(from, takeEnd(take)) : (takeEnd(take) - from) * sp;
     const ctx = engine.ctx;
     const src = ctx.createBufferSource();
     src.buffer = buf;
@@ -382,12 +399,16 @@ export function createRecorder(app, { toast: toastFn = null } = {}) {
     src.connect(g);
     g.connect(engine.graph.tracks.get(trackId)?.strip.input || engine.graph.master.input);
     src.start(ctx.currentTime + 0.02, Math.max(0, off), Math.max(0.01, dur));
-    aud = { src, g, trackId, takeId, t0: ctx.currentTime + 0.02, from, spb: sp };
+    aud = { src, g, trackId, takeId, t0: ctx.currentTime + 0.02, from, spb: sp, map: tm };
     src.onended = () => { if (aud?.src === src) { aud = null; em.emit('audition', null); } };
     em.emit('audition', { trackId, takeId });
   }
   /** Beat the take audition is at (null when none). */
-  const auditionPos = () => (aud && engine.ctx ? { trackId: aud.trackId, takeId: aud.takeId, beat: aud.from + Math.max(0, engine.ctx.currentTime - aud.t0) / aud.spb } : null);
+  const auditionPos = () => {
+    if (!aud || !engine.ctx) return null;
+    const el = Math.max(0, engine.ctx.currentTime - aud.t0);
+    return { trackId: aud.trackId, takeId: aud.takeId, beat: aud.map ? aud.map.beatAt(aud.map.secAt(aud.from) + el) : aud.from + el / aud.spb };
+  };
 
   /** Flatten the comp of a track into one clip (audio: rendered with its crossfades; MIDI: one merged pattern). */
   async function flattenComp(trackId) {
@@ -461,12 +482,14 @@ export function createRecorder(app, { toast: toastFn = null } = {}) {
     const p = get();
     const sel = p.clips.filter((c) => clipIds.includes(c.id) && c.type === 'audio' && c.sampleId);
     const sp = spb();
+    const tm = songMap();
     const out = [];
     for (const c of sel) {
       const pcm = await pcmOf(c.sampleId);
       if (!pcm) continue;
       const sr = pcm.sampleRate;
-      const a = Math.round((c.offset || 0) * sp * sr), b = Math.round(((c.offset || 0) + c.length) * sp * sr);
+      const a = Math.round((tm ? srcSecAt(tm, c, c.start) : (c.offset || 0) * sp) * sr);
+      const b = Math.round((tm ? srcSecAt(tm, c, c.start + c.length) : ((c.offset || 0) + c.length) * sp) * sr);
       const { sample, buffer } = pcmToSample(reverseFrames(pcm.channels, a, b), sr, `${p.samples[c.sampleId]?.name || 'Audio'} (rev)`);
       out.push({ id: c.id, sample, buffer });
     }
@@ -493,12 +516,15 @@ export function createRecorder(app, { toast: toastFn = null } = {}) {
     const p = get();
     const sel = p.clips.filter((c) => clipIds.includes(c.id) && c.type === 'audio' && c.sampleId);
     const sp = spb();
+    const tm = songMap();
     const gains = new Map();
     for (const c of sel) {
       const pcm = await pcmOf(c.sampleId);
       if (!pcm) continue;
       const sr = pcm.sampleRate;
-      const g = normalizeGain(peakOf(pcm.channels, Math.round((c.offset || 0) * sp * sr), Math.round(((c.offset || 0) + c.length) * sp * sr)), targetDb);
+      const a = tm ? Math.round(srcSecAt(tm, c, c.start) * sr) : Math.round((c.offset || 0) * sp * sr);
+      const b = tm ? Math.round(srcSecAt(tm, c, c.start + c.length) * sr) : Math.round(((c.offset || 0) + c.length) * sp * sr);
+      const g = normalizeGain(peakOf(pcm.channels, a, b), targetDb);
       if (g) gains.set(c.id, g);
     }
     if (gains.size) store.transact('Normalize', (pp) => { for (const c of pp.clips) if (gains.has(c.id)) c.gain = gains.get(c.id); });
@@ -511,8 +537,10 @@ export function createRecorder(app, { toast: toastFn = null } = {}) {
     const t = p.tracks.find((x) => x.id === trackId && x.type === 'instrument');
     if (!t) { toast('Play something on an instrument track first — Capture MIDI keeps the last 2 minutes of what you played.'); return null; }
     const bpb = beatsPerBar(p);
-    const at = Math.floor((engine.getPosition() || 0) / bpb + EPS) * bpb;
-    const c = capture.capture({ trackId: t.id, bpm: p.bpm, bpb, atBeat: at, grid: prefs.inputQuantize || 0, now: now() });
+    const map = tempoMapFor(p); // pattern mode: constant (tempo changes are an arrangement feature); meters apply
+    const bm = map.isConstant && !hasMeterChanges(p) ? null : map;
+    const at = bm ? bm.barAt((engine.getPosition() || 0) + EPS).start : Math.floor((engine.getPosition() || 0) / bpb + EPS) * bpb;
+    const c = capture.capture({ trackId: t.id, bpm: p.bpm, bpb, atBeat: at, grid: prefs.inputQuantize || 0, now: now(), map: bm });
     if (!c?.notes.length) { toast('Nothing was played on this track in the last 2 minutes.'); return null; }
     let clipId = null;
     store.transact('Capture MIDI', (pp) => {
@@ -522,7 +550,7 @@ export function createRecorder(app, { toast: toastFn = null } = {}) {
       if (pp.mode === 'song') { const cl = createClip(t.id, { patternId: pat.id, start: c.start, length: c.length }); clipId = cl.id; pp.clips.push(cl); }
       else if (tt) tt.activePatternId = pat.id;
     });
-    toast(`Captured ${c.notes.length} note${c.notes.length === 1 ? '' : 's'} into ${t.name}${p.mode === 'song' ? ` at bar ${c.start / bpb + 1}` : ' (new pattern)'}.`, { level: 'success' });
+    toast(`Captured ${c.notes.length} note${c.notes.length === 1 ? '' : 's'} into ${t.name}${p.mode === 'song' ? ` at bar ${bm ? bm.barAt(c.start + EPS).bar + 1 : c.start / bpb + 1}` : ' (new pattern)'}.`, { level: 'success' });
     return clipId;
   }
 
