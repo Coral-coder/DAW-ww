@@ -30,6 +30,16 @@ jobs:
         run: npx electron-builder --mac --x64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      # Both apps carry the universal native layer (addon + plugin host) and the unpacked bridge modules
+      - name: Check the native layer inside the apps
+        run: |
+          for app in $(find dist -maxdepth 2 -name 'daW3.app'); do
+            n="$app/Contents/Resources/native"
+            ls -la "$n"
+            lipo -info "$n/daw3-plughost" "$n/daw3_audio.node"
+            test -f "$app/Contents/Resources/app.asar.unpacked/src/native/protocol.js"
+            "$n/daw3-plughost" --describe au all | head -c 400; echo
+          done
       - name: Pack .dmg files
         run: sh scripts/make-dmg.sh
       - uses: actions/upload-artifact@v4
