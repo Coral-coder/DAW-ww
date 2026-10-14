@@ -349,14 +349,19 @@ export class AudioEngine extends Emitter {
   }
 
   // ------------------------------------------------------------------ transport
-  async play() {
+  /**
+   * Start the transport. opts.from: start beat (may be negative: silent count-in bars, used by recording);
+   * opts.at: AudioContext time at which `from` must be HEARD (sample-accurate start after a count-in).
+   */
+  async play(opts = {}) {
     await this.init();
     if (this._playing) return;
     const p = this.project;
-    let beat = Math.max(0, this._pos);
+    let beat = Number.isFinite(opts.from) ? opts.from : Math.max(0, this._pos);
     if (p.mode === 'song' && p.loop?.enabled && p.loop.end > p.loop.start && beat >= p.loop.end) beat = p.loop.start;
     this._playing = true;
-    const t0 = this.scheduler.start(beat);
+    const delay = Number.isFinite(opts.at) ? Math.max(0.02, opts.at - this.ctx.currentTime - (this.scheduler.preroll || 0)) : undefined;
+    const t0 = this.scheduler.start(beat, delay);
     this.graph.syncLfos(t0);
     this._startPosTimer();
     this.emit('state', { playing: true });

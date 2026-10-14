@@ -12,6 +12,7 @@ import * as strudel from '../code/strudel.js';
 import { beatsPerBar } from '../core/model.js';
 import { hasMuteLane } from '../core/automation.js';
 import { frozenMode, frozenClip } from '../core/freeze.js';
+import { trackClips } from '../record/clips.js';
 
 export const EPS = 1e-7;
 const inWin = (x, b0, b1) => x >= b0 - EPS && x < b1 - EPS;
@@ -138,8 +139,8 @@ export function collectEvents(project, b0, b1, opts = {}) {
         const pat = track.activePatternId && project.patterns[track.activePatternId];
         if (pat) pushPatternNotes(out, track, pat, 0, 0, -Infinity, Infinity, b0, b1, swing);
       } else {
-        for (const clip of project.clips) {
-          if (clip.trackId !== track.id) continue;
+        // the track's clips with automatic crossfades + the comp of its take lanes (src/record)
+        for (const clip of trackClips(project, track)) {
           const cs = clip.start;
           const ce = clip.start + clip.length;
           if (ce <= b0 + EPS || cs >= b1 - EPS) continue; // no overlap with the window
