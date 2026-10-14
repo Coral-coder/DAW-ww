@@ -1,0 +1,20 @@
+/* Mac app (Electron, hiddenInset title bar): room for the traffic lights + draggable header. Inert in the browser. */
+html[data-native="darwin"] .app-header { padding-left: 84px; -webkit-app-region: drag; }
+html[data-native="darwin"] .app-header :is(button, select, input, a, label, .hgroup, .hfield, [role="button"], [contenteditable]) { -webkit-app-region: no-drag; }
+
+/* ---- Audio & Plugin Settings (Mac app: native audio engine + plugin hosting) ---- */
+.aprefs { display: flex; flex-direction: column; gap: 12px; font-size: 13px; }
+.aprefs .plg-msg { padding: 0; }
+.aprefs-status { font-size: 12px; padding: 6px 8px; border-radius: 6px; background: var(--bg-2, rgba(255,255,255,.04)); color: var(--text-2); }
+.aprefs-status[data-state="on"] { color: var(--good, #51cf66); }
+.aprefs-form { display: grid; gap: 8px; }
+.aprefs-row { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 4px 12px; }
+.aprefs-row > label { color: var(--text-2); }
+.aprefs-row select { width: 100%; }
+.aprefs-row .aprefs-hint { grid-column: 2; }
+.aprefs-hint { font-size: 11px; color: var(--text-3, var(--text-2)); }
+.aprefs-section { border-top: 1px solid var(--line, rgba(255,255,255,.08)); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.aprefs-latency, .aprefs-plugins { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.aprefs-plugins h3 { margin: 0; font-size: 13px; }
+.aprefs-plugins ul { margin: 4px 0; padding-left: 18px; font-size: 11px; }
+@media (max-width: 520px) { .aprefs-row { grid-template-columns: 1fr; } .aprefs-row .aprefs-hint { grid-column: 1; } }

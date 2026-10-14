@@ -1,0 +1,33 @@
+// Complex & Moving Generative Ambient Canvas
+// Layers a slow harmonic swell, an asynchronous melody, and high-frequency shimmer
+
+stack(
+  // 1. Warm, Expanding Chord Progression (The Emotional Anchor)
+  note("<[f3, a3, c4, e4] [d3, f3, a3, c4] [bb2, d3, f3, a3] [c3, e3, g3, b3]>")
+    .sound("supersaw")
+    .slow(4)              // Cycles very slowly
+    .lpf(sine.range(300, 900).slow(8)) // Filter sweeps slowly back and forth
+    .lpq(4)
+    .gain(0.4)
+    .attack(0.8)          // Soft fade-in
+    .release(1.5),        // Long bleeding trails
+
+  // 2. The Wanderer: A generative, shifting melody
+  // Uses a pentatonic-infused minor scale that drifts asynchronously
+  note("c4 d4 f4 g4 a4 c5 d5 f5")
+    .scramble()           // Randomizes the order every cycle
+    .struct("x(5,8,3)")   // Euclidean rhythm: 5 hits over 8 steps, rotated
+    .sound("sine")
+    .slow(3)              // Intentionally desynced from the 4-bar chords
+    .delay(0.6).delayfb(0.7) // Heavy, cascading echoes
+    .room(0.8).size(0.9)  // Immense cathedral reverb
+    .gain(sine.range(0.1, 0.35).slow(5)), // Volume gently swells and fades
+
+  // 3. Shimmering Sky (High-frequency microscopic fragments)
+  note("[f5, c6, e6]*3")
+    .degradeBy(0.4)       // Randomly drops 40% of the notes for unpredictability
+    .sound("supersoft")
+    .pan(sine.range(0.1, 0.9).slow(2)) // Sweeps dynamically from left to right
+    .gain(0.15)
+    .fast(1.5)
+)
