@@ -1,0 +1,16 @@
+{
+ "license": "AGPL-3.0-or-later",
+ "origin": "daW³ regression cases (songs users imported from strudel.cc)",
+ "tunes": [
+  {
+   "name": "slider-widgets",
+   "source": "user report: \"slider is not defined\"",
+   "code": "setcpm(120/4)\n\n$: s(\"bd*4, [~ sd]*2, hh*8\").bank(\"RolandTR909\")\n  .gain(slider(0.8, 0, 1))\n\n$: n(\"<0 3 5 7>*4\").scale(\"C:minor\").s(\"sawtooth\")\n  .lpf(slider(1200, 200, 5000, 1))\n  .lpq(slider(8, 0, 20))\n  .room(slider(0.3))\n  ._pianoroll()\n\n_$: note(\"c2 eb2\").s(\"supersaw\")"
+  },
+  {
+   "name": "samples-and-await",
+   "source": "strudel.cc REPL idioms",
+   "code": "await samples('github:tidalcycles/dirt-samples')\nsamples({ kit: ['bd/BT0A0A7.wav', 'sd/rytm-01-classic.wav'] }, 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/')\nconst pat = \"<0 2 [4 6]>\"\nlet chords = chord(\"<Am7 Dm7 G7 C^7>\").voicing()\n\ndrums: s(\"kit:0 kit:1\").fast(2)\nkeys: chords.s(\"piano\").room(.5)\nmel: n(pat).scale(\"A:minor\").s(\"triangle\").delay(.25)\nall(x => x.gain(.9))"
+  }
+ ]
+}
