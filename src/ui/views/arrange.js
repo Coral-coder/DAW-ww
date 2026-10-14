@@ -2540,5 +2540,14 @@ export function createArrangeView(app) {
     },
     // exposed for automation / other views
     revealAutomation, zoomToFit, revealRange, scenesToArrangement: (o) => scenesToArrangement(app, o), getState: () => ({ ppb, laneH, headW, tool, snapMode, stale }),
+    // geometry for collaboration overlays (src/collab/overlay.js): content coords = beat * ppb, row y
+    collabGeom: () => {
+      const L = rowsLayout();
+      return {
+        kind: 'arrange', scroller, ppb, laneH,
+        rowOf: (trackId) => { const r = L.rows.find((x) => x.t.id === trackId); return r ? { y: r.y, h: laneH } : null; },
+        trackAt: (y) => { const i = rowAt(L, y); return L.rows[i]?.t.id || null; },
+      };
+    },
   };
 }
