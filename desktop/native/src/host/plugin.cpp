@@ -1,9 +1,15 @@
 #include "plugin.h"
 
+#include "platform.h"
+
+#ifdef _WIN32
+#include <shlobj.h>
+#else
 #include <dirent.h>
 #include <pwd.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <cstdio>
@@ -37,6 +43,61 @@ Json ParamInfo::toJson() const {
   return j;
 }
 
+#ifdef _WIN32
+std::string homeDir() {
+  std::string h = envVar("DAW3_HOME");  // tests / the app's fake home
+  if (!h.empty()) return h;
+  h = envVar("USERPROFILE");
+  if (!h.empty()) return h;
+  return envVar("HOMEDRIVE") + envVar("HOMEPATH");
+}
+
+/** A known folder (FOLDERID_ProgramFilesCommon, FOLDERID_LocalAppData, FOLDERID_Documents …) as UTF-8. */
+static std::string knownFolder(const KNOWNFOLDERID& id) {
+  PWSTR w = nullptr;
+  std::string s;
+  if (SHGetKnownFolderPath(id, 0, nullptr, &w) == S_OK && w) s = narrow(w);
+  if (w) CoTaskMemFree(w);
+  return s;
+}
+
+std::string winFolder(WinFolder f) {
+  switch (f) {
+    case WinFolder::CommonProgramFiles: { std::string s = knownFolder(FOLDERID_ProgramFilesCommon); return s.empty() ? envVar("CommonProgramFiles") : s; }
+    case WinFolder::LocalAppData: { std::string s = knownFolder(FOLDERID_LocalAppData); return s.empty() ? envVar("LOCALAPPDATA") : s; }
+    case WinFolder::Documents: { if (!envVar("DAW3_HOME").empty()) return homeDir() + "/Documents";
+      std::string s = knownFolder(FOLDERID_Documents); return s.empty() ? homeDir() + "/Documents" : s; }
+  }
+  return "";
+}
+
+static DWORD attrs(const std::string& p) { return GetFileAttributesW(winPath(p).c_str()); }
+
+bool isDirectory(const std::string& p) {
+  const DWORD a = attrs(p);
+  return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+static bool exists(const std::string& p) { return attrs(p) != INVALID_FILE_ATTRIBUTES; }
+
+std::vector<std::string> listDir(const std::string& p) {
+  std::vector<std::string> out;
+  WIN32_FIND_DATAW fd;
+  HANDLE h = FindFirstFileW((winPath(p) + L"\\*").c_str(), &fd);
+  if (h != INVALID_HANDLE_VALUE) {
+    do {
+      std::string n = narrow(fd.cFileName);
+      if (n == "." || n == "..") continue;
+      out.push_back(n);
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+  }
+  std::sort(out.begin(), out.end());
+  return out;
+}
+
+static void makeDir(const std::string& p) { CreateDirectoryW(winPath(p).c_str(), nullptr); }
+#else
 std::string homeDir() {
   if (const char* h = getenv("HOME")) return h;
   if (struct passwd* pw = getpwuid(getuid())) return pw->pw_dir;
@@ -67,10 +128,13 @@ std::vector<std::string> listDir(const std::string& p) {
   return out;
 }
 
+static void makeDir(const std::string& p) { mkdir(p.c_str(), 0755); }
+#endif
+
 std::string baseName(const std::string& p) {
   std::string s = p;
-  while (s.size() > 1 && s.back() == '/') s.pop_back();
-  size_t k = s.find_last_of('/');
+  while (s.size() > 1 && (s.back() == '/' || s.back() == '\\')) s.pop_back();
+  size_t k = s.find_last_of("/\\");
   return k == std::string::npos ? s : s.substr(k + 1);
 }
 
@@ -114,19 +178,12 @@ static std::string safeSegment(std::string s) {
 
 std::vector<std::string> presetFolders(const PluginDesc& d) {
   std::vector<std::string> roots;
-  if (const char* env = getenv("DAW3_PRESET_DIRS")) {
-    std::string s = env;
-    size_t a = 0;
-    while (a <= s.size()) {
-      size_t b = s.find(':', a);
-      if (b == std::string::npos) b = s.size();
-      if (b > a) roots.push_back(s.substr(a, b - a));
-      a = b + 1;
-    }
-  }
+  for (auto& r : splitPathList(envVar("DAW3_PRESET_DIRS"))) roots.push_back(r);
 #ifdef __APPLE__
   roots.push_back(homeDir() + "/Library/Audio/Presets");
   roots.push_back("/Library/Audio/Presets");
+#elif defined(_WIN32)
+  roots.push_back(winFolder(WinFolder::Documents) + "/VST3 Presets");  // Steinberg's per-user preset location
 #else
   roots.push_back(homeDir() + "/.vst3/presets");
 #endif
@@ -158,7 +215,7 @@ std::vector<std::pair<std::string, std::string>> findPresetFiles(const std::vect
 }
 
 bool readFile(const std::string& path, std::vector<uint8_t>& out) {
-  FILE* f = fopen(path.c_str(), "rb");
+  FILE* f = fopenUtf8(path, "rb");
   if (!f) return false;
   out.clear();
   uint8_t buf[65536];
@@ -173,8 +230,8 @@ bool readFile(const std::string& path, std::vector<uint8_t>& out) {
 
 bool writeFile(const std::string& path, const std::vector<uint8_t>& data) {
   // create missing parent folders
-  for (size_t k = 1; (k = path.find('/', k)) != std::string::npos; k++) mkdir(path.substr(0, k).c_str(), 0755);
-  FILE* f = fopen(path.c_str(), "wb");
+  for (size_t k = 1; (k = path.find_first_of("/\\", k)) != std::string::npos; k++) makeDir(path.substr(0, k));
+  FILE* f = fopenUtf8(path, "wb");
   if (!f) return false;
   const bool ok = fwrite(data.data(), 1, data.size(), f) == data.size();
   return fclose(f) == 0 && ok;
@@ -187,6 +244,17 @@ std::string bundleBinary(const std::string& bundle, const std::string& ext) {
   std::string mac = bundle + "/Contents/MacOS/" + stem;
   if (exists(mac)) return mac;
   for (auto& n : listDir(bundle + "/Contents/MacOS")) return bundle + "/Contents/MacOS/" + n;
+#elif defined(_WIN32)
+  // VST3 bundle on Windows: Contents/<arch>-win/<name>.vst3 (a DLL); a plain .vst3 / .clap file is the binary itself
+#if defined(_M_ARM64) || defined(__aarch64__)
+  const char* archs[] = {"arm64-win", "arm64x-win", "arm64ec-win"};
+#else
+  const char* archs[] = {"x86_64-win"};
+#endif
+  for (const char* arch : archs) {
+    std::string dll = bundle + "/Contents/" + arch + "/" + stem + ".vst3";
+    if (exists(dll)) return dll;
+  }
 #else
 #if defined(__aarch64__)
   const char* arch = "aarch64-linux";

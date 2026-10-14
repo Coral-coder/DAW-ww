@@ -3,16 +3,18 @@ export const LAYOUT_KEY = 'daw3-layout'; // 'pocket' | 'desktop' | absent = auto
 
 /**
  * Should the Pocket shell be used? env: {search, stored, width, height, coarse}.
- * Order: URL (?mobile=1 / ?mobile=0, ?desktop=1) > remembered menu choice > automatic (small or touch screens:
- * width ≤ 820, or a coarse pointer with width ≤ 1024).
+ * Order: URL (?mobile=1 / ?mobile=0, ?desktop=1) > remembered menu choice > the /pocket/ address (GitHub Pages
+ * publishes the same app there: Pocket first) > automatic (small or touch screens: width ≤ 820, or a coarse
+ * pointer with width ≤ 1024).
  */
-export function detectPocket({ search = '', stored = null, width = 1280, coarse = false } = {}) {
+export function detectPocket({ search = '', stored = null, width = 1280, coarse = false, path = '' } = {}) {
   const q = new URLSearchParams(search);
   if (q.has('mobile')) return !/^(0|false|no|off)$/i.test(q.get('mobile'));
   if (q.has('pocket')) return !/^(0|false|no|off)$/i.test(q.get('pocket'));
   if (q.has('desktop')) return false;
   if (stored === 'pocket') return true;
   if (stored === 'desktop') return false;
+  if (/\/pocket(\/|$)/.test(path)) return true;
   return width <= 820 || (!!coarse && width <= 1024);
 }
 
@@ -21,7 +23,7 @@ export function readEnv(win = globalThis) {
   let stored = null, coarse = false;
   try { stored = win.localStorage?.getItem(LAYOUT_KEY) ?? null; } catch { /* storage blocked */ }
   try { coarse = !!win.matchMedia?.('(pointer: coarse)').matches; } catch { /* */ }
-  return { search: win.location?.search || '', stored, width: win.innerWidth || 1280, coarse };
+  return { search: win.location?.search || '', stored, width: win.innerWidth || 1280, coarse, path: win.location?.pathname || '' };
 }
 
 /** Remember the user's choice ('pocket' | 'desktop' | null = automatic). */

@@ -5,6 +5,16 @@
 //   daw3-plughost --serve --shm <file> --req <fifo> --done <fifo>    control on stdin/stdout (JSON lines),
 //                                                                     audio blocks through the shared memory
 #include <signal.h>
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#include <process.h>
+#include "platform.h"
+#include <shellapi.h>
+#define getpid _getpid
+#else
+#include <unistd.h>
+#endif
 
 #include <atomic>
 #include <cstdio>
@@ -322,7 +332,25 @@ int serveMain(const std::string& shmPath, const std::string& reqPath, const std:
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+  // JSON lines without CRLF translation; arguments (plugin paths) as UTF-8 rather than the ANSI code page
+  _setmode(_fileno(stdout), _O_BINARY);
+  _setmode(_fileno(stdin), _O_BINARY);
+  std::vector<std::string> utf8Args;
+  std::vector<char*> utf8Argv;
+  {
+    int wargc = 0;
+    if (LPWSTR* wargv = CommandLineToArgvW(GetCommandLineW(), &wargc)) {
+      for (int i = 0; i < wargc; i++) utf8Args.push_back(narrow(wargv[i]));
+      LocalFree(wargv);
+      for (auto& x : utf8Args) utf8Argv.push_back(&x[0]);
+      argc = (int)utf8Argv.size();
+      argv = utf8Argv.data();
+    }
+  }
+#else
   signal(SIGPIPE, SIG_IGN);
+#endif
   std::map<std::string, std::string> a;
   std::vector<std::string> pos;
   for (int i = 1; i < argc; i++) {

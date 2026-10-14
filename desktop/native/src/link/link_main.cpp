@@ -16,7 +16,13 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#include <process.h>
+#else
 #include <unistd.h>
+#endif
 
 #include "../host/json.h"
 
@@ -80,6 +86,10 @@ struct Session {
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+  _setmode(_fileno(stdout), _O_BINARY);  // JSON lines without CRLF translation
+  _setmode(_fileno(stdin), _O_BINARY);
+#endif
   if (argc > 1 && std::string(argv[1]) == "--version") {
     printf("daw3-link (Ableton Link 3.1.5, GPL-2.0-or-later)\n");
     return 0;

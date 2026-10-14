@@ -1,11 +1,9 @@
 // VST3 hosting on the MIT-licensed VST3 pluginterfaces only (v3.8.0).
-#include <dlfcn.h>
 
 #include <algorithm>
 #include <array>
 #include <map>
 #include <mutex>
-#include <strings.h>
 
 #include "pluginterfaces/base/ipluginbase.h"
 #include "pluginterfaces/gui/iplugview.h"
@@ -20,6 +18,7 @@
 #include "pluginterfaces/vst/ivstprocesscontext.h"
 #include "pluginterfaces/vst/ivstunits.h"
 #include "pluginterfaces/vst/vstspeaker.h"
+#include "platform.h"
 #include "plugin.h"
 #include "vst3_common.h"
 
@@ -49,6 +48,13 @@ DEF_CLASS_IID(IUnitInfo)
 
 namespace daw3 {
 namespace {
+
+int d3_strcasecmp(const char* a, const char* b) {
+  for (;; a++, b++) {
+    const int ca = tolower((unsigned char)*a), cb = tolower((unsigned char)*b);
+    if (ca != cb || !ca) return ca - cb;
+  }
+}
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
@@ -89,12 +95,19 @@ const Vst3Module* loadModule(const std::string& path, std::string& err) {
   auto gf = (GetFactory)CFBundleGetFunctionPointerForName(m.bundle, CFSTR("GetPluginFactory"));
 #else
   const std::string bin = bundleBinary(path, ".vst3");
-  m.handle = bin.empty() ? nullptr : dlopen(bin.c_str(), RTLD_NOW | RTLD_LOCAL);
-  if (!m.handle) { const char* e = dlerror(); err = e ? e : "Could not load " + path; return nullptr; }
+  if (bin.empty()) { err = "No binary for this platform inside " + path; return nullptr; }
+  m.handle = dlOpen(bin, err);
+  if (!m.handle) return nullptr;
+#ifdef _WIN32
+  using ModuleEntry = bool (*)();  // Windows: InitDll() / ExitDll()
+  auto entry = (ModuleEntry)dlSym(m.handle, "InitDll");
+  if (entry && !entry()) { err = "InitDll failed"; return nullptr; }
+#else
   using ModuleEntry = bool (*)(void*);
-  auto entry = (ModuleEntry)dlsym(m.handle, "ModuleEntry");
+  auto entry = (ModuleEntry)dlSym(m.handle, "ModuleEntry");
   if (entry && !entry(m.handle)) { err = "ModuleEntry failed"; return nullptr; }
-  auto gf = (GetFactory)dlsym(m.handle, "GetPluginFactory");
+#endif
+  auto gf = (GetFactory)dlSym(m.handle, "GetPluginFactory");
 #endif
   if (!gf) { err = "Not a VST3 plugin (no GetPluginFactory)"; return nullptr; }
   m.factory = gf();
@@ -549,7 +562,7 @@ class Vst3Instance : public PluginInstance, public IComponentHandler, public IPl
     for (auto& [path, cat] : findPresetFiles(presetFolders(desc_), ".vstpreset")) {
       std::vector<uint8_t> c, k;
       std::string cls;
-      if (!readVstPreset(path, cls, c, k) || strcasecmp(cls.c_str(), desc_.uid.c_str()) != 0) continue;  // another plugin's preset
+      if (!readVstPreset(path, cls, c, k) || d3_strcasecmp(cls.c_str(), desc_.uid.c_str()) != 0) continue;  // another plugin's preset
       PresetInfo p;
       p.kind = "file";
       p.path = path;
@@ -582,7 +595,7 @@ class Vst3Instance : public PluginInstance, public IComponentHandler, public IPl
       std::vector<uint8_t> c, k;
       std::string cls;
       if (!readVstPreset(id.substr(5), cls, c, k)) { err = "Not a VST3 preset file"; return false; }
-      if (strcasecmp(cls.c_str(), desc_.uid.c_str()) != 0) { err = "The preset belongs to another plugin"; return false; }
+      if (d3_strcasecmp(cls.c_str(), desc_.uid.c_str()) != 0) { err = "The preset belongs to another plugin"; return false; }
       if (c.empty() || !applyStates(c, k)) { err = "The plugin rejected the preset"; return false; }
       auto l = listener();
       if (l.paramsRescanned) l.paramsRescanned();
@@ -730,6 +743,9 @@ class Vst3Format : public PluginFormat {
   std::vector<std::string> defaultPaths() const override {
 #ifdef __APPLE__
     return {homeDir() + "/Library/Audio/Plug-Ins/VST3", "/Library/Audio/Plug-Ins/VST3"};
+#elif defined(_WIN32)
+    // Steinberg's Windows locations: %COMMONPROGRAMFILES%\VST3 (system) and %LOCALAPPDATA%\Programs\Common\VST3 (user)
+    return {winFolder(WinFolder::LocalAppData) + "/Programs/Common/VST3", winFolder(WinFolder::CommonProgramFiles) + "/VST3"};
 #else
     return {homeDir() + "/.vst3", "/usr/lib/vst3", "/usr/local/lib/vst3"};
 #endif

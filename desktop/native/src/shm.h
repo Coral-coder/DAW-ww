@@ -3,11 +3,21 @@
 // enough. Wake-ups go through two FIFOs (portable, and poll() gives the app a timeout — macOS has no
 // sem_timedwait), so a hung or crashed plugin can never block the app's audio path for long.
 #pragma once
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 #include <atomic>
 #include <cerrno>
@@ -49,6 +59,80 @@ inline size_t shmSize(uint32_t maxFrames, uint32_t maxCh) { return shmAudioOffse
 inline float* shmIn(ShmHeader* h) { return reinterpret_cast<float*>(reinterpret_cast<char*>(h) + shmAudioOffset()); }
 inline float* shmOut(ShmHeader* h) { return shmIn(h) + size_t(h->maxFrames) * h->maxChannels; }
 
+#ifdef _WIN32
+/** Windows: the "path" names a pagefile-backed section ("Local\\daw3-…"), and a FIFO becomes a named auto-reset
+ *  event — the same create / open / post / wait(timeout) protocol as the POSIX version below. */
+inline std::wstring shmObjectName(const std::string& path, const char* kind) {
+  // only the file name (unique per app process: daw3-ph-<pid>-<n>.shm): argv on Windows is in the ANSI code page,
+  // so a non-ASCII temp folder would otherwise name a different object in the plugin host
+  const size_t k = path.find_last_of("/\\");
+  std::string n = std::string("Local\\daw3-") + kind + "-";
+  for (char c : (k == std::string::npos ? path : path.substr(k + 1))) n += (c == ':' ? '_' : c);
+  if (n.size() > 240) n = n.substr(n.size() - 240);
+  std::wstring w;
+  for (unsigned char c : n) w += (wchar_t)c;
+  return w;
+}
+
+class ShmRegion {
+ public:
+  ~ShmRegion() { close(); }
+  bool create(const std::string& path, size_t size) {
+    h_ = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, (DWORD)((uint64_t)size >> 32), (DWORD)(size & 0xffffffffu), shmObjectName(path, "shm").c_str());
+    if (!h_) return false;
+    return map(size);
+  }
+  bool open(const std::string& path) {
+    h_ = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, shmObjectName(path, "shm").c_str());
+    if (!h_) return false;
+    return map(0);
+  }
+  void close() {
+    if (ptr_) UnmapViewOfFile(ptr_);
+    ptr_ = nullptr;
+    if (h_) CloseHandle(h_);
+    h_ = nullptr;
+  }
+  void* ptr() const { return ptr_; }
+  size_t size() const { return size_; }
+
+ private:
+  bool map(size_t size) {
+    void* p = MapViewOfFile(h_, FILE_MAP_ALL_ACCESS, 0, 0, size);
+    if (!p) { close(); return false; }
+    if (!size) { MEMORY_BASIC_INFORMATION mi; size = VirtualQuery(p, &mi, sizeof mi) ? mi.RegionSize : 0; }
+    ptr_ = p;
+    size_ = size;
+    return true;
+  }
+  HANDLE h_ = nullptr;
+  void* ptr_ = nullptr;
+  size_t size_ = 0;
+};
+
+class FifoSignal {
+ public:
+  ~FifoSignal() { close(); }
+  bool create(const std::string& path) {
+    h_ = CreateEventW(nullptr, FALSE, FALSE, shmObjectName(path, "sig").c_str());
+    return h_ != nullptr;
+  }
+  bool open(const std::string& path) {
+    h_ = OpenEventW(EVENT_MODIFY_STATE | SYNCHRONIZE, FALSE, shmObjectName(path, "sig").c_str());
+    return h_ != nullptr;
+  }
+  void post() { if (h_) SetEvent(h_); }
+  /** Waits for at least one post (timeoutMs < 0 = forever); posts coalesce like the drained FIFO. */
+  bool wait(int timeoutMs) { return h_ && WaitForSingleObject(h_, timeoutMs < 0 ? INFINITE : (DWORD)timeoutMs) == WAIT_OBJECT_0; }
+  void close() {
+    if (h_) CloseHandle(h_);
+    h_ = nullptr;
+  }
+
+ private:
+  HANDLE h_ = nullptr;
+};
+#else
 /** A file-backed shared mapping (a file in the temp dir: works the same on macOS and Linux). */
 class ShmRegion {
  public:
@@ -143,5 +227,7 @@ class FifoSignal {
   bool owner_ = false;
   std::string path_;
 };
+
+#endif  // _WIN32
 
 }  // namespace daw3

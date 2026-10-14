@@ -12,7 +12,8 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
 const build = path.join(root, 'desktop', 'native', 'build');
-const have = existsSync(path.join(build, 'daw3_audio.node')) && existsSync(path.join(build, 'daw3-plughost')) && existsSync(path.join(build, 'daW3TestGain.clap'));
+const EXE = process.platform === 'win32' ? '.exe' : '';
+const have = existsSync(path.join(build, 'daw3_audio.node')) && existsSync(path.join(build, `daw3-plughost${EXE}`)) && existsSync(path.join(build, 'daW3TestGain.clap'));
 const opts = { skip: have ? false : 'native layer not built (sh desktop/native/build.sh)' };
 
 async function setup() {
@@ -22,16 +23,24 @@ async function setup() {
   const home = path.join(tmp, 'home');
   const plat = process.platform;
   // install the test plugins where a user would
-  const clapDir = plat === 'darwin' ? path.join(home, 'Library/Audio/Plug-Ins/CLAP') : path.join(home, '.clap');
-  const vst3Dir = plat === 'darwin' ? path.join(home, 'Library/Audio/Plug-Ins/VST3') : path.join(home, '.vst3');
+  const winUser = path.join(home, 'AppData', 'Local', 'Programs', 'Common');
+  const clapDir = plat === 'darwin' ? path.join(home, 'Library/Audio/Plug-Ins/CLAP') : plat === 'win32' ? path.join(winUser, 'CLAP') : path.join(home, '.clap');
+  const vst3Dir = plat === 'darwin' ? path.join(home, 'Library/Audio/Plug-Ins/VST3') : plat === 'win32' ? path.join(winUser, 'VST3') : path.join(home, '.vst3');
   mkdirSync(clapDir, { recursive: true });
   mkdirSync(vst3Dir, { recursive: true });
   cpSync(path.join(build, 'daW3TestGain.clap'), path.join(clapDir, 'daW3TestGain.clap'), { recursive: true });
   cpSync(path.join(build, 'daW3TestGain.vst3'), path.join(vst3Dir, 'daW3TestGain.vst3'), { recursive: true });
   writeFileSync(path.join(clapDir, 'Broken.clap'), 'not a plugin');
   const events = [];
-  const server = await NativeServer.create({ addon, binary: path.join(build, 'daw3-plughost'), dataDir: path.join(tmp, 'data'), home, nullBackend: true, post: (e) => events.push(e) });
-  return { server, tmp, events, cleanup: () => { server.shutdown(); rmSync(tmp, { recursive: true, force: true }); } };
+  const server = await NativeServer.create({ addon, binary: path.join(build, `daw3-plughost${EXE}`), dataDir: path.join(tmp, 'data'), home, nullBackend: true, post: (e) => events.push(e) });
+  const cleanup = async () => {
+    const proc = server.host?.proc;
+    server.shutdown();
+    // Windows keeps a loaded plugin DLL locked until the plugin host has exited
+    if (proc && proc.exitCode === null && proc.signalCode === null) await new Promise((res) => { proc.once('exit', res); setTimeout(res, 4000); });
+    try { rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch (e) { if (process.platform !== 'win32') throw e; }
+  };
+  return { server, tmp, events, cleanup };
 }
 
 const block = (v, ch = 2) => new Float32Array(128 * ch).fill(v);
@@ -54,7 +63,7 @@ test('native e2e: devices + engine config (null backend)', opts, async () => {
     const off = await server.handle('audio.setConfig', [{ enabled: false }]);
     assert.equal(off.status.state, 'stopped');
     assert.equal((await server.handle('audio.getConfig')).bufferFrames, 128, 'config persists');
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
 test('native e2e: scan, load, process, params, state, latency (CLAP + VST3 through the plugin host)', opts, async () => {
@@ -116,7 +125,7 @@ test('native e2e: scan, load, process, params, state, latency (CLAP + VST3 throu
     const back = await server.handle('plugins.load', [{ key: tone.key }]);
     assert.ok(back.inst > t.inst);
     assert.notEqual(server.host.pid, pid);
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
 test('native e2e: Audio Units through the plugin host (macOS)', { skip: !have ? opts.skip : process.platform !== 'darwin' ? 'Audio Units exist only on macOS' : false }, async () => {
@@ -136,7 +145,7 @@ test('native e2e: Audio Units through the plugin host (macOS)', { skip: !have ? 
     const state = await server.handle('plugins.getState', [info.inst]);
     const again = await server.handle('plugins.load', [{ key: delay.key, state }]);
     assert.equal(Math.round(again.values['0']), 0, 'state restored');
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
 test('native e2e: sidechain bus, multi-out, sample-accurate automation in the offline render, presets, rate change', opts, async () => {
@@ -216,5 +225,5 @@ test('native e2e: sidechain bus, multi-out, sample-accurate automation in the of
     let zc = 0;
     for (let k = 1; k < 24000; k++) if ((r96.output[k] >= 0) !== (r96.output[k - 1] >= 0) && r96.output[k - 1] !== 0) zc++;
     assert.ok(Math.abs(zc - 220) <= 2, `440 Hz at 96 kHz (${zc} zero crossings in 0.25 s)`);
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });

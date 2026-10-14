@@ -1,0 +1,134 @@
+name: Desktop
+# daW³ desktop app for macOS, Windows and Linux: native layer (C++ audio addon, plugin host, Link helper) +
+# its C++ tests, the JS tests, packaging, and a smoke test of every packaged app (launched for real, driven
+# over CDP: a blank window, a missing native layer or a page error fails the build). release.yml calls this.
+on:
+  push:
+    branches: [main, mac-app, 'release/**']
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Same rule as ci.yml: "WIP: …" checkpoints are not built.
+    if: ${{ github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'WIP') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, platform: mac }
+          - { os: windows-latest, platform: windows }
+          - { os: ubuntu-latest, platform: linux }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false' # no signing identity: macOS is ad-hoc signed by scripts/make-dmg.sh, Windows unsigned
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+      LLVM_MINGW: llvm-mingw-20250114-ucrt-x86_64
+    steps:
+      - name: Keep LF line endings on Windows
+        if: matrix.platform == 'windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      # ---------------------------------------------------------------- toolchains
+      - name: Windows toolchain (llvm-mingw — x64 + arm64 cross, static, UCRT)
+        if: matrix.platform == 'windows'
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/llvm-mingw.zip" "https://github.com/mstorsjo/llvm-mingw/releases/download/20250114/$LLVM_MINGW.zip"
+          7z x -y -o"$RUNNER_TEMP" "$RUNNER_TEMP/llvm-mingw.zip" > /dev/null
+          echo "$RUNNER_TEMP/$LLVM_MINGW/bin" >> "$GITHUB_PATH"
+      - name: Linux packages (virtual display for the smoke test)
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q xvfb libgbm1 libnss3 libasound2t64 libgtk-3-0t64 libxss1
+
+      # ---------------------------------------------------------------- native layer + tests
+      # macOS: universal arm64 + x86_64, CoreAudio, CLAP / VST3 / AU. Windows: WASAPI, CLAP / VST3. Linux: ALSA /
+      # PulseAudio / JACK, CLAP / VST3. Tests: ring buffer, engine (null backend), CLAP + VST3 test plugins
+      # (sample-accurate params, sidechain, multi-out, presets), Apple AUs on macOS, the Ableton Link process.
+      - name: Native layer + native tests
+        run: |
+          if [ "${{ matrix.platform }}" = windows ]; then export CXX=x86_64-w64-mingw32-clang++ CC=x86_64-w64-mingw32-clang; fi
+          sh desktop/native/build.sh --test
+      # JS tests; with the native build present they also drive the real addon + plugin host end to end.
+      - run: npm test
+
+      # ---------------------------------------------------------------- package
+      - run: npm install --no-audit --no-fund
+      - name: Stamp the build (version + commit shown in About / the main menu)
+        run: |
+          SHA="$(git rev-parse --short=7 HEAD)"
+          printf "%s\n" "// Stamped by CI (desktop.yml) — the commit this build was made from." "export const BUILD_SHA = '$SHA';" > src/build-info.js
+          echo "daW³ $(node -p "require('./package.json').version") ($SHA)"
+      - name: Package macOS (arm64 + x64 .app/.zip, ad-hoc signed .dmg)
+        if: matrix.platform == 'mac'
+        run: |
+          npx electron-builder --mac --arm64 --publish never
+          npx electron-builder --mac --x64 --publish never
+          for app in $(find dist -maxdepth 2 -name 'daW3.app'); do
+            n="$app/Contents/Resources/native"
+            lipo -info "$n/daw3-plughost" "$n/daw3_audio.node" "$n/daw3-link"
+            test -f "$app/Contents/Resources/app.asar.unpacked/src/native/protocol.js"
+            "$n/daw3-plughost" --describe au all | head -c 300; echo
+          done
+          bash scripts/make-dmg.sh
+      - name: Package Windows x64 (NSIS installer + portable zip)
+        if: matrix.platform == 'windows'
+        run: npx electron-builder --win --x64 --publish never
+      - name: Package Windows arm64 (cross-compiled native layer)
+        if: matrix.platform == 'windows'
+        run: |
+          rm -rf desktop/native/build
+          CXX=aarch64-w64-mingw32-clang++ CC=aarch64-w64-mingw32-clang sh desktop/native/build.sh
+          npx electron-builder --win --arm64 --publish never
+          ls dist  # the smoke test below runs dist/win-unpacked (x64, packaged with the x64 native layer earlier)
+      - name: Package Linux x64 (AppImage, .deb, .tar.gz)
+        if: matrix.platform == 'linux'
+        run: npx electron-builder --linux --x64 --publish never
+
+      # ---------------------------------------------------------------- smoke test of the packaged app
+      - run: npm install --no-save --no-audit --no-fund playwright-core@1.55.1
+      - name: Smoke test (launch the packaged app, CDP, boot + generate a song + native layer)
+        run: |
+          case "${{ matrix.platform }}" in
+            linux) xvfb-run -a --server-args="-screen 0 1600x1000x24" node scripts/smoke-electron.mjs --label linux-x64 ;;
+            windows) node scripts/smoke-electron.mjs --app dist/win-unpacked/daW3.exe --label windows-x64 ;;
+            mac)
+              node scripts/smoke-electron.mjs --app dist/mac-arm64/daW3.app/Contents/MacOS/daW3 --label mac-arm64
+              # the Intel build too, when Rosetta is there to run it
+              if arch -x86_64 /usr/bin/true 2>/dev/null; then
+                node scripts/smoke-electron.mjs --app dist/mac/daW3.app/Contents/MacOS/daW3 --label mac-x64 --port 9334
+              else echo "Rosetta not available: Intel app not launched (it was code-sign verified above)"; fi ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-${{ matrix.platform }}
+          path: dist/smoke/
+          if-no-files-found: warn
+          retention-days: 30
+
+      # ---------------------------------------------------------------- installers
+      - uses: actions/upload-artifact@v4
+        with:
+          name: daW3-${{ matrix.platform }}
+          path: |
+            dist/*.dmg
+            dist/*-mac.zip
+            dist/*.exe
+            dist/*-win-*.zip
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 30

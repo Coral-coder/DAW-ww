@@ -1,4 +1,4 @@
-// Mac app (Electron) integration — a no-op in the browser. The desktop shell's preload exposes
+// Desktop app (Electron: macOS, Windows, Linux) integration — a no-op in the browser. The desktop shell's preload exposes
 // window.daw3Native = { platform, openFiles, saveFile, readFile, revealInFinder, onCommand }; native
 // menu items and Finder events (open-file, dock drops) arrive here as commands.
 import { isTyping } from './keyboard.js';
@@ -40,6 +40,7 @@ export function installNative(app) {
     'toggle-browser': () => app.ui.set({ browserOpen: !app.ui.get('browserOpen') }),
     'toggle-assistant': () => app.ui.set({ assistantOpen: !app.ui.get('assistantOpen') }),
     help: () => actions.showHelp(),
+    about: () => actions.showAbout(),
     'audio-prefs': () => import('./audio-prefs.js').then((m) => m.openAudioPrefs(app)),
   };
   nat.onCommand((cmd, payload) => {

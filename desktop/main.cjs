@@ -1,7 +1,8 @@
-// daW³ for macOS — Electron main process. Serves the unchanged web app from app://daw3/ (a privileged
+// daW³ desktop (macOS, Windows, Linux) — Electron main process. Serves the unchanged web app from app://daw3/ (a privileged
 // standard scheme so ES modules, fetch() and workers work from local files), adds native menus,
-// Finder file associations (.daW3), drag & drop / open-file of audio and folders, native open / save
-// dialogs and microphone permission. Run: npm run mac:dev · build: npm run mac:build (README appendix).
+// file associations (.daW3: Finder / Windows Explorer via the NSIS installer / Linux .desktop + MIME type),
+// drag & drop / open-file of audio and folders, native open / save dialogs and microphone permission.
+// Run: npm run desktop:dev · build: npm run mac:build | win:build | linux:build (README appendix).
 'use strict';
 const { app, BrowserWindow, Menu, dialog, ipcMain, protocol, shell, session, systemPreferences, utilityProcess, MessageChannelMain } = require('electron');
 const path = require('node:path');
@@ -14,6 +15,13 @@ const ROOT = path.resolve(__dirname, '..');
 const APP_ORIGIN = 'app://daw3';
 const isMac = process.platform === 'darwin';
 const isDev = !app.isPackaged;
+
+/** "1.0.0" + the commit CI stamped into src/build-info.js ('dev' in a checkout). */
+function buildInfo() {
+  let sha = 'dev';
+  try { sha = (/BUILD_SHA\s*=\s*'([^']*)'/.exec(fs.readFileSync(path.join(ROOT, 'src', 'build-info.js'), 'utf8')) || [])[1] || 'dev'; } catch { /* */ }
+  return { version: app.getVersion(), sha };
+}
 
 // SharedArrayBuffer for the native audio bridge (also unlocked by the COOP/COEP headers below).
 app.commandLine.appendSwitch('enable-features', 'SharedArrayBuffer');
@@ -186,6 +194,7 @@ else {
     if (app.isReady() && win) openPaths([p]); else queuedPaths.push(p);
   });
   app.setName('daW³');
+  if (process.platform === 'win32') app.setAppUserModelId('com.coralcoder.daw3'); // taskbar grouping + notifications
   app.whenReady().then(() => {
     // The app name ends up in the User-Agent request header, and HTTP headers must be Latin-1: with "daW³" in it
     // every app:// request failed inside protocol.handle (blank window). Menus keep "daW³"; the header says "daW3".
@@ -199,7 +208,8 @@ else {
     Menu.setApplicationMenu(Menu.buildFromTemplate(lib.buildMenuTemplate({
       isMac, appName: 'daW³', send, openProject: openProjectDialog, importMusic: importMusicDialog, openExternal: (u) => shell.openExternal(u), isDev,
     })));
-    if (isMac) app.setAboutPanelOptions({ applicationName: 'daW³', copyright: 'AGPL-3.0-or-later', website: 'https://github.com/Coral-coder/daw3' });
+    const bi = buildInfo();
+    app.setAboutPanelOptions({ applicationName: 'daW³', applicationVersion: bi.version, version: bi.sha, copyright: 'AGPL-3.0-or-later', website: 'https://github.com/Coral-coder/daw3', iconPath: path.join(ROOT, 'build', 'icon.png') });
     createWindow();
     const argvFiles = process.argv.slice(isDev ? 2 : 1).filter((a) => !a.startsWith('-') && fs.existsSync(a) && path.resolve(a) !== ROOT);
     const initial = [...queuedPaths.splice(0), ...argvFiles];

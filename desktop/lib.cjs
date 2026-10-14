@@ -129,6 +129,7 @@ function buildMenuTemplate({ isMac = process.platform === 'darwin', appName = 'd
   template.push({ role: 'windowMenu' });
   template.push({ role: 'help', submenu: [
     { label: `${appName} Help`, click: cmd('help') },
+    ...(isMac ? [] : [{ label: `About ${appName}`, click: cmd('about') }]), // macOS: the app menu's About panel
     { label: 'Source code (AGPL)', click: () => openExternal && openExternal('https://github.com/Coral-coder/daw3') },
   ] });
   return template;

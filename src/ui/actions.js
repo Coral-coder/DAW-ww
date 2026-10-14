@@ -23,6 +23,7 @@ import { importStrudelSplit, splitCodeByLabels, summaryText } from '../code/impo
 import { splitTopLevel as splitStrudelTopLevel } from '../code/strudel.js';
 import { saveLocal, listLocal, loadLocal, deleteLocal, createAutosaver } from '../io/autosave.js';
 import { codeToPatterns, patternsToCode } from '../code/convert.js';
+import { versionLabel } from '../version.js';
 
 /** Where daW³'s complete source code lives (offered in the app — AGPL-3.0 §13). */
 export const SOURCE_URL = 'https://github.com/Coral-coder/daw3';
@@ -972,6 +973,8 @@ export function createActions(app) {
       { label: `Theme: ${ui.get('theme') === 'dark' ? 'switch to light' : 'switch to dark'}`, icon: 'sun', onClick: () => ui.set({ theme: ui.get('theme') === 'dark' ? 'light' : 'dark' }) },
       { label: 'Help & shortcuts', icon: 'help', shortcut: '?', onClick: () => showHelp() },
       { label: 'About / credits & source code', icon: 'code', onClick: () => showAbout() },
+      '-',
+      { label: versionLabel(), icon: 'sparkles', onClick: () => showAbout() },
     ];
   }
 
@@ -1283,9 +1286,17 @@ export function createActions(app) {
   }
 
   // AGPL §13: everyone using daW³ over the network is offered its complete source code
+  /** " · desktop app for macOS / Windows / Linux" when running in the desktop shell. */
+  function nativeLabel() {
+    const plat = typeof window !== 'undefined' && window.daw3Native?.platform;
+    if (!plat) return ' · web app';
+    return ` · desktop app (${{ darwin: 'macOS', win32: 'Windows', linux: 'Linux' }[plat] || plat})`;
+  }
+
   function showAbout() {
     const link = (href, text) => h('a', { href, target: '_blank', rel: 'noopener' }, text || href);
     const body = h('div.about',
+      h('p.about-version', h('b', versionLabel()), nativeLabel()),
       h('p', h('b', 'daW³'), ' — a browser DAW. Free software under the ',
         link('https://www.gnu.org/licenses/agpl-3.0.html', 'GNU Affero General Public License v3.0 or later'), '.'),
       h('p', h('b', 'Source code: '), link(SOURCE_URL), ' — you may use, study, change and share it under the same license.'),

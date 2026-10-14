@@ -99,7 +99,7 @@ test('desktop: cross-origin isolation headers (SharedArrayBuffer for the audio b
   }
   assert.deepEqual(sent, ['audio-prefs', 'audio-prefs']);
   const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
-  assert.deepEqual(pkg.build.extraResources[0].filter, ['daw3_audio.node', 'daw3-plughost', 'daw3-link']);
+  assert.deepEqual(pkg.build.extraResources[0].filter, ['daw3_audio.node', 'daw3-plughost', 'daw3-link', 'daw3-plughost.exe', 'daw3-link.exe']);
   assert.ok(pkg.build.files.includes('!desktop/native/**'), 'native sources stay out of the app bundle');
   assert.ok(pkg.build.asarUnpack.includes('src/native/**'));
 });

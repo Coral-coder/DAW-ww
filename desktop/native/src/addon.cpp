@@ -3,6 +3,11 @@
 //   host*:  the app side of the plugin host's shared-memory block protocol
 // Plain C N-API (node_api.h, ABI-stable), so the same binary loads in Node and in Electron.
 #include <node_api.h>
+#ifdef _WIN32
+#include <process.h>
+#define getpid _getpid
+#include "napi_dynamic.h"
+#endif
 
 #include <algorithm>
 #include <chrono>

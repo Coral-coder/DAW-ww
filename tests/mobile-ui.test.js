@@ -20,7 +20,7 @@ test('pocket mode: URL > remembered choice > automatic small / touch screens', (
   assert.equal(detectPocket({ width: 1440, stored: 'pocket' }), true);
   assert.equal(detectPocket({ width: 1440, stored: 'pocket', search: '?mobile=0' }), false);
   const env = readEnv({ innerWidth: 400, location: { search: '?x' }, localStorage: { getItem: () => { throw new Error('blocked'); } }, matchMedia: () => ({ matches: true }) });
-  assert.deepEqual(env, { search: '?x', stored: null, width: 400, coarse: true });
+  assert.deepEqual(env, { search: '?x', stored: null, width: 400, coarse: true, path: '' });
 });
 
 test('pocket router: hash routes, tabs, neighbours, swipe decisions', () => {

@@ -6,6 +6,7 @@ import { h, icon } from '../ui/dom.js';
 import { beatsPerBar } from '../core/model.js';
 import { PAGES, SUBPAGES, parseRoute, routeHash, tabOf, neighbour, swipeDecision, isSwipeBlocked } from './router.js';
 import { switchLayout } from './mode.js';
+import { versionLabel } from '../version.js';
 import { actionSheet, haptic, closeTopSheet, onLongPress } from './touch.js';
 import { showOnboarding } from './onboarding.js';
 import { openParamPopup, valueTarget } from './controls.js';
@@ -125,6 +126,7 @@ export async function createPocketApp(rootEl) {
       { label: 'Show the tips again', icon: 'bulb', onClick: () => showOnboarding({ force: true }) },
       { label: 'Help', icon: 'help', onClick: () => actions.showHelp() },
       { label: 'About / source code', icon: 'code', onClick: () => actions.showAbout() },
+      { label: versionLabel(), icon: 'sparkles', onClick: () => actions.showAbout() },
     ]);
   }
 

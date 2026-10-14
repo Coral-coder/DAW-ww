@@ -1,4 +1,4 @@
-// Preload (sandboxed, contextIsolation on): the only bridge between daW³'s web code and macOS.
+// Preload (sandboxed, contextIsolation on): the only bridge between daW³'s web code and the desktop OS.
 // The web app feature-detects window.daw3Native and works unchanged without it (browser).
 'use strict';
 const { contextBridge, ipcRenderer, webUtils } = require('electron');

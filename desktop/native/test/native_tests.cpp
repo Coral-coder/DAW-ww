@@ -18,7 +18,14 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#ifdef _WIN32
+#include <windows.h>
+#include <process.h>
+static int setenv(const char* k, const char* v, int) { return _putenv_s(k, v); }
+static int unsetenv(const char* k) { return _putenv_s(k, ""); }
+#else
 #include <unistd.h>
+#endif
 
 // .vstpreset helpers (header-only, shared with the VST3 host)
 #include "../src/host/vst3_common.h"
@@ -502,10 +509,20 @@ static void testSampleRateChange(const std::string& clapPath) {
 }
 
 static std::string tempDir(const char* tag) {
+#ifdef _WIN32
+  static int counter = 0;
+  char base[MAX_PATH + 1];
+  GetTempPathA(sizeof base, base);
+  std::string d = std::string(base) + "daw3-" + tag + "-" + std::to_string(_getpid()) + "-" + std::to_string(GetTickCount64()) + "-" + std::to_string(++counter);
+  for (auto& c : d) if (c == '\\') c = '/';
+  CreateDirectoryA(d.c_str(), nullptr);
+  return d;
+#else
   char tmpl[256];
   snprintf(tmpl, sizeof tmpl, "/tmp/daw3-%s-XXXXXX", tag);
   const char* d = mkdtemp(tmpl);
   return d ? d : "/tmp";
+#endif
 }
 
 /** CLAP preset discovery (factory presets of the plugin + files) and preset-load. */
@@ -595,8 +612,23 @@ static void testVst3Presets(const std::string& vst3Path) {
 
 /** daw3-link: the Ableton Link process answers the bridge protocol (tempo / quantum / play) on stdout. */
 static void testLinkProcess(const std::string& bin) {
+#ifdef _WIN32
+  const std::string in = tempDir("link") + "/in.txt";
+  {
+    FILE* w = fopen(in.c_str(), "wb");
+    fputs("{\"type\":\"tempo\",\"bpm\":133.5}\n{\"type\":\"quantum\",\"value\":3}\njunk\n{\"type\":\"play\"}\n", w);
+    fclose(w);
+  }
+  std::string winBin = bin, winIn = in;
+  for (auto& c : winBin) if (c == '/') c = '\\';
+  for (auto& c : winIn) if (c == '/') c = '\\';
+  const std::string cmd = "\"\"" + winBin + "\" < \"" + winIn + "\"\"";  // cmd /c strips the outer quotes
+  FILE* f = _popen(cmd.c_str(), "rb");
+#define pclose _pclose
+#else
   const std::string cmd = "printf '%s\\n' '{\"type\":\"tempo\",\"bpm\":133.5}' '{\"type\":\"quantum\",\"value\":3}' 'junk' '{\"type\":\"play\"}' | \"" + bin + "\"";
   FILE* f = popen(cmd.c_str(), "r");
+#endif
   CHECK(f != nullptr);
   if (!f) return;
   std::string out;

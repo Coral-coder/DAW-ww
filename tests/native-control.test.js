@@ -222,7 +222,7 @@ test('Link server: the tools/link-bridge protocol over a local WebSocket (simula
   });
 });
 
-const linkBin = path.join(root, 'desktop', 'native', 'build', 'daw3-link');
+const linkBin = path.join(root, 'desktop', 'native', 'build', process.platform === 'win32' ? 'daw3-link.exe' : 'daw3-link');
 test('Link server + daw3-link: Ableton Link built natively, same protocol', { skip: !wsOk ? 'no WebSocket in this Node' : !existsSync(linkBin) ? 'daw3-link not built (sh desktop/native/build.sh)' : false }, async () => {
   const { processLink } = require('../desktop/link-server.cjs');
   let srv = null;

@@ -1,5 +1,4 @@
 // CLAP hosting (MIT-licensed headers from free-audio/clap 1.2.7).
-#include <dlfcn.h>
 
 #include <algorithm>
 #include <atomic>
@@ -9,6 +8,7 @@
 #include <tuple>
 
 #include "clap/clap.h"
+#include "platform.h"
 #include "plugin.h"
 
 namespace daw3 {
@@ -29,14 +29,14 @@ const ClapModule* loadModule(const std::string& path, std::string& err) {
   if (it != gModules.end()) return &it->second;
   const std::string bin = bundleBinary(path, ".clap");
   if (bin.empty()) { err = "No binary inside " + path; return nullptr; }
-  void* h = dlopen(bin.c_str(), RTLD_NOW | RTLD_LOCAL);
-  if (!h) { const char* e = dlerror(); err = e ? e : "dlopen failed"; return nullptr; }
-  auto* entry = (const clap_plugin_entry_t*)dlsym(h, "clap_entry");
-  if (!entry) { err = "Not a CLAP plugin (no clap_entry)"; dlclose(h); return nullptr; }
-  if (!clap_version_is_compatible(entry->clap_version)) { err = "Incompatible CLAP version"; dlclose(h); return nullptr; }
-  if (!entry->init(path.c_str())) { err = "clap_entry.init failed"; dlclose(h); return nullptr; }
+  void* h = dlOpen(bin, err);
+  if (!h) return nullptr;
+  auto* entry = (const clap_plugin_entry_t*)dlSym(h, "clap_entry");
+  if (!entry) { err = "Not a CLAP plugin (no clap_entry)"; dlClose(h); return nullptr; }
+  if (!clap_version_is_compatible(entry->clap_version)) { err = "Incompatible CLAP version"; dlClose(h); return nullptr; }
+  if (!entry->init(path.c_str())) { err = "clap_entry.init failed"; dlClose(h); return nullptr; }
   auto* f = (const clap_plugin_factory_t*)entry->get_factory(CLAP_PLUGIN_FACTORY_ID);
-  if (!f) { err = "CLAP module has no plugin factory"; entry->deinit(); dlclose(h); return nullptr; }
+  if (!f) { err = "CLAP module has no plugin factory"; entry->deinit(); dlClose(h); return nullptr; }
   ClapModule m{h, entry, f};
   return &(gModules[path] = m);
 }
@@ -621,19 +621,13 @@ class ClapFormat : public PluginFormat {
     std::vector<std::string> out;
 #ifdef __APPLE__
     out = {homeDir() + "/Library/Audio/Plug-Ins/CLAP", "/Library/Audio/Plug-Ins/CLAP"};
+#elif defined(_WIN32)
+    // the CLAP spec's Windows locations: %LOCALAPPDATA%\Programs\Common\CLAP, %COMMONPROGRAMFILES%\CLAP
+    out = {winFolder(WinFolder::LocalAppData) + "/Programs/Common/CLAP", winFolder(WinFolder::CommonProgramFiles) + "/CLAP"};
 #else
-    out = {homeDir() + "/.clap", "/usr/lib/clap"};
+    out = {homeDir() + "/.clap", "/usr/lib/clap", "/usr/local/lib/clap"};
 #endif
-    if (const char* env = getenv("CLAP_PATH")) {
-      std::string s = env;
-      size_t a = 0;
-      while (a <= s.size()) {
-        size_t b = s.find(':', a);
-        if (b == std::string::npos) b = s.size();
-        if (b > a) out.push_back(s.substr(a, b - a));
-        a = b + 1;
-      }
-    }
+    for (auto& p : splitPathList(envVar("CLAP_PATH"))) out.push_back(p);
     return out;
   }
 

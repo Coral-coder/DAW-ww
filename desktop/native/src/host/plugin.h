@@ -140,6 +140,11 @@ std::unique_ptr<PluginFormat> makeAuFormat();  // null on non-Apple platforms
 
 // helpers (plugin.cpp)
 std::string homeDir();
+#ifdef _WIN32
+enum class WinFolder { CommonProgramFiles, LocalAppData, Documents };
+/** %CommonProgramFiles% (C:\Program Files\Common Files), %LOCALAPPDATA%, the Documents folder — UTF-8. */
+std::string winFolder(WinFolder f);
+#endif
 bool isDirectory(const std::string& p);
 std::vector<std::string> listDir(const std::string& p);
 std::string baseName(const std::string& p);

@@ -244,6 +244,9 @@ SMTG_EXPORT_SYMBOL IPluginFactory* PLUGIN_API GetPluginFactory() { return &gFact
 #ifdef __APPLE__
 SMTG_EXPORT_SYMBOL bool bundleEntry(CFBundleRef) { return true; }
 SMTG_EXPORT_SYMBOL bool bundleExit() { return true; }
+#elif defined(_WIN32)
+SMTG_EXPORT_SYMBOL bool InitDll() { return true; }
+SMTG_EXPORT_SYMBOL bool ExitDll() { return true; }
 #else
 SMTG_EXPORT_SYMBOL bool ModuleEntry(void*) { return true; }
 SMTG_EXPORT_SYMBOL bool ModuleExit() { return true; }

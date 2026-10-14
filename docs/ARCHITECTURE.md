@@ -781,7 +781,15 @@ Instrument type `'strudel'` plays a superdough *patch* (`params` = Strudel contr
   brass, saxes, fiddles, orchestral solos keep their multisamples; drums keep sampled machines. `opts.strudel: false`
   (or `soundfonts: false`) keeps the built-in instruments.
 
-## Mac app native layer (`desktop/*`, `desktop/native/*`, `src/native/*`, `src/plugins/native.js`)
+## Desktop app native layer (`desktop/*`, `desktop/native/*`, `src/native/*`, `src/plugins/native.js`)
+
+* Platforms (one `desktop/native/build.sh`): macOS — clang, universal arm64 + x86_64, CoreAudio, CLAP / VST3 / AU,
+  plugin editor windows (`gui_mac.mm`); Windows — llvm-mingw (x64, arm64 cross), fully static, WASAPI, CLAP / VST3,
+  shared memory = named file mapping + named auto-reset events (`shm.h`), the addon resolves its N-API functions
+  from the host process at first use (`napi_dynamic.h`: node.exe in tests, daW3.exe in the app); Linux — ALSA /
+  PulseAudio / JACK (loaded at runtime by miniaudio), CLAP / VST3. OS details of the plugin host (dlopen /
+  LoadLibrary, UTF-8 paths, plugin + preset folders) live in `src/host/platform.h` + `plugin.cpp`. Plugin editor
+  windows exist on macOS only (`gui_stub.cpp` elsewhere: parameters through daW³'s own controls).
 
 * Processes: renderer (Web Audio) → pump worker → audio server (utility process: `daw3_audio.node` device I/O +
   plugin-host client) ↔ `daw3-plughost` (CLAP / VST3 / AU, shared-memory blocks v2 + JSON-line control) and, on

@@ -131,7 +131,7 @@ class NativeServer {
 
   // ------------------------------------------------------------------------------------- plugins
   folders() {
-    const f = this.m.db.defaultFolders(this.o.home || os.homedir(), this.o.platform || process.platform);
+    const f = this.m.db.defaultFolders(this.o.home || os.homedir(), this.o.platform || process.platform, process.env);
     if (this.o.extraFolders) for (const [k, v] of Object.entries(this.o.extraFolders)) f[k] = [...(f[k] || []), ...v];
     if (this.o.platform && this.o.platform !== 'darwin') f.au = [];
     return f;
@@ -158,7 +158,7 @@ class NativeServer {
     if (this.host?.alive) return this.host;
     if (this._hostStarting) return this._hostStarting;
     const h = new PlugHost({ binary: this.o.binary, addon: this.addon, tmpDir: this.tmpDir, sampleRate: this.config.sampleRate, maxChannels: this.m.protocol.HOST_MAX_CHANNELS,
-      env: this.o.home ? { ...process.env, HOME: this.o.home } : undefined }); // the host finds preset folders below HOME
+      env: this.o.home ? { ...process.env, HOME: this.o.home, DAW3_HOME: this.o.home } : undefined }); // the host finds preset folders below HOME (Windows: DAW3_HOME)
     h.on('event', (e) => this.post({ event: 'plugin', ...e }));
     h.on('timeout', (inst) => this.post({ event: 'plugin-timeout', inst }));
     h.on('exit', (code, signal) => {
@@ -217,11 +217,14 @@ class NativeServer {
     return file;
   }
 
-  /** The user preset folder of a plugin: ~/Library/Audio/Presets/<vendor>/<name> (Linux: ~/.vst3/presets/…). */
+  /** The user preset folder of a plugin: ~/Library/Audio/Presets/<vendor>/<name> (Linux: ~/.vst3/presets/…,
+   *  Windows: Documents\VST3 Presets\…, Steinberg's per-user location — the plugin host lists the same roots). */
   presetFolder(desc) {
     const seg = (x) => String(x || '').replace(/[/:\\]/g, '_');
     const home = this.o.home || os.homedir();
-    const root = (this.o.platform || process.platform) === 'darwin' ? path.join(home, 'Library', 'Audio', 'Presets') : path.join(home, '.vst3', 'presets');
+    const plat = this.o.platform || process.platform;
+    const root = plat === 'darwin' ? path.join(home, 'Library', 'Audio', 'Presets')
+      : plat === 'win32' ? path.join(home, 'Documents', 'VST3 Presets') : path.join(home, '.vst3', 'presets');
     return path.join(root, seg(desc.vendor), seg(desc.name));
   }
 
@@ -298,13 +301,16 @@ class NativeServer {
   }
 }
 
+/** Executable suffix of the native helpers on this OS ('.exe' on Windows). */
+const EXE = process.platform === 'win32' ? '.exe' : '';
+
 /** Where the native binaries live: packaged app -> Resources/native, dev -> desktop/native/build. */
 function nativePaths({ resourcesPath, isPackaged } = {}) {
   const dir = isPackaged && resourcesPath ? path.join(resourcesPath, 'native') : path.join(__dirname, 'native', 'build');
   const addon = path.join(dir, 'daw3_audio.node');
-  const binary = path.join(dir, 'daw3-plughost');
-  const link = path.join(dir, 'daw3-link');
+  const binary = path.join(dir, `daw3-plughost${EXE}`);
+  const link = path.join(dir, `daw3-link${EXE}`);
   return { dir, addon, binary, link: fs.existsSync(link) ? link : null, available: fs.existsSync(addon) && fs.existsSync(binary) };
 }
 
-module.exports = { NativeServer, nativePaths };
+module.exports = { NativeServer, nativePaths, EXE };

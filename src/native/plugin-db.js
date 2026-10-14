@@ -7,7 +7,7 @@ export const FORMATS = ['vst3', 'au', 'clap'];
 export const FORMAT_LABELS = { vst3: 'VST3', au: 'Audio Unit', clap: 'CLAP' };
 
 /** Default plugin folders per format (macOS conventions). */
-export function defaultFolders(home, platform = 'darwin') {
+export function defaultFolders(home, platform = 'darwin', env = {}) {
   if (platform === 'darwin') {
     return {
       vst3: [`${home}/Library/Audio/Plug-Ins/VST3`, '/Library/Audio/Plug-Ins/VST3'],
@@ -15,7 +15,14 @@ export function defaultFolders(home, platform = 'darwin') {
       au: ['all'], // AudioComponent registry, not folders
     };
   }
-  return { vst3: [`${home}/.vst3`, '/usr/lib/vst3', '/usr/local/lib/vst3'], clap: [`${home}/.clap`, '/usr/lib/clap'], au: [] };
+  if (platform === 'win32') {
+    // Steinberg / CLAP-spec Windows locations: per user under %LOCALAPPDATA%\Programs\Common, system-wide under
+    // %CommonProgramFiles% (C:\Program Files\Common Files). The per-user folder follows `home` (tests pass a fake one).
+    const common = String(env.CommonProgramFiles || env.COMMONPROGRAMFILES || 'C:\\Program Files\\Common Files').replace(/[\\/]+$/, '');
+    const local = `${home}\\AppData\\Local\\Programs\\Common`;
+    return { vst3: [`${local}\\VST3`, `${common}\\VST3`], clap: [`${local}\\CLAP`, `${common}\\CLAP`], au: [] };
+  }
+  return { vst3: [`${home}/.vst3`, '/usr/lib/vst3', '/usr/local/lib/vst3'], clap: [`${home}/.clap`, '/usr/lib/clap', '/usr/local/lib/clap'], au: [] };
 }
 
 export const emptyDb = () => ({ version: DB_VERSION, scannedAt: 0, plugins: [], bundles: {}, failed: [] });

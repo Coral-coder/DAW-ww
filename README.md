@@ -103,8 +103,19 @@ The Machines will not like it. That is a good sign.
 |:--|:--|
 | **Browser** | [coral-coder.github.io/daw3](https://coral-coder.github.io/daw3/). Add it to your home screen to work offline. |
 | **Pocket (phones)** | [coral-coder.github.io/daw3/pocket](https://coral-coder.github.io/daw3/pocket/). In Safari: Share → Add to Home Screen. |
-| **Mac app** | branch `mac-app`. GitHub Actions builds an unsigned `.dmg` (**Actions → Mac app → daW3-mac**). It adds your audio interface and hosts your VST3 / AU / CLAP plugins. |
+| **Desktop app** | macOS, Windows and Linux — [download 1.0.0](https://github.com/Coral-coder/daw3/releases/tag/v1.0.0) (links below). It adds your audio interface and hosts your VST3 / CLAP plugins (and Audio Units on macOS). |
 | **iOS app** | branch `ios`. Build it yourself in Xcode; see `ios/README.md`. It adds CoreMIDI, background audio and the Files app. |
+
+**Version 1.0.0** — what's in it: [CHANGELOG.md](CHANGELOG.md). The version and build commit are shown in the main menu and in *About*.
+
+| download 1.0.0 | file | first launch |
+|:--|:--|:--|
+| **macOS** Apple Silicon | [daW3-1.0.0-arm64.dmg](https://github.com/Coral-coder/daw3/releases/download/v1.0.0/daW3-1.0.0-arm64.dmg) · [.zip](https://github.com/Coral-coder/daw3/releases/download/v1.0.0/daW3-1.0.0-arm64-mac.zip) | ad-hoc signed, not notarized: drag to Applications, then `xattr -dr com.apple.quarantine /Applications/daW3.app` in Terminal (or System Settings → Privacy & Security → *Open Anyway*). Without it macOS says the app "is damaged". |
+| **macOS** Intel | [daW3-1.0.0-x64.dmg](https://github.com/Coral-coder/daw3/releases/download/v1.0.0/daW3-1.0.0-x64.dmg) · [.zip](https://github.com/Coral-coder/daw3/releases/download/v1.0.0/daW3-1.0.0-mac.zip) | as above |
+| **Windows** x64 | [daW3-Setup-1.0.0-x64.exe](https://github.com/Coral-coder/daw3/releases/download/v1.0.0/daW3-Setup-1.0.0-x64.exe) · [portable .zip](https://github.com/Coral-coder/daw3/releases/download/v1.0.0/daW3-1.0.0-win-x64.zip) | not code-signed: SmartScreen shows "Windows protected your PC" → *More info* → *Run anyway*. The installer is per-user (no admin) and registers `.daW3` files. |
+| **Windows** ARM64 | [daW3-Setup-1.0.0-arm64.exe](https://github.com/Coral-coder/daw3/releases/download/v1.0.0/daW3-Setup-1.0.0-arm64.exe) · [portable .zip](https://github.com/Coral-coder/daw3/releases/download/v1.0.0/daW3-1.0.0-win-arm64.zip) | as above |
+| **Linux** x64 | [AppImage](https://github.com/Coral-coder/daw3/releases/download/v1.0.0/daW3-1.0.0-linux-x86_64.AppImage) · [.deb](https://github.com/Coral-coder/daw3/releases/download/v1.0.0/daw3_1.0.0_amd64.deb) · [.tar.gz](https://github.com/Coral-coder/daw3/releases/download/v1.0.0/daW3-1.0.0-linux-x64.tar.gz) | AppImage: `chmod +x daW3-1.0.0-linux-x86_64.AppImage` and run it (needs FUSE 2 — `sudo apt install libfuse2t64` — or `--appimage-extract-and-run`). Debian / Ubuntu: `sudo apt install ./daw3_1.0.0_amd64.deb` (adds the menu entry and the `.daW3` MIME type). Not signed. |
+| **Web / Pocket** | [coral-coder.github.io/daw3](https://coral-coder.github.io/daw3/) · [/pocket](https://coral-coder.github.io/daw3/pocket/) | nothing to install |
 
 **What's inside:**
 - **Writing:** arrangement timeline, scenes / clip launcher, step rack, piano roll, mixer, plugboard routing.
@@ -148,23 +159,24 @@ Every shortcut can be rebound under Preferences → Shortcuts.
 
 *On the ninth room:* `9` opens the **Decks**. Feed it recordings (mp3, wav, flac, m4a, ogg, aiff — drop whole folders) and it hears their pulse, their key and its Camelot number, their loudness and where their phrases turn. Two decks, a crossfader, loops of 1–16 bars, hot cues; tracks that mix harmonically with the one playing glow. Loop a few bars and cut them — onto drum pads, a chromatic sampler, the timeline, or the Setlist — stretched to your tempo and, if you ask, bent toward your key.
 
-*To carry it onto a Mac* (branch `mac-app`, an Electron shell around the very same files):
+*To carry it onto a desktop* (`desktop/`: an Electron shell around the very same files — macOS, Windows, Linux):
 
 | | |
 |:--|:--|
-| run it | `npm install` then `npm run mac:dev` |
-| build it | `npm run mac:build` → `dist/daW3-<version>-arm64.dmg` / `-x64.dmg` (+ `.zip`) |
-| or fetch it | GitHub → Actions → *Mac app* → latest run → artifact **daW3-mac** |
+| run it | `npm install` then `npm run desktop:dev` |
+| build it | macOS: `npm run mac:build` → `dist/daW3-<version>-arm64.dmg` / `-x64.dmg` (+ `.zip`) · Windows (Git Bash + [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) on `PATH`, `CXX=x86_64-w64-mingw32-clang++ CC=x86_64-w64-mingw32-clang`): `npm run win:build` → `dist/daW3-Setup-<version>-x64.exe` + `-win-x64.zip` · Linux: `npm run linux:build` → AppImage, `.deb`, `.tar.gz` |
+| or fetch it | the [releases](https://github.com/Coral-coder/daw3/releases), or GitHub → Actions → *Desktop* → latest run → artifacts **daW3-mac / daW3-windows / daW3-linux** (every run also smoke-tests each packaged app: screenshots in **smoke-…**) |
+| releasing | push a tag `vX.Y.Z` matching `package.json`: *Release* builds all three, smoke-tests them and publishes a GitHub Release with the installers and that version's CHANGELOG section |
 | first launch | the build is ad-hoc signed, not notarized. Drag it to Applications, then in Terminal: `xattr -dr com.apple.quarantine /Applications/daW3.app` (or System Settings → Privacy & Security → *Open Anyway*). Without that, macOS says the downloaded app "is damaged" |
 | to sign it properly | set `CSC_LINK` / `CSC_KEY_PASSWORD` (Developer ID cert) and `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`, change `build.mac.identity` from `"-"` to your identity, add `"hardenedRuntime": true` and `"notarize": true` |
-| the icon | `npm run mac:icon` regenerates `build/icon.png` |
-| your audio interface | **daW³ → Audio & Plugin Settings… (⌘,)**: switch on the *native audio engine*, pick the output / input device, output pair, input channels, sample rate and buffer size (32–1024); *Measure* times the round trip with a loopback ping (recordings are shifted by it) |
-| your plugins | VST3, Audio Units and CLAP from the standard `~/Library/Audio/Plug-Ins` / `/Library/Audio/Plug-Ins` folders are scanned on first launch (*Scan plugins* in the plugin browser rescans) and appear there as kind **Native**. They run in a separate host process — a crashing plugin can't take daW³ down — open their own editor windows, keep their state in the `.daW3` project and expose their parameters to automation and MIDI learn |
+| the icon | `npm run mac:icon` regenerates `build/icon.png` (all three platforms use it) |
+| your audio interface | **daW³ → Audio & Plugin Settings… (⌘,)** (Windows / Linux: **File → Audio & Plugin Settings… (Ctrl+,)**): CoreAudio, WASAPI or ALSA / PulseAudio / JACK. Switch on the *native audio engine*, pick the output / input device, output pair, input channels, sample rate and buffer size (32–1024); *Measure* times the round trip with a loopback ping (recordings are shifted by it) |
+| your plugins | scanned on first launch from the standard folders (*Scan plugins* in the plugin browser rescans) and listed as kind **Native**. macOS: VST3, Audio Units and CLAP in `~/Library/Audio/Plug-Ins` / `/Library/Audio/Plug-Ins`. Windows: VST3 / CLAP in `%CommonProgramFiles%\VST3`, `%CommonProgramFiles%\CLAP` and `%LOCALAPPDATA%\Programs\Common\VST3` / `\CLAP`. Linux: `~/.vst3`, `/usr/lib/vst3`, `/usr/local/lib/vst3`, `~/.clap`, `/usr/lib/clap` (+ `$CLAP_PATH`). They run in a separate host process — a crashing plugin can't take daW³ down — open their own editor windows (macOS; on Windows / Linux you play them through daW³'s parameter knobs), keep their state in the `.daW3` project and expose their parameters to automation and MIDI learn |
 | export with plugins | native instruments render faster than realtime, their automation lanes applied sample-accurately (CLAP / VST3 parameter events at their sample offset, AU buffer offsets); native effects (or realtime-only plugins) make *Export* play the song through once while recording it |
 | plugin extras | every plugin knob in the device panel is a MIDI-learn target (right-click → *MIDI learn…*, or in learn mode just move the control in the plugin's own window), with LED / motor-fader feedback; **Presets** lists factory presets, `.vstpreset` / `.aupreset` files and CLAP preset-discovery presets (*Save preset…* for VST3 / AU); effects with a sidechain input take a key from the *Sidechain* track picker; multi-out instruments split their extra outputs into mixer channels (*Multi-out*, like drum pads) |
 | sample rate | change it in Audio Settings (or the status bar) while daW³ runs: the device stream is renegotiated, the audio engine is rebuilt at the new rate and plugins are re-created there with their state — no reload |
 | Ableton Link | built in: *Preferences → Sync → Ableton Link → Connect* (the `daw3-link` process, Ableton's Link SDK — GPL-2.0-or-later, which AGPL-3.0-or-later code may combine with; it runs as its own process behind the same local WebSocket protocol as `tools/link-bridge`) |
-| the native layer | `npm run native:build` (or `native:test`) compiles `desktop/native` (miniaudio, CLAP, VST3 pluginterfaces — MIT / public domain; Ableton Link + asio — GPL-2.0-or-later / BSL-1.0; all fetched pinned at build time) into the N-API addon, the plugin host, the Link process and test plugins; see `desktop/native/build.sh` |
+| the native layer | `npm run native:build` (or `native:test`) compiles `desktop/native` (clang on macOS / Linux, llvm-mingw on Windows) (miniaudio, CLAP, VST3 pluginterfaces — MIT / public domain; Ableton Link + asio — GPL-2.0-or-later / BSL-1.0; all fetched pinned at build time) into the N-API addon, the plugin host, the Link process and test plugins; see `desktop/native/build.sh` |
 
 *The browser needs none of this:* `npm start` still works, and `npm test` never touches Electron.
 
