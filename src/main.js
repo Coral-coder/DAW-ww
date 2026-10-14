@@ -1,6 +1,7 @@
 // daW³ bootstrap.
 import { createApp } from './ui/app.js';
 import { installPWA } from './pwa.js';
+import { detectPocket, readEnv } from './mobile/mode.js';
 
 // Carry UI settings saved under the app's earlier name over to the current "daw3-" keys.
 const SETTING_KEYS = ['ui', 'arrange', 'rack', 'piano', 'mixer', 'user-presets', 'countin', 'code-viz-window', 'code-viz-h',
@@ -19,7 +20,12 @@ window.addEventListener('unhandledrejection', (e) => console.error('[daw3] unhan
 
 installPWA();
 
-createApp(document.getElementById('app')).catch((e) => {
+// Phones / small touch screens get the Pocket layout (src/mobile); ?mobile=1|0 or Menu ▸ layout overrides.
+const pocket = detectPocket(readEnv(window));
+const start = pocket
+  ? import('./mobile/shell.js').then((m) => m.createPocketApp(document.getElementById('app')))
+  : createApp(document.getElementById('app'));
+start.catch((e) => {
   console.error(e);
   document.getElementById('app').textContent = 'Failed to start daW³: ' + e.message;
 });

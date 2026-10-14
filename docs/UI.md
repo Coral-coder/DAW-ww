@@ -90,3 +90,29 @@ export function createXView(app) { return { el, show?(), hide?() } }
 to skip the welcome dialog). Chromium for automated checks: Playwright is pre-configured
 (`PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`); install `playwright-core` in a scratch dir under /tmp/claude-0/,
 never in the repo. `window.daw3` exposes the app object for automation.
+
+## daW³ Pocket (phone layout, `src/mobile/`)
+
+Phones / small touch screens (width ≤ 820, or a coarse pointer with width ≤ 1024) start the Pocket shell instead of
+the desktop layout; `?mobile=1` / `?mobile=0` force it, Menu ▸ "Pocket layout" / Pocket menu ▸ "Desktop layout"
+switch and remember the choice (`localStorage['daw3-layout']`). Both layouts share `createCore()` (store, engine,
+actions, generators) — projects are the same `.daW3` files.
+
+| Area | JS |
+|------|----|
+| Shell: transport, swipeable pages + tab bar, hash routes (`#/notes`, `#/track/<id>`) | `src/mobile/shell.js`, pure logic `router.js`, `mode.js` |
+| Touch kit: bottom sheets (pull down to close), action sheets, long-press, hold-repeat, haptics | `src/mobile/touch.js` |
+| Control popup (big slider with vertical-distance fine mode, − / + with hold-repeat, presets, reset, typed entry, automate / lock), drag tiles, vertical faders | `src/mobile/controls.js`, pure logic `param-logic.js` |
+| Pages: Create, Tracks, Track, Notes (touch piano roll + drum step grid), Play (keys / chords / piano / pads), Mix, Setlist | `src/mobile/pages/*.js`, roll geometry `roll-core.js` |
+| Hum / whistle to notes: mic capture (AudioWorklet, ScriptProcessor fallback), live pitch, review, "Use" | `src/mobile/hum.js`, `capture-worklet.js`, pure DSP `pitch.js` (YIN, segmentation, quantize, scale snap) |
+| Take analysis off the main thread: module Worker (`hum-worker.js`) with progress; sliced main-thread fallback | `src/mobile/hum-analysis.js` (message protocol `analyze` → `progress`* → `result` / `error`) |
+| Song page (`#/arrange`): touch timeline — pinch zoom, tap = select, drag selected clip = move (snap bar / beat / off), drag edges = trim / loop longer, long-press = clip / lane menus, tap empty = add a clip of the track's pattern, markers (tap to add, drag, menu: rename / loop / extend / remove section), loop bar, ruler scrub, follow playhead, Song / Loop, extend song | `src/mobile/pages/arrange.js`, pure math `arrange-core.js` |
+| Touch automation lanes: freehand draw (RDP-thinned), tap to add, drag points, long-press to delete, ramps / LFOs / clear, lane on/off + "re-enable" for overridden lanes; docked under the Song timeline, as a sheet from "Automate this" (control popup) and on the Track page | `src/mobile/auto-lane.js`, pure `auto-core.js` |
+| Code page (`#/code`, `#/code/<trackId>`): highlighted Strudel code of the song / code tracks, Edit mode (16 px textarea), snippet bar (insert at cursor), Apply = the desktop's apply path | `src/mobile/pages/code.js`, `code-core.js`, shared `src/code/song-apply.js` |
+| Drum pad sheet (tap a pad name on the step grid / Track page): tune, decay, tone, level, pan, variation, mute — automatable `inst:pads.<pad>.<key>` | `src/mobile/pad-sheet.js`, `pad-logic.js` |
+| Song / Notes multi-select: Select mode (tap = add / remove, drag empty = lasso), long-press + drag = lasso, count chip + action bar (Song: duplicate / move to track / delete / select all in track · section · loop; Notes: transpose ▲▼ (scale steps with the lock), quantize, velocity, duplicate, delete); cross-track clip drags (pattern clips → same-kind instrument tracks, audio → audio; valid lanes lit; patterns re-homed / copied like the desktop) | `pages/arrange.js`, `pages/notes.js`, pure `arrange-core.js` (canDrop, dropLanes, moveClips, fixOwnership, clipsInBox…), `roll-core.js` (notesInBox, moveNotes, transposeNotes, quantizeNotes, setVelocity…) |
+| Mix extras: strips in track order (drag ≡ sideways = reorder tracks; landing inside a folder joins it), folder tabs (tap = collapse), group badges (linked faders / mute / solo via `applyLinkedEdit`), VCA strips, ❄ frozen marks, LUFS chip (short-term / integrated; tap = loudness sheet) | `pages/mix.js`, pure `mix-core.js` |
+| Pro features as sheets: freeze / bounce / flatten + "Recording takes" in every track menu (`app.freezeMenuItems`), takes per section (song markers) + flatten comp, tempo & meter change lists (Song ▸ More, Menu, long-press ♩), pro export (loudness presets, stems, report), version history (recovery snapshots), MIDI devices (Web MIDI; inputs play the selected track) | `src/mobile/pro.js`, pure `pro-core.js` |
+| Drag-reorder (tracks, effects — drag the ≡ grip), first-launch tips (3 cards, `localStorage['daw3-pocket-onboarded']`), undo / redo in the transport (long-press undo = history) | `src/mobile/reorder.js`, `onboarding.js`, `shell.js` |
+
+Styles: `styles/mobile.css` (loaded by the shell only; classes prefixed `pk-`). Tests: `tests/mobile-*.test.js`.

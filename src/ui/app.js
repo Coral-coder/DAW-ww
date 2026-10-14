@@ -23,7 +23,11 @@ export const VIEWS = [
   { id: 'decks', label: 'Decks', icon: 'headphones', key: '9', module: './views/decks.js', factory: 'createDecksView', help: 'Decks: import music (BPM, key / Camelot, phrases detected), mix on two decks, slice loops to pads, sampler, arrangement or the Setlist.' },
 ];
 
-export async function createApp(rootEl) {
+/**
+ * The app core shared by the desktop layout and the Pocket (phone) layout: store, UI state, audio engine,
+ * rAF-batched render subscriptions, project normalizers and the action API.
+ */
+export function createCore() {
   const store = new Store();
   const ui = new UIState();
   const engine = new AudioEngine(store);
@@ -70,6 +74,12 @@ export async function createApp(rootEl) {
 
   app.actions = createActions(app);
   import('./plugins-dialog.js').then((m) => m.installPluginUi(app)).catch((e) => console.warn('[plugins] UI', e)); // SoundFont / Faust / WAM plugins
+  return app;
+}
+
+export async function createApp(rootEl) {
+  const app = createCore();
+  const { store, ui, engine } = app;
 
   // ---- layout ----
   const header = createHeader(app);
