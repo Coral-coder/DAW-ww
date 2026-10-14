@@ -9,6 +9,7 @@ import { hasAutomation, hasControlAutomation } from '../core/automation.js';
 import { keySourcesFor } from '../core/patch.js';
 import { awaitPluginsReady, flushPlugins } from './plugin-instrument.js';
 import { prepareCodeSamples } from './code-instrument.js';
+import { limitTruePeak } from './dsp/truepeak.js';
 
 function fallbackBase64ToArrayBuffer(b64) {
   const bin = atob(b64);
@@ -67,7 +68,9 @@ function snapshot(project) {
 
 /**
  * renderOffline(storeOrProject, {startBeat=0, endBeat?, bars?, mode?, sampleRate=44100, stems=false,
- *                                tail=2, sampleCache?: Map, onError?})
+ *                                tail=2, sampleCache?: Map, onError?, truePeakCeiling?: dBTP})
+ *   truePeakCeiling: run the master through the offline true-peak limiter (dsp/truepeak.js) — e.g. -1 for streaming.
+ *   The render itself is float32 end to end (no clipping anywhere); encode with encodeWav (32-bit float keeps overs).
  *   Plugin delay compensation is exact: the render is latency-free and sample-aligned with the timeline.
  *   -> AudioBuffer, or with stems: { master: AudioBuffer, [trackId]: AudioBuffer }
  * Song mode renders the arrangement linearly (loop region ignored). Pattern mode loops the
@@ -94,9 +97,10 @@ export async function renderOffline(source, opts = {}) {
   };
   await decodeAllSamples(project, cfg.cache, cfg.sampleRate);
 
-  if (!opts.stems) return renderOnce(project, cfg);
+  const finish = (buf) => (opts.truePeakCeiling != null ? applyTruePeakLimit(buf, { ceilingDb: opts.truePeakCeiling }) : buf);
+  if (!opts.stems) return finish(await renderOnce(project, cfg));
 
-  const out = { master: await renderOnce(project, cfg) };
+  const out = { master: finish(await renderOnce(project, cfg)) };
   for (const track of project.tracks) {
     if (!isTrackAudible(project, track)) continue;
     // Tracks that key a ducker heard in this stem keep playing silently (fader at 0, no sends:
@@ -259,6 +263,16 @@ async function renderOnceWith(project, cfg) {
   }
   try { graph.dispose(); } catch { /* */ }
   return trimHead(ctx, buffer, latencyFrames, length);
+}
+
+/** True-peak limit an AudioBuffer in place (offline, look-ahead, no latency). Returns the buffer (+ .truePeak info). */
+export function applyTruePeakLimit(buffer, { ceilingDb = -1, lookahead, release } = {}) {
+  const chans = [];
+  for (let c = 0; c < buffer.numberOfChannels; c++) chans.push(buffer.getChannelData(c));
+  const res = limitTruePeak(chans, buffer.sampleRate, { ceilingDb, lookahead, release });
+  res.channels.forEach((d, c) => buffer.getChannelData(c).set(d));
+  try { buffer.truePeak = { gainReductionDb: res.gainReductionDb, truePeakDb: res.truePeakDb }; } catch { /* */ }
+  return buffer;
 }
 
 /** Max PDC latency (s) an offline render compensates exactly (extra frames rendered then trimmed). */
