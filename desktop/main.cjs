@@ -187,6 +187,11 @@ else {
   });
   app.setName('daW³');
   app.whenReady().then(() => {
+    // The app name ends up in the User-Agent request header, and HTTP headers must be Latin-1: with "daW³" in it
+    // every app:// request failed inside protocol.handle (blank window). Menus keep "daW³"; the header says "daW3".
+    const ua = app.userAgentFallback.replace(/³/g, '3').replace(/[^\x20-\x7e]/g, '');
+    app.userAgentFallback = ua;
+    session.defaultSession.setUserAgent(ua);
     registerProtocol();
     registerIpc();
     setupNative({ app, ipcMain, utilityProcess, MessageChannelMain, getWindow: () => win });

@@ -103,3 +103,11 @@ test('desktop: cross-origin isolation headers (SharedArrayBuffer for the audio b
   assert.ok(pkg.build.files.includes('!desktop/native/**'), 'native sources stay out of the app bundle');
   assert.ok(pkg.build.asarUnpack.includes('src/native/**'));
 });
+
+test('desktop: the User-Agent stays Latin-1 (app name "daW³" broke every app:// request → blank window)', () => {
+  const src = readFileSync(new URL('../desktop/main.cjs', import.meta.url), 'utf8');
+  assert.match(src, /userAgentFallback\s*=\s*ua/);
+  assert.match(src, /setUserAgent\(ua\)/);
+  const ua = 'Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML, like Gecko) daW³/1.0.0 Chrome/130 Electron/33'.replace(/³/g, '3').replace(/[^\x20-\x7e]/g, '');
+  assert.ok(/^[\x20-\x7e]+$/.test(ua) && ua.includes('daW3/1.0.0'));
+});
