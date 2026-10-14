@@ -39,19 +39,20 @@ export function shiftFor(i, from, to, h) {
  * Make the rows (direct children) of `container` drag-reorderable by their grip (`grip` selector inside a row):
  * touch the grip and drag up / down. onMove(from, to) commits the new order.
  */
-export function dragReorder(container, { grip = '.pk-grip', onMove } = {}) {
+export function dragReorder(container, { grip = '.pk-grip', onMove, axis = 'y', rows: rowsOf = null } = {}) {
+  const X = axis === 'x';
   let st = null;
   container.addEventListener('pointerdown', (e) => {
     const g = e.target.closest?.(grip);
     if (!g || !container.contains(g)) return;
-    const rows = [...container.children];
+    const rows = rowsOf ? rowsOf() : [...container.children];
     const row = rows.find((c) => c.contains(g));
     if (!row) return;
     e.preventDefault();
     e.stopPropagation();
-    const rects = rows.map((r) => { const b = r.getBoundingClientRect(); return { top: b.top, height: b.height }; });
+    const rects = rows.map((r) => { const b = r.getBoundingClientRect(); return X ? { top: b.left, height: b.width } : { top: b.top, height: b.height }; });
     const from = rows.indexOf(row);
-    st = { row, rows, rects, from, to: from, y0: e.clientY, id: e.pointerId };
+    st = { row, rows, rects, from, to: from, y0: X ? e.clientX : e.clientY, id: e.pointerId };
     row.classList.add('pk-dragging');
     container.classList.add('pk-reordering');
     try { container.setPointerCapture?.(e.pointerId); } catch { /* */ }
@@ -60,11 +61,12 @@ export function dragReorder(container, { grip = '.pk-grip', onMove } = {}) {
   container.addEventListener('pointermove', (e) => {
     if (!st || e.pointerId !== st.id) return;
     e.preventDefault();
-    const dy = e.clientY - st.y0;
+    const dy = (X ? e.clientX : e.clientY) - st.y0;
     const r = st.rects[st.from];
     st.to = dropIndex(st.rects, st.from, r.top + r.height / 2 + dy);
-    st.row.style.transform = `translateY(${dy}px)`;
-    st.rows.forEach((row, i) => { if (i !== st.from) row.style.transform = `translateY(${shiftFor(i, st.from, st.to, r.height)}px)`; });
+    const tr = X ? 'translateX' : 'translateY';
+    st.row.style.transform = `${tr}(${dy}px)`;
+    st.rows.forEach((row, i) => { if (i !== st.from) row.style.transform = `${tr}(${shiftFor(i, st.from, st.to, r.height)}px)`; });
   });
   const end = (e) => {
     if (!st || e.pointerId !== st.id) return;

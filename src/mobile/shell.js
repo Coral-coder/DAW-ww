@@ -9,6 +9,7 @@ import { switchLayout } from './mode.js';
 import { actionSheet, haptic, closeTopSheet, onLongPress } from './touch.js';
 import { showOnboarding } from './onboarding.js';
 import { openParamPopup, valueTarget } from './controls.js';
+import { installPocketPro, openExportSheet, openHistorySheet, openMidiSheet, openTempoSheet } from './pro.js';
 
 const PAGE_MODULES = {
   home: () => import('./pages/home.js').then((m) => m.createHomePage),
@@ -50,6 +51,7 @@ export async function createPocketApp(rootEl) {
   app.keyboardPiano = { enabled: false }; // actions.toggleRecord flips it (no computer-keyboard piano on phones)
   app.views = {};
   installAutomationRecorder(app);
+  const pro = installPocketPro(app); // freeze / takes in track menus, frozen-edit hint, version snapshots
   rootEl.className = 'pk';
   rootEl.replaceChildren();
 
@@ -73,6 +75,7 @@ export async function createPocketApp(rootEl) {
   undoBtn.addEventListener('click', () => { haptic(6); actions.undo(); });
   redoBtn.addEventListener('click', () => { haptic(6); actions.redo(); });
   onLongPress(undoBtn, () => undoMenu());
+  onLongPress(bpmBtn, () => openTempoSheet(app)); // long-press ♩ = tempo / meter changes
   // undo history as a sheet (long-press ↶): jump back several steps at once
   function undoMenu() {
     const steps = (store.undoStack || []).slice(-12).reverse();
@@ -111,6 +114,10 @@ export async function createPocketApp(rootEl) {
       { label: `Metronome: ${p.metronome ? 'on' : 'off'}`, icon: 'metronome', onClick: () => store.transact('Metronome', (pp) => { pp.metronome = !pp.metronome; }, { undo: false }) },
       { label: `Loop / song: ${p.mode === 'song' ? 'whole song' : 'loop patterns'}`, icon: 'loop', onClick: () => actions.setMode(p.mode === 'song' ? 'pattern' : 'song') },
       { label: `Theme: ${ui.get('theme') === 'dark' ? 'switch to light' : 'switch to dark'}`, icon: 'sun', onClick: () => ui.set({ theme: ui.get('theme') === 'dark' ? 'light' : 'dark' }) },
+      { label: 'Export audio…', icon: 'download', onClick: () => openExportSheet(app) },
+      { label: 'Version history…', icon: 'history', onClick: () => openHistorySheet(app) },
+      { label: 'Tempo & meter changes…', icon: 'metronome', onClick: () => openTempoSheet(app) },
+      { label: 'MIDI devices…', icon: 'keyboard', onClick: () => openMidiSheet(app) },
       { label: 'Song timeline', icon: 'scenes', onClick: () => go({ page: 'arrange' }) },
       { label: 'Strudel code', icon: 'code', onClick: () => go({ page: 'code' }) },
       { label: 'Desktop layout', icon: 'grid', onClick: () => switchLayout('desktop') },
@@ -257,6 +264,7 @@ export async function createPocketApp(rootEl) {
 
   // ------------------------------------------------------------------ boot
   await actions.boot({ welcome: false });
+  pro.afterBoot();
   let initial = parseRoute(location.hash);
   if (!location.hash) { try { const s = localStorage.getItem('daw3-pocket-page'); if (s) initial = parseRoute('#/' + s); } catch { /* */ } }
   if (!store.get().tracks.length && !location.hash) initial = { page: 'home' };

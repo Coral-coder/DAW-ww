@@ -1,4 +1,5 @@
 // Touch piano roll — pure geometry / editing helpers (Node-testable).
+import { uid } from '../core/util.js';
 const mod12 = (x) => ((x % 12) + 12) % 12;
 
 export const SNAPS = [
@@ -71,3 +72,81 @@ export function clampView(v, { length = 4, width = 300, height = 400 } = {}) {
   const top = Math.min(127.5, Math.max(rows + 0.5, v.top));
   return { ...v, x0, top };
 }
+
+// ------------------------------------------------------------------------------------------- multi-select (notes)
+const r5 = (x) => +(+x).toFixed(5);
+const nid = () => uid('n');
+
+/** Note ids touched by a lasso box in beats / pitches (any corner order; pitch rows are inclusive). */
+export function notesInBox(notes, b0, b1, p0, p1) {
+  const [ba, bb] = [Math.min(b0, b1), Math.max(b0, b1)], [pa, pb] = [Math.min(p0, p1), Math.max(p0, p1)];
+  return notes.filter((n) => n.pitch >= pa && n.pitch <= pb && n.start < bb && n.start + n.dur > ba).map((n) => n.id);
+}
+
+/**
+ * Move the notes of `ids` from their origins (Map id → {start, pitch}) by dBeat / dPitch, clamped as a group so every
+ * note stays inside the pattern and MIDI range. pcs (scale) → dPitch counts scale steps. Mutates the pattern.
+ */
+export function moveNotes(pat, orig, dBeat, dPitch, { pcs = null } = {}) {
+  const os = [...orig.values()];
+  if (!os.length) return;
+  const minS = Math.min(...os.map((o) => o.start)), maxE = Math.max(...os.map((o) => o.start + (o.dur || 0)));
+  const d = Math.max(-minS, Math.min(dBeat, Math.max(0, pat.length - Math.max(maxE, minS + 0.0625))));
+  for (const n of pat.notes) {
+    const o = orig.get(n.id);
+    if (!o) continue;
+    n.start = r5(o.start + d);
+    n.pitch = Math.max(0, Math.min(127, pcs ? stepPitch(o.pitch, dPitch, pcs) : o.pitch + dPitch));
+  }
+}
+export const noteOrigins = (pat, ids) => { const s = new Set(ids); return new Map(pat.notes.filter((n) => s.has(n.id)).map((n) => [n.id, { start: n.start, pitch: n.pitch, dur: n.dur }])); };
+
+/** Transpose by semitones (or by scale steps when pcs is given). */
+export function transposeNotes(pat, ids, steps, pcs = null) {
+  const s = new Set(ids);
+  for (const n of pat.notes) if (s.has(n.id)) n.pitch = Math.max(0, Math.min(127, pcs ? stepPitch(nearestInScale(n.pitch, pcs), steps, pcs) : n.pitch + steps));
+}
+
+/** Quantize starts (and lengths, when `ends`) to q beats, `strength` 0..1 of the way. */
+export function quantizeNotes(pat, ids, q, { strength = 1, ends = true } = {}) {
+  if (!(q > 0)) return;
+  const s = new Set(ids);
+  for (const n of pat.notes) {
+    if (!s.has(n.id)) continue;
+    const st = Math.min(Math.max(0, pat.length - q), n.start + (snapRound(n.start, q) - n.start) * strength);
+    n.start = r5(st);
+    if (ends) { const tgt = Math.max(q, snapRound(n.dur, q)); n.dur = r5(Math.max(0.0625, Math.min(pat.length - n.start, n.dur + (tgt - n.dur) * strength))); }
+  }
+}
+
+/** Velocity: {set} (absolute 0..1), {scale} (×) or {add}; clamped to 0.05..1. */
+export function setVelocity(pat, ids, { set = null, scale = null, add = null } = {}) {
+  const s = new Set(ids);
+  for (const n of pat.notes) {
+    if (!s.has(n.id)) continue;
+    let v = n.vel ?? 0.8;
+    if (set != null) v = set;
+    if (scale != null) v *= scale;
+    if (add != null) v += add;
+    n.vel = +Math.max(0.05, Math.min(1, v)).toFixed(3);
+  }
+}
+
+/** Copy the notes right after the selection's span (rounded up to `grid` beats); copies past the end are dropped. */
+export function duplicateNotes(pat, ids, grid = 0) {
+  const s = new Set(ids);
+  const ns = pat.notes.filter((n) => s.has(n.id));
+  if (!ns.length) return [];
+  let span = Math.max(...ns.map((n) => n.start + n.dur)) - Math.min(...ns.map((n) => n.start));
+  if (grid > 0) span = Math.ceil(span / grid - 1e-6) * grid;
+  const out = [];
+  for (const n of ns) {
+    const st = r5(n.start + span);
+    if (st >= pat.length - 1e-6) continue;
+    const c = { ...n, id: nid(), start: st, dur: r5(Math.min(n.dur, pat.length - st)) };
+    pat.notes.push(c);
+    out.push(c.id);
+  }
+  return out;
+}
+export function deleteNotes(pat, ids) { const s = new Set(ids); pat.notes = pat.notes.filter((n) => !s.has(n.id)); }

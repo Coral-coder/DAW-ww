@@ -243,3 +243,139 @@ export function followX0(v, beat, width) {
 export function clampY0(y0, nTracks, laneH, height, extra = 0) {
   return Math.max(0, Math.min(y0, nTracks * laneH + extra - (height - TOP_H) + 40));
 }
+
+// ------------------------------------------------------------------------------------------- cross-track moves
+/** Drum-ness of a track (drum kits and drum samplers are one "kind"). */
+export const isDrumKind = (t) => !!t && t.type === 'instrument' && (t.instrument?.type === 'drums' || t.instrument?.type === 'drumsampler');
+const frozen = (t) => !!(t && t.frozen && t.frozen.sampleId);
+
+/**
+ * Can `clip` (now on `src`) be dropped on track `dst`? Audio clips → audio tracks; pattern clips → instrument tracks
+ * of the same kind (drums ↔ drums, melodic ↔ melodic). Frozen tracks take nothing (unfreeze them first).
+ */
+export function canDrop(clip, src, dst) {
+  if (!dst || !clip) return false;
+  if (dst === src || dst.id === src?.id) return true;
+  if (frozen(dst) || frozen(src)) return false;
+  if (clip.type === 'audio') return dst.type === 'audio';
+  return dst.type === 'instrument' && isDrumKind(dst) === isDrumKind(src);
+}
+
+/** Every clip of `ids` can move `dl` lanes (up < 0 < down). */
+export function laneShiftOk(p, ids, dl) {
+  const idx = new Map(p.tracks.map((t, i) => [t.id, i]));
+  const set = new Set(ids);
+  const cs = p.clips.filter((c) => set.has(c.id));
+  if (!cs.length) return false;
+  return cs.every((c) => { const i = idx.get(c.trackId); return i != null && canDrop(c, p.tracks[i], p.tracks[i + dl]); });
+}
+
+/** Lane indexes the selection's anchor clip can be dropped on (its own lane included): Set<laneIndex>. */
+export function dropLanes(p, ids, anchorId) {
+  const a = p.clips.find((c) => c.id === anchorId);
+  const ai = a ? p.tracks.findIndex((t) => t.id === a.trackId) : -1;
+  const out = new Set();
+  if (ai < 0) return out;
+  for (let i = 0; i < p.tracks.length; i++) if (i === ai || laneShiftOk(p, ids, i - ai)) out.add(i);
+  return out;
+}
+
+/**
+ * Lane shift to apply while dragging: the wanted shift when valid, else the last valid one (stays put on an
+ * incompatible lane), else 0.
+ */
+export function resolveLaneShift(p, ids, want, last = 0) {
+  if (!want || laneShiftOk(p, ids, want)) return want;
+  return last && laneShiftOk(p, ids, last) ? last : 0;
+}
+
+/** Snapshot of the clips to move: Map id → {start, ti}. */
+export function clipOrigins(p, ids) {
+  const idx = new Map(p.tracks.map((t, i) => [t.id, i]));
+  const set = new Set(ids);
+  return new Map(p.clips.filter((c) => set.has(c.id)).map((c) => [c.id, { start: c.start, ti: idx.get(c.trackId) }]));
+}
+
+/** Clamp a time shift so no clip of the group starts before 0. */
+export function clampShift(orig, delta) {
+  const min = Math.min(...[...orig.values()].map((o) => o.start));
+  return min + delta < 0 ? (-min || 0) : delta;
+}
+
+/** Move clips (from their origins) by `delta` beats and `dl` lanes (mutates p; dl must be valid). */
+export function moveClips(p, orig, delta, dl = 0) {
+  for (const c of p.clips) {
+    const o = orig.get(c.id);
+    if (!o) continue;
+    c.start = r6(Math.max(0, o.start + delta));
+    const t = p.tracks[o.ti + dl];
+    if (t) c.trackId = t.id;
+  }
+}
+
+/**
+ * Pattern clips that moved to another track: the pattern moves with them (when nothing else uses it on the old
+ * track), else the clip gets its own copy owned by the new track — like the desktop's arrange view.
+ */
+export function fixOwnership(p, ids) {
+  const set = new Set(ids);
+  const done = new Map();
+  for (const c of p.clips) {
+    if (!set.has(c.id) || c.type !== 'pattern') continue;
+    const pat = p.patterns[c.patternId];
+    if (!pat || pat.trackId === c.trackId) continue;
+    const key = pat.id + '>' + c.trackId;
+    if (done.has(key)) { c.patternId = done.get(key); continue; }
+    const used = p.clips.some((o) => o.patternId === pat.id && o.trackId === pat.trackId)
+      || p.tracks.some((t) => t.id === pat.trackId && t.activePatternId === pat.id)
+      || (p.scenes || []).some((s) => s.slots?.[pat.trackId] === pat.id);
+    if (!used) { pat.trackId = c.trackId; done.set(key, pat.id); } else {
+      const np = { ...deepClone(pat), id: uid('pat'), trackId: c.trackId };
+      np.notes = (np.notes || []).map((n) => ({ ...n, id: uid('n') }));
+      p.patterns[np.id] = np;
+      c.patternId = np.id;
+      done.set(key, np.id);
+    }
+    const t = p.tracks.find((x) => x.id === c.trackId);
+    if (t && !(t.activePatternId && p.patterns[t.activePatternId])) t.activePatternId = c.patternId;
+  }
+}
+
+// ------------------------------------------------------------------------------------------- multi-select
+/** Clip ids touched by a lasso box (canvas px, any corner order). */
+export function clipsInBox(p, v, x0, y0, x1, y1, top = TOP_H) {
+  const [xa, xb] = [Math.min(x0, x1), Math.max(x0, x1)], [ya, yb] = [Math.min(y0, y1), Math.max(y0, y1)];
+  const b0 = xToBeat(v, xa), b1 = xToBeat(v, xb);
+  const idx = new Map(p.tracks.map((t, i) => [t.id, i]));
+  return p.clips.filter((c) => {
+    const i = idx.get(c.trackId);
+    if (i == null) return false;
+    const ly = laneY(v, i, top);
+    return c.start < b1 && c.start + c.length > b0 && ly < yb && ly + v.laneH > ya;
+  }).map((c) => c.id);
+}
+export const clipsInTrack = (p, trackId) => p.clips.filter((c) => c.trackId === trackId).map((c) => c.id);
+/** Clips that overlap [b0, b1) (optionally only on some tracks). */
+export function clipsInRange(p, b0, b1, trackIds = null) {
+  return p.clips.filter((c) => c.start < b1 - EPS && c.start + c.length > b0 + EPS && (!trackIds || trackIds.includes(c.trackId))).map((c) => c.id);
+}
+/** Section (marker → next marker, or the song end) that contains `beat`: {start, end, name} or null. */
+export function sectionAt(p, beat, songEnd = Infinity) {
+  const ms = [...(p.markers || [])].sort((a, b) => a.beat - b.beat);
+  let cur = null;
+  for (let i = 0; i < ms.length; i++) if (ms[i].beat <= beat + EPS) cur = { start: ms[i].beat, end: ms[i + 1]?.beat ?? songEnd, name: ms[i].name };
+  return cur;
+}
+/** Toggle an id in a selection list (returns a new list). */
+export const toggleSel = (ids, id) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
+/** Copy the clips right after the group's span (same tracks, same relative timing). Returns the copies' ids. */
+export function duplicateClips(p, ids) {
+  const set = new Set(ids);
+  const cs = p.clips.filter((c) => set.has(c.id));
+  if (!cs.length) return [];
+  const span = Math.max(...cs.map((c) => c.start + c.length)) - Math.min(...cs.map((c) => c.start));
+  const out = [];
+  for (const c of cs) { const copy = { ...deepClone(c), id: uid('clip'), start: r6(c.start + span) }; p.clips.push(copy); out.push(copy.id); }
+  return out;
+}
+export function deleteClips(p, ids) { const set = new Set(ids); p.clips = p.clips.filter((c) => !set.has(c.id)); }

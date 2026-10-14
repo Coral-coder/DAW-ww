@@ -3,14 +3,21 @@
 // long-press = actions · double-tap = edit notes · tap empty space = add a clip of the track's pattern.
 // Top bars: ruler (tap / drag = scrub the playhead), section markers (tap empty = add, drag = move, tap = menu),
 // loop region (drag handles / body, drag empty = new loop, tap = on / off). Automation lane docked below.
+// Multi-select: "Select" mode (tap = add / remove, drag empty = lasso) or long-press + drag on empty space = lasso;
+// dragging a selected clip moves the whole selection — also up / down onto compatible tracks (valid lanes are lit).
+// Comped recordings (takes) show as dashed clips: tap = choose a take per section.
 import { h, icon, fitCanvas, cssVar } from '../../ui/dom.js';
 import { beatsPerBar, songLengthBeats, patternsForTrack, createClip, TRACK_COLORS } from '../../core/model.js';
 import { drawPatternNotes, COLOR_NAMES } from '../../ui/views/arrange.js';
 import {
-  RULER_H, MARK_H, LOOP_H, TOP_H, SNAP_MODES, snapStep, snapTo, laneAt, laneY, topZone, hitClip, moveStart, resizeRight, trimLeft,
+  RULER_H, MARK_H, LOOP_H, TOP_H, SNAP_MODES, snapStep, snapTo, laneAt, laneY, topZone, hitClip, resizeRight, trimLeft,
   splitClip, duplicateClip, makeUnique, renameClip, colorClip, clipForTap, clipLabel, markerAt, addMarker, moveMarker, loopHit, dragLoop,
   pinchTime, fitPpb, followX0, clampY0, beatToX, xToBeat, EPS,
+  canDrop, dropLanes, clipOrigins, clampShift, moveClips, fixOwnership, clipsInBox, clipsInTrack, clipsInRange, sectionAt, toggleSel,
+  duplicateClips, deleteClips,
 } from '../arrange-core.js';
+import { compClips, hasTakes } from '../../record/takes.js';
+import { openTakesSheet, trackProItems, openTempoSheet } from '../pro.js';
 import { pageShell, iconBtn, isDrums, emptyState, addTrackSheet } from './common.js';
 import { actionSheet, haptic, chips, bigButton, promptSheet, confirmSheet } from '../touch.js';
 import { createAutoLane, pickAutomationTarget } from '../auto-lane.js';
@@ -37,9 +44,11 @@ export function createArrangePage(app, nav) {
   followBtn.addEventListener('click', () => { follow = !follow; SS('daw3-pocket-arr-follow', follow); haptic(5); syncTools(); });
   const fitBtn = h('button.pk-chip', { type: 'button' }, '↔ Fit');
   fitBtn.addEventListener('click', () => { haptic(5); fit(); });
+  const selModeBtn = h('button.pk-chip', { type: 'button', title: 'Select mode: tap clips to add / remove them, drag on empty space to lasso' }, '☐ Select');
+  selModeBtn.addEventListener('click', () => { selectMode = !selectMode; haptic(5); syncTools(); syncSel(); draw(); });
   const autoBtn = h('button.pk-chip', { type: 'button' }, '∿ Automation');
   autoBtn.addEventListener('click', () => { autoOpen = !autoOpen; SS('daw3-pocket-arr-auto', autoOpen); haptic(5); syncTools(); layoutAuto(); });
-  const tools = h('div.pk-arr-tools', { 'data-noswipe': '' }, snapChips, followBtn, fitBtn, autoBtn);
+  const tools = h('div.pk-arr-tools', { 'data-noswipe': '' }, selModeBtn, snapChips, followBtn, fitBtn, autoBtn);
   const canvas = h('canvas.pk-arr-cv', { 'data-noswipe': '' });
   const cvWrap = h('div.pk-arr-wrap', canvas);
   const selBar = h('div.pk-arr-sel', { hidden: true });
@@ -49,9 +58,11 @@ export function createArrangePage(app, nav) {
 
   let v = { ppb: 12, x0: 0, y0: 0, laneH: 60 };
   let fitted = false, visible = false, raf = 0, W = 300, H = 400;
-  let selId = null;
+  let selIds = []; // selected clip ids (multi-select)
+  let selectMode = false;
   const step = () => snapStep(snapMode, bpb());
-  const sel = () => get().clips.find((c) => c.id === selId) || null;
+  /** The single selected clip (null with 0 or several). */
+  const sel = () => (selIds.length === 1 ? get().clips.find((c) => c.id === selIds[0]) || null : null);
   const setView = (nv) => { v = { ...v, ...nv, x0: Math.max(-1, nv.x0 ?? v.x0) }; v.y0 = clampY0(v.y0, get().tracks.length, v.laneH, H); };
   const autoLane = createAutoLane(app, {
     ownerId: LS('daw3-pocket-arr-auto-owner', null), target: LS('daw3-pocket-arr-auto-target', null), height: 110,
@@ -63,6 +74,8 @@ export function createArrangePage(app, nav) {
 
   function syncTools() {
     followBtn.classList.toggle('on', follow);
+    selModeBtn.classList.toggle('on', selectMode);
+    selModeBtn.textContent = selectMode ? '☑ Select' : '☐ Select';
     autoBtn.classList.toggle('on', autoOpen);
     const song = get().mode === 'song';
     modeBtn.classList.toggle('on', song);
@@ -98,7 +111,8 @@ export function createArrangePage(app, nav) {
       c.fillStyle = bar % (every * 4) === 0 ? cssVar('--grid-bar') : cssVar('--grid-beat');
       c.fillRect(x, TOP_H, 1, H - TOP_H);
     }
-    // lanes
+    // lanes (while a clip is dragged: valid drop targets lit, the others dimmed)
+    const drop = g?.type === 'move' && g.moved && g.okLanes?.size > 1 ? g.okLanes : null;
     p.tracks.forEach((t, i) => {
       const y = laneY(v, i);
       if (y > H || y + v.laneH < TOP_H) return;
@@ -106,10 +120,31 @@ export function createArrangePage(app, nav) {
       c.fillRect(0, y, W, v.laneH);
       c.fillStyle = 'rgba(128,128,128,0.18)';
       c.fillRect(0, y + v.laneH - 1, W, 1);
+      if (drop) {
+        if (drop.has(i)) {
+          c.fillStyle = cssVar('--accent'); c.globalAlpha = i === g.anchorTi + g.dl ? 0.22 : 0.09; c.fillRect(0, y, W, v.laneH); c.globalAlpha = 1;
+          c.strokeStyle = cssVar('--accent'); c.setLineDash([5, 4]); c.lineWidth = 1; c.strokeRect(1.5, y + 1.5, W - 3, v.laneH - 3); c.setLineDash([]);
+        } else { c.fillStyle = 'rgba(0,0,0,0.30)'; c.fillRect(0, y, W, v.laneH); }
+      }
     });
     c.save();
     c.beginPath(); c.rect(0, TOP_H, W, H - TOP_H); c.clip();
     const tIdx = new Map(p.tracks.map((t, i) => [t.id, i]));
+    const selSet = new Set(selIds);
+    // comped recordings (takes): what plays, drawn as dashed read-only clips — tap = choose takes
+    for (const t of p.tracks) {
+      if (!hasTakes(t)) continue;
+      const i = tIdx.get(t.id);
+      const y = laneY(v, i) + 3, hh = v.laneH - 6;
+      if (y > H || y + hh < TOP_H) continue;
+      for (const cc of compClips(p, t)) {
+        const x = beatToX(v, cc.start), w = cc.length * v.ppb;
+        if (x > W || x + w < 0) continue;
+        c.globalAlpha = 0.22; c.fillStyle = t.color || '#7c5cff'; roundRect(c, x + 0.5, y, Math.max(3, w - 1), hh, 6); c.fill();
+        c.globalAlpha = 1; c.strokeStyle = t.color || '#7c5cff'; c.setLineDash([4, 3]); c.lineWidth = 1.5; c.stroke(); c.setLineDash([]);
+        if (w > 40) { c.fillStyle = cssVar('--text'); c.font = '600 11px system-ui'; c.fillText(`⧉ ${cc.name || 'Take'}`.slice(0, Math.floor(w / 7)), Math.max(x + 6, 4), y + 12); }
+      }
+    }
     for (const clip of p.clips) {
       const i = tIdx.get(clip.trackId);
       if (i == null) continue;
@@ -120,7 +155,8 @@ export function createArrangePage(app, nav) {
       if (y > H || y + hh < TOP_H) continue;
       const pat = clip.type === 'pattern' ? p.patterns[clip.patternId] : null;
       const col = pat?.color || clip.color || t.color || '#7c5cff';
-      const on = clip.id === selId;
+      const on = selSet.has(clip.id);
+      const single = on && selIds.length === 1;
       c.globalAlpha = t.mute ? 0.4 : 1;
       c.fillStyle = col;
       c.globalAlpha *= 0.32;
@@ -157,10 +193,12 @@ export function createArrangePage(app, nav) {
         c.lineWidth = 2;
         roundRect(c, x + 1, y + 1, Math.max(3, w - 2), hh - 2, 6);
         c.stroke();
-        // grips
+        // grips (single selection: trim / resize)
         c.fillStyle = cssVar('--text');
-        roundRect(c, x + w - 9, y + hh / 2 - 12, 6, 24, 3); c.fill();
-        if (w > 24) { roundRect(c, x + 3, y + hh / 2 - 12, 6, 24, 3); c.fill(); }
+        if (single) {
+          roundRect(c, x + w - 9, y + hh / 2 - 12, 6, 24, 3); c.fill();
+          if (w > 24) { roundRect(c, x + 3, y + hh / 2 - 12, 6, 24, 3); c.fill(); }
+        } else if (w > 18) { c.beginPath(); c.arc(x + w - 10, y + 10, 6, 0, Math.PI * 2); c.fill(); c.fillStyle = cssVar('--bg'); c.font = 'bold 10px system-ui'; c.fillText('✓', x + w - 14, y + 14); }
       }
       c.globalAlpha = 1;
     }
@@ -179,6 +217,12 @@ export function createArrangePage(app, nav) {
       c.fillStyle = t.mute ? cssVar('--text-3') : cssVar('--text-2');
       c.fillText(t.name.slice(0, 16), 18, y + v.laneH - 8);
     });
+    // lasso
+    if (g?.type === 'lasso' && g.moved) {
+      const lx = Math.min(g.x, g.cx), ly = Math.min(g.y, g.cy), lw = Math.abs(g.cx - g.x), lh = Math.abs(g.cy - g.y);
+      c.fillStyle = cssVar('--accent'); c.globalAlpha = 0.14; c.fillRect(lx, ly, lw, lh); c.globalAlpha = 1;
+      c.strokeStyle = cssVar('--accent'); c.setLineDash([6, 4]); c.lineWidth = 1.5; c.strokeRect(lx + 0.5, ly + 0.5, lw, lh); c.setLineDash([]);
+    }
     c.restore();
     // top bars
     c.fillStyle = cssVar('--bg-2');
@@ -246,10 +290,15 @@ export function createArrangePage(app, nav) {
   // ------------------------------------------------------------------ editing helpers
   let txStarted = false;
   const dragTx = (label, fn) => { store.transact(label, fn, txStarted ? { undo: false } : {}); txStarted = true; };
-  function select(id) { selId = id; syncSel(); draw(); }
+  function select(id) { selIds = id ? [id] : []; syncSel(); draw(); }
+  function setSel(ids) { selIds = [...new Set(ids)]; syncSel(); draw(); }
   function syncSel() {
+    const p0 = get();
+    selIds = selIds.filter((id) => p0.clips.some((c) => c.id === id));
     const c = sel();
+    if (selIds.length > 1 || (selectMode && !c)) { multiBar(); return; }
     selBar.hidden = !c;
+    selBar.classList.remove('multi');
     if (!c) return;
     const p = get();
     const t = p.tracks.find((x) => x.id === c.trackId);
@@ -262,8 +311,57 @@ export function createArrangePage(app, nav) {
       selBtn('menu', 'More', () => clipMenu(c)),
     );
   }
+  // several clips selected (or Select mode with nothing yet): count chip + group actions
+  function multiBar() {
+    const n = selIds.length;
+    selBar.hidden = false;
+    selBar.classList.add('multi');
+    const chip = h('button.pk-selcount', { type: 'button', title: 'Clear the selection' }, n ? `${n} clip${n === 1 ? '' : 's'}` : 'Tap clips', n ? h('span.pk-selcount-x', '×') : null);
+    chip.addEventListener('click', () => { haptic(5); if (n) setSel([]); else { selectMode = false; syncTools(); syncSel(); } });
+    selBar.replaceChildren(...[chip,
+      n ? null : h('span.pk-arr-sel-hint', 'or drag to lasso'),
+      selBtn('layers', 'Select…', () => selectMenu()),
+      n ? selBtn('copy', 'Duplicate', () => { let ids; store.transact(`Duplicate ${n} clips`, (pp) => { ids = duplicateClips(pp, selIds); }); setSel(ids); }) : null,
+      n ? selBtn('timeline', 'Move to track', () => moveToTrackMenu(selIds)) : null,
+      n ? selBtn('trash', 'Delete', () => { store.transact(`Delete ${n} clips`, (pp) => deleteClips(pp, selIds)); setSel([]); }) : null,
+      selectMode ? h('button.pk-chip.on.pk-sel-done', { type: 'button', onclick: () => { selectMode = false; haptic(5); syncTools(); syncSel(); draw(); } }, 'Done') : null,
+    ].filter(Boolean));
+  }
+  function selectMenu() {
+    const p = get();
+    const ph = engine.getPosition?.() || 0;
+    const tracksOfSel = [...new Set(p.clips.filter((c) => selIds.includes(c.id)).map((c) => c.trackId))];
+    const t = p.tracks.find((x) => x.id === (tracksOfSel[0] || ui.get('selectedTrackId')));
+    const sec = sectionAt(p, ph, songLengthBeats(p));
+    actionSheet('Select', [
+      { label: 'All clips', icon: 'layers', onClick: () => setSel(p.clips.map((c) => c.id)) },
+      t ? { label: `All in “${t.name}”${tracksOfSel.length > 1 ? ` (+${tracksOfSel.length - 1} tracks)` : ''}`, icon: 'scenes', onClick: () => setSel([...selIds, ...(tracksOfSel.length ? tracksOfSel : [t.id]).flatMap((id) => clipsInTrack(p, id))]) } : null,
+      sec ? { label: `All in section “${sec.name}”`, icon: 'timeline', onClick: () => setSel(clipsInRange(p, sec.start, sec.end)) } : null,
+      p.loop?.end > p.loop?.start ? { label: 'All in the loop region', icon: 'loop', onClick: () => setSel(clipsInRange(p, p.loop.start, p.loop.end)) } : null,
+      { label: 'From the playhead on', icon: 'play', onClick: () => setSel(p.clips.filter((c) => c.start >= ph - EPS).map((c) => c.id)) },
+      { label: 'Invert selection', onClick: () => setSel(p.clips.filter((c) => !selIds.includes(c.id)).map((c) => c.id)) },
+      { label: 'Select none', icon: 'x', disabled: !selIds.length, onClick: () => setSel([]) },
+    ].filter(Boolean));
+  }
+  /** "Move to track…": the compatible tracks for every selected clip (the drag alternative). */
+  function moveToTrackMenu(ids) {
+    const p = get();
+    const anchor = p.clips.find((c) => c.id === ids[0]);
+    if (!anchor) return;
+    const ok = dropLanes(p, ids, anchor.id);
+    const ai = p.tracks.findIndex((t) => t.id === anchor.trackId);
+    const items = p.tracks.map((t, i) => (i === ai ? null : { label: t.name, icon: t.type === 'audio' ? 'wave' : isDrums(t) ? 'drum' : 'piano', disabled: !ok.has(i), onClick: () => moveSelToLane(ids, i - ai) })).filter(Boolean);
+    actionSheet(ids.length > 1 ? `Move ${ids.length} clips to…` : 'Move clip to…', items.length ? [...items, '-', { header: 'Greyed out: a different kind of track (drums ↔ melodic, audio ↔ notes) or frozen' }] : [{ label: 'No other tracks', disabled: true }]);
+  }
+  function moveSelToLane(ids, dl) {
+    const p = get();
+    const orig = clipOrigins(p, ids);
+    store.transact(ids.length > 1 ? 'Move clips to track' : 'Move clip to track', (pp) => { moveClips(pp, orig, 0, dl); fixOwnership(pp, ids); });
+    haptic(8);
+    setSel(ids);
+  }
   function selBtn(ic, label, fn) { const b = h('button.pk-ib', { type: 'button', 'aria-label': label, title: label }, icon(ic, 18)); b.addEventListener('click', () => { haptic(5); fn(); }); return b; }
-  function deleteClip(id) { store.transact('Delete clip', (p) => { p.clips = p.clips.filter((c) => c.id !== id); }); if (selId === id) select(null); }
+  function deleteClip(id) { store.transact('Delete clip', (p) => { p.clips = p.clips.filter((c) => c.id !== id); }); if (selIds.includes(id)) setSel(selIds.filter((x) => x !== id)); }
   function splitAtPlayhead(c) {
     const ph = engine.getPosition?.() || 0;
     let id = null;
@@ -289,6 +387,8 @@ export function createArrangePage(app, nav) {
       pat ? { label: 'Make unique (own copy)', icon: 'layers', onClick: () => { let np; store.transact('Make clip unique', (pp) => { np = makeUnique(pp, c.id); }); if (np) { actions.selectPattern(np, { activate: false }); app.toast('This clip has its own pattern now — edits won’t change the other clips.'); } } } : null,
       pat ? { label: 'Choose pattern', icon: 'music', submenu: [...pats.map((pt) => ({ label: pt.name, checked: pt.id === c.patternId, onClick: () => store.transact('Change clip pattern', (pp) => { const cc = pp.clips.find((x) => x.id === c.id); if (cc && pp.patterns[pt.id]) { cc.patternId = pt.id; cc.name = null; cc.offset = 0; } }) })), '-', { label: 'New empty pattern', icon: 'plus', onClick: () => { const np = actions.newPattern(c.trackId, { length: pat.length }); if (np) store.transact('Change clip pattern', (pp) => { const cc = pp.clips.find((x) => x.id === c.id); if (cc) { cc.patternId = np.id; cc.offset = 0; } }); } }] } : null,
       pat && Math.abs(c.length - pat.length) > EPS ? { label: 'Fit to pattern length', onClick: () => store.transact('Fit clip', (pp) => { const cc = pp.clips.find((x) => x.id === c.id); if (cc) { cc.length = pat.length; cc.offset = 0; } }) } : null,
+      { label: 'Move to track…', icon: 'timeline', onClick: () => moveToTrackMenu([c.id]) },
+      { label: 'Select more… (multi-select)', icon: 'layers', onClick: () => { selectMode = true; syncTools(); syncSel(); draw(); } },
       { label: 'Color', icon: 'sun', submenu: TRACK_COLORS.map((col, i) => ({ label: COLOR_NAMES[i] || col, onClick: () => store.transact('Clip color', (pp) => colorClip(pp, c.id, col)) })) },
       { label: 'Loop this clip', icon: 'loop', onClick: () => store.transact('Set loop', (pp) => { pp.loop = { ...(pp.loop || {}), start: c.start, end: c.start + c.length, enabled: true }; }) },
       { label: 'Automate…', icon: 'sliders', onClick: () => { pickAutomationTarget(app, { ownerId: c.trackId, onPick: (o, tg) => { autoLane.setTarget(o, tg); autoOpen = true; SS('daw3-pocket-arr-auto', true); syncTools(); layoutAuto(); } }); } },
@@ -300,10 +400,12 @@ export function createArrangePage(app, nav) {
     const p = get();
     actionSheet(t.name, [
       { label: 'Open track', icon: 'sliders', onClick: () => nav.go({ page: 'track', id: t.id }) },
+      clipsInTrack(p, t.id).length ? { label: 'Select all clips in this track', icon: 'layers', onClick: () => setSel(clipsInTrack(p, t.id)) } : null,
       t.type === 'instrument' ? { label: 'Add a clip here', icon: 'plus', onClick: () => addClipAt(t, beat) } : null,
       t.type === 'instrument' ? { label: 'Generate a part', icon: 'dice', submenu: (isDrums(t) ? ['drums'] : ['lead', 'bass', 'chords', 'arp', 'pad']).map((r) => ({ label: r[0].toUpperCase() + r.slice(1), onClick: () => actions.generatePart(r, { trackId: t.id }) })) } : null,
       { label: 'Automate…', icon: 'sliders', onClick: () => pickAutomationTarget(app, { ownerId: t.id, onPick: (o, tg) => { autoLane.setTarget(o, tg); autoOpen = true; SS('daw3-pocket-arr-auto', true); syncTools(); layoutAuto(); } }) },
       { label: t.mute ? 'Unmute' : 'Mute', icon: 'mute', onClick: () => actions.updateTrack(t.id, (tt) => { tt.mute = !tt.mute; }, 'Mute') },
+      ...trackProItems(app, t.id),
       { label: 'Add section marker here', icon: 'timeline', onClick: () => store.transact('Add marker', (pp) => addMarker(pp, snapTo(beat, bpb(), Math.floor))) },
       p.tracks.length ? { label: 'Delete track…', icon: 'trash', onClick: async () => { if (await confirmSheet('Delete track?', `Delete “${t.name}” and its clips?`, 'Delete')) actions.deleteTrack(t.id); } } : null,
     ].filter(Boolean));
@@ -326,6 +428,7 @@ export function createArrangePage(app, nav) {
     const end = next?.beat ?? Math.max(songLengthBeats(p), m.beat + bpb());
     actionSheet(m.name, [
       { label: 'Play from here', icon: 'play', onClick: () => { actions.setPosition(m.beat); actions.play(); } },
+      { label: 'Select the clips in this section', icon: 'layers', onClick: () => setSel(clipsInRange(get(), m.beat, end)) },
       { label: 'Rename…', icon: 'pencil', onClick: async () => { const n = await promptSheet('Section name', m.name); if (n) store.transact('Rename marker', (pp) => { const mm = pp.markers.find((x) => x.id === m.id); if (mm) mm.name = n; }); } },
       { label: 'Loop this section', icon: 'loop', onClick: () => store.transact('Set loop', (pp) => { pp.loop = { ...(pp.loop || {}), start: m.beat, end, enabled: true }; }) },
       { label: 'Extend this section', icon: 'wand', onClick: () => actions.extendSongBy({ mode: 'insert-section', templateMarkerId: m.id, markerId: next?.id, at: next ? undefined : end, bars: Math.max(4, Math.round((end - m.beat) / bpb())) }) },
@@ -349,11 +452,13 @@ export function createArrangePage(app, nav) {
       { label: 'Clips from the current patterns (8 bars)', icon: 'layers', disabled: !p.tracks.length, onClick: () => clipsFromActive(8) },
       { label: 'Add section marker at the playhead', icon: 'timeline', onClick: () => store.transact('Add marker', (pp) => addMarker(pp, snapTo(engine.getPosition?.() || 0, bpb(), Math.round))) },
       { label: p.loop?.enabled ? 'Loop: on (tap to turn off)' : 'Loop: off (tap to turn on)', icon: 'loop', onClick: () => store.transact('Toggle loop', (pp) => { pp.loop.enabled = !pp.loop.enabled; }) },
+      { label: 'Tempo & meter changes…', icon: 'metronome', onClick: () => openTempoSheet(app) },
+      { label: 'Select…', icon: 'layers', onClick: () => selectMenu() },
       { label: 'Automation lane…', icon: 'sliders', onClick: () => pickAutomationTarget(app, { ownerId: ui.get('selectedTrackId'), onPick: (o, tg) => { autoLane.setTarget(o, tg); autoOpen = true; SS('daw3-pocket-arr-auto', true); syncTools(); layoutAuto(); } }) },
       { label: 'Lane height', icon: 'sliders', submenu: [[44, 'Small'], [60, 'Medium'], [84, 'Large']].map(([lh, l]) => ({ label: l, checked: v.laneH === lh, onClick: () => { setView({ laneH: lh }); SS('daw3-pocket-arr-laneh', lh); draw(); } })) },
       { label: 'Strudel code of the song', icon: 'code', onClick: () => nav.go({ page: 'code' }) },
       '-',
-      { label: 'Clear arrangement…', icon: 'trash', disabled: !p.clips.length, onClick: async () => { if (await confirmSheet('Clear arrangement', 'Remove every clip from the timeline? Patterns and tracks stay.', 'Clear')) { store.transact('Clear arrangement', (pp) => { pp.clips = []; }); select(null); } } },
+      { label: 'Clear arrangement…', icon: 'trash', disabled: !p.clips.length, onClick: async () => { if (await confirmSheet('Clear arrangement', 'Remove every clip from the timeline? Patterns and tracks stay.', 'Clear')) { store.transact('Clear arrangement', (pp) => { pp.clips = []; }); setSel([]); } } },
     ]);
   }
   function clipsFromActive(bars) {
@@ -399,16 +504,32 @@ export function createArrangePage(app, nav) {
     if (zone === 'loop') { const which = loopHit(proj.loop, v, p.x); g = { ...base, type: 'loop', which: which || 'new', loop0: { ...proj.loop } }; return; }
     const hit = hitClip(proj, v, p.x, p.y);
     const ti = laneAt(v, p.y, proj.tracks.length);
-    g = { ...base, type: hit ? 'clip' : 'empty', hit, ti, clip0: hit ? { ...hit.clip } : null };
+    const comp = !hit && ti >= 0 && hasTakes(proj.tracks[ti]) ? compClips(proj, proj.tracks[ti]).find((cc) => base.beat >= cc.start && base.beat <= cc.start + cc.length) : null;
+    g = { ...base, type: hit ? 'clip' : comp ? 'comp' : 'empty', hit, ti, clip0: hit ? { ...hit.clip } : null };
+    // Select mode: a drag on empty space is a lasso right away
+    if (g.type === 'empty' && selectMode) { g.type = 'lasso'; g.additive = true; return; }
     g.lp = setTimeout(() => {
       if (!g || g.moved || g.type === 'pinch') return;
       haptic(15);
+      // long-press on empty space arms the lasso: drag = select, release = lane menu
+      if (g.type === 'empty') { g.type = 'lasso'; g.armed = true; g.additive = selIds.length > 0; draw(); return; }
       const gg = g;
       g = null;
       if (gg.hit) clipMenu(gg.hit.clip);
       else if (gg.ti >= 0) laneMenu(proj.tracks[gg.ti], gg.beat);
     }, 480);
   });
+  /** Start dragging the selection (anchor = the touched clip): time + lanes, drop targets computed once. */
+  function startMove(gg) {
+    const p = get();
+    const ids = selIds.includes(gg.hit.clip.id) ? selIds.slice() : [gg.hit.clip.id];
+    gg.type = 'move';
+    gg.ids = ids;
+    gg.orig = clipOrigins(p, ids);
+    gg.anchorTi = gg.ti;
+    gg.okLanes = dropLanes(p, ids, gg.hit.clip.id);
+    gg.dl = 0;
+  }
   canvas.addEventListener('pointermove', (e) => {
     if (!ptrs.has(e.pointerId)) return;
     const p = local(e);
@@ -435,17 +556,43 @@ export function createArrangePage(app, nav) {
       draw();
       return;
     }
+    if (g.type === 'lasso') {
+      g.cx = p.x; g.cy = p.y;
+      const ids = clipsInBox(get(), v, g.x, g.y, p.x, p.y);
+      g.ids = ids;
+      selIds = g.additive ? [...new Set([...(g.base ||= selIds.slice()), ...ids])] : ids;
+      syncSel();
+      draw();
+      return;
+    }
     const c = g.clip0;
-    if (g.type === 'clip' && c && c.id === selId) {
+    const selected = c && selIds.includes(c.id);
+    // body drag of a selected clip (or any clip in Select mode) = move the selection, across tracks too
+    if (g.type === 'clip' && c && (selectMode || (selected && (selIds.length > 1 || g.hit.zone === 'body')))) {
+      if (!selected) { selIds = [...selIds, c.id]; }
+      startMove(g);
+    }
+    if (g.type === 'move') {
+      const pr = get();
+      const a = g.orig.get(g.hit.clip.id);
+      const delta = clampShift(g.orig, snapTo(a.start + db, st) - a.start);
+      const lane = laneAt(v, Math.max(TOP_H, p.y), pr.tracks.length);
+      let dl = lane < 0 ? g.dl : lane - g.anchorTi;
+      if (!g.okLanes.has(g.anchorTi + dl)) dl = g.dl; // incompatible lane: stay on the last valid one
+      if (dl !== g.dl) haptic(6);
+      g.dl = dl;
+      dragTx(g.ids.length > 1 ? 'Move clips' : 'Move clip', (pp) => moveClips(pp, g.orig, delta, dl));
+      syncSel();
+      draw();
+      return;
+    }
+    if (g.type === 'clip' && c && selected && selIds.length === 1) {
       if (g.hit.zone === 'right') {
         const len = resizeRight(c, db, st);
         dragTx('Resize clip', (pp) => { const cc = pp.clips.find((x) => x.id === c.id); if (cc) cc.length = len; });
       } else if (g.hit.zone === 'left') {
         const r = trimLeft(c, db, st, { patternLength: get().patterns[c.patternId]?.length || 0 });
         dragTx('Trim clip', (pp) => { const cc = pp.clips.find((x) => x.id === c.id); if (cc) Object.assign(cc, r); });
-      } else {
-        const s = moveStart(c.start, db, st);
-        dragTx('Move clip', (pp) => { const cc = pp.clips.find((x) => x.id === c.id); if (cc) cc.start = s; });
       }
       syncSel();
       draw();
@@ -465,7 +612,20 @@ export function createArrangePage(app, nav) {
     const gg = g;
     g = null;
     if (e.type === 'pointercancel') return;
+    if (gg.type === 'lasso') {
+      if (gg.moved) { haptic(8); if (gg.ids?.length && !selectMode) app.toast(`${selIds.length} clip${selIds.length === 1 ? '' : 's'} selected — drag one to move them all`); syncSel(); draw(); return; }
+      if (gg.armed && gg.ti >= 0) { laneMenu(get().tracks[gg.ti], gg.beat); draw(); return; }
+      if (selIds.length) setSel([]);
+      return;
+    }
+    if (gg.type === 'move') {
+      if (gg.moved && gg.dl) store.transact('Move clips to track', (pp) => fixOwnership(pp, gg.ids), { undo: false });
+      haptic(6);
+      draw();
+      return;
+    }
     if (gg.moved) { if (gg.type === 'clip' || gg.type === 'marker' || gg.type === 'loop') haptic(6); return; }
+    if (gg.type === 'comp') { openTakesSheet(app, get().tracks[gg.ti].id); return; }
     const proj = get();
     if (gg.type === 'marker') { markerMenu(gg.marker); return; }
     if (gg.type === 'marker-new') {
@@ -477,14 +637,14 @@ export function createArrangePage(app, nav) {
     if (gg.type === 'loop') { store.transact('Toggle loop', (pp) => { pp.loop.enabled = !pp.loop.enabled; }); haptic(6); return; }
     if (gg.type === 'clip') {
       const now = performance.now();
-      if (lastTap.id === gg.hit.clip.id && now - lastTap.t < 320) { editClip(gg.hit.clip); lastTap = { t: 0, id: null }; return; }
+      if (!selectMode && lastTap.id === gg.hit.clip.id && now - lastTap.t < 320) { editClip(gg.hit.clip); lastTap = { t: 0, id: null }; return; }
       lastTap = { t: now, id: gg.hit.clip.id };
       haptic(5);
-      select(gg.hit.clip.id);
+      if (selectMode) setSel(toggleSel(selIds, gg.hit.clip.id)); else select(gg.hit.clip.id);
       return;
     }
     if (gg.type === 'empty') {
-      if (selId) { select(null); return; }
+      if (selIds.length) { setSel([]); return; }
       if (gg.ti >= 0) addClipAt(proj.tracks[gg.ti], gg.beat);
     }
   };
@@ -497,7 +657,6 @@ export function createArrangePage(app, nav) {
   function render() {
     const p = get();
     syncTools();
-    if (selId && !sel()) selId = null;
     syncSel();
     empty.replaceChildren();
     cvWrap.hidden = !p.tracks.length;

@@ -401,3 +401,51 @@ html.pocket input, html.pocket textarea, html.pocket select { font-size: 16px; }
 .pk-ob-dots span { width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); }
 .pk-ob-dots span.on { background: var(--accent-2); }
 .pk-ob .pk-row > .pk-btn { flex: 1; }
+
+/* ---------- multi-select (Song + Notes) ---------- */
+.pk-arr-sel.multi { gap: 6px; }
+.pk-selcount { flex: none; min-height: 40px; padding: 0 10px 0 12px; border-radius: 20px; border: 0; background: var(--accent); color: #fff; font-weight: 700; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.pk-selcount-x { font-size: 16px; opacity: .85; }
+.pk-arr-sel-hint { flex: 1; min-width: 0; color: var(--text-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pk-arr-sel.multi .pk-sel-done, .pk-notes-sel .pk-sel-done { margin-left: auto; min-height: 36px; }
+.pk-notes-sel { flex: none; display: flex; align-items: center; gap: 4px; padding: 4px 0 6px; overflow-x: auto; scrollbar-width: none; }
+.pk-notes-sel::-webkit-scrollbar { display: none; }
+.pk-notes-sel .pk-ib { min-width: 36px; height: 40px; padding: 0 6px; flex: none; }
+.pk-ib-txt { font-size: 15px; line-height: 1; }
+
+/* ---------- Mix: reorder grip, groups / VCA / folders, loudness ---------- */
+.pk-strip-top { display: flex; align-items: center; justify-content: space-between; gap: 2px; min-height: 26px; }
+.pk-strip-grip { width: 30px; min-height: 26px; font-size: 18px; border-radius: 8px; background: var(--bg-3); }
+.pk-badges { display: flex; gap: 2px; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
+.pk-badge { --bc: var(--accent); min-width: 20px; height: 18px; padding: 0 4px; border-radius: 9px; font: 700 10px/18px var(--mono); text-align: center; color: #fff; background: var(--bc); }
+.pk-badge.vca { --bc: #e599f7; color: #2b0a33; }
+.pk-badge.off { opacity: .4; }
+.pk-strip.infolder { border-left: 3px solid color-mix(in srgb, var(--text-3) 60%, transparent); }
+.pk-strip-name .pk-frozen { color: var(--accent-2); }
+.pk-strip.vca { width: 84px; background: color-mix(in srgb, var(--panel) 88%, #e599f7); }
+.pk-vca-members { font-size: 11px; color: var(--text-3); text-align: center; }
+.pk-folder { width: 46px; padding: 10px 4px; align-items: center; justify-content: flex-start; gap: 8px; color: var(--text-2); font: inherit; cursor: pointer; }
+.pk-folder.collapsed { width: 52px; background: var(--bg-3); }
+.pk-folder-name { writing-mode: vertical-rl; transform: rotate(180deg); font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-height: 60%; }
+.pk-folder-n { margin-top: auto; font: 700 11px var(--mono); background: var(--bg); border-radius: 8px; padding: 2px 6px; }
+.pk-lufs { height: 36px; display: inline-flex; align-items: baseline; gap: 4px; padding: 0 10px; border-radius: 18px; border: 1px solid var(--line-2); background: var(--bg-3); color: var(--text); font: 600 13px/36px var(--mono); white-space: nowrap; }
+.pk-lufs-k { color: var(--text-3); font-size: 11px; }
+.pk-lufs-u { color: var(--text-3); font-size: 10px; }
+.pk-lufs.hot { border-color: var(--bad); }
+.pk-lufs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }
+.pk-lufs-cell { display: flex; flex-direction: column; gap: 2px; padding: 10px; border-radius: 12px; background: var(--bg-3); }
+.pk-lufs-cell b { font: 700 22px var(--mono); }
+.pk-lufs-cell small { color: var(--text-3); }
+.pk-lufs-cell.hot b { color: var(--bad); }
+
+/* ---------- pro sheets: takes, tempo, export ---------- */
+.pk-take-row small { color: var(--text-3); font-weight: 500; }
+.pk-take-cur { flex: none; max-width: 40%; padding: 3px 10px; border-radius: 12px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pk-xp { display: flex; flex-direction: column; gap: 6px; }
+.pk-xp-sum { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 12px; background: var(--bg-3); margin-top: 8px; overflow-wrap: anywhere; }
+.pk-xp-sum .pk-row-sub { max-width: none; white-space: normal; }
+.pk-xp-out { display: flex; flex-direction: column; gap: 4px; }
+.pk-xp-out .pk-progress { margin: 4px 0; }
+.pk-xp-rep { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pk-xp-rep td { padding: 4px 6px; border-bottom: 1px solid var(--line); }
+.pk-xp-rep td:last-child { text-align: right; font-family: var(--mono); }

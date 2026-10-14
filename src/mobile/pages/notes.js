@@ -4,10 +4,11 @@ import { h, icon, fitCanvas, cssVar } from '../../ui/dom.js';
 import { DRUM_PADS, beatsPerBar, createNote } from '../../core/model.js';
 import { scalePitchClasses, pitchClassName } from '../../theory/index.js';
 import { uid } from '../../core/util.js';
-import { SNAPS, snapFloor, snapRound, beatToX, xToBeat, pitchToY, yToPitch, hitNote, stepPitch, nearestInScale, pinchView, clampView } from '../roll-core.js';
+import { SNAPS, snapFloor, snapRound, beatToX, xToBeat, pitchToY, yToPitch, hitNote, stepPitch, nearestInScale, pinchView, clampView,
+  notesInBox, noteOrigins, moveNotes, transposeNotes, quantizeNotes, setVelocity, duplicateNotes, deleteNotes } from '../roll-core.js';
 import { pageShell, iconBtn, pickTrack, isDrums, emptyState, soundName, addTrackSheet } from './common.js';
-import { actionSheet, haptic, bigButton, chips, openSheet } from '../touch.js';
-import { ctlTile, valueTarget } from '../controls.js';
+import { actionSheet, haptic, bigButton, chips, openSheet, holdRepeat } from '../touch.js';
+import { ctlTile, valueTarget, openParamPopup } from '../controls.js';
 import { openPadSheet } from '../pad-sheet.js';
 import { editedPads } from '../pad-logic.js';
 
@@ -34,10 +35,14 @@ export function createNotesPage(app, nav) {
   const lockBtn = h('button.pk-chip', { type: 'button', title: 'Scale lock: new / moved notes stay in the song\'s key' });
   lockBtn.addEventListener('click', () => { scaleLock = !scaleLock; SS('daw3-pocket-scalelock', scaleLock); haptic(5); syncLock(); draw(); });
   const syncLock = () => { const k = get().key; lockBtn.textContent = `${scaleLock ? '🔒' : '🔓'} ${pitchClassName(k.root)} ${k.scale}`; lockBtn.classList.toggle('on', scaleLock); };
-  const toolbar = h('div.pk-notes-tools', lockBtn, snapChips);
+  let selectMode = false;
+  const selModeBtn = h('button.pk-chip', { type: 'button', title: 'Select mode: tap notes to add / remove them, drag on empty space to lasso, drag a note to move them all' }, '☐ Select');
+  selModeBtn.addEventListener('click', () => { selectMode = !selectMode; haptic(5); syncSelBar(); draw(); });
+  const toolbar = h('div.pk-notes-tools', selModeBtn, lockBtn, snapChips);
   const host = h('div.pk-notes-host');
+  const selBar = h('div.pk-notes-sel', { 'data-noswipe': '', hidden: true });
   body.classList.add('pk-notes-body');
-  body.append(toolbar, host);
+  body.append(toolbar, host, selBar);
 
   let visible = false, raf = 0;
   let mode = null; // 'roll' | 'drums' | 'none'
@@ -46,7 +51,8 @@ export function createNotesPage(app, nav) {
   const canvas = h('canvas.pk-roll', { 'data-noswipe': '' });
   const rollWrap = h('div.pk-roll-wrap', canvas);
   const views = new Map(); // patternId -> view
-  let selId = null;
+  let selId = null; // the note last tapped (single selection)
+  let selIds = []; // multi-selection
   let lastDur = 0.5;
   let W = 300, H = 400;
 
@@ -107,6 +113,7 @@ export function createNotesPage(app, nav) {
     if (endX < W) { c.fillStyle = 'rgba(0,0,0,0.35)'; c.fillRect(endX, RULER, W - endX, H - RULER); }
     // notes
     const col = t.color || '#7c5cff';
+    const selSet = new Set(selIds);
     for (const n of pat.notes) {
       const x = gx(n.start), y = gy(n.pitch), w = Math.max(4, n.dur * v.ppb - 1);
       if (x > W || x + w < KW || y > H || y + v.rowH < RULER) continue;
@@ -115,10 +122,16 @@ export function createNotesPage(app, nav) {
       roundRect(c, x + 0.5, y + 1, w, v.rowH - 2, 4);
       c.fill();
       c.globalAlpha = 1;
-      if (n.id === selId) { c.strokeStyle = cssVar('--text'); c.lineWidth = 2; roundRect(c, x + 0.5, y + 1, w, v.rowH - 2, 4); c.stroke(); }
+      if (selSet.has(n.id)) { c.strokeStyle = cssVar('--accent-2'); c.lineWidth = 2.5; roundRect(c, x + 0.5, y + 1, w, v.rowH - 2, 4); c.stroke(); } else if (n.id === selId) { c.strokeStyle = cssVar('--text'); c.lineWidth = 2; roundRect(c, x + 0.5, y + 1, w, v.rowH - 2, 4); c.stroke(); }
       // resize grip
       if (w > 18) { c.fillStyle = 'rgba(255,255,255,0.55)'; c.fillRect(x + w - 6, y + v.rowH * 0.3, 2, v.rowH * 0.4); }
       if (v.rowH >= 18 && w > 30) { c.fillStyle = 'rgba(0,0,0,0.65)'; c.font = '10px system-ui'; c.fillText(noteName(n.pitch), x + 4, y + v.rowH / 2 + 3); }
+    }
+    // lasso
+    if (g?.type === 'lasso' && g.moved) {
+      const lx = Math.min(g.x, g.cx), ly = Math.min(g.y, g.cy);
+      c.fillStyle = cssVar('--accent'); c.globalAlpha = 0.14; c.fillRect(lx, ly, Math.abs(g.cx - g.x), Math.abs(g.cy - g.y)); c.globalAlpha = 1;
+      c.strokeStyle = cssVar('--accent'); c.setLineDash([6, 4]); c.lineWidth = 1.5; c.strokeRect(lx + 0.5, ly + 0.5, Math.abs(g.cx - g.x), Math.abs(g.cy - g.y)); c.setLineDash([]);
     }
     // keyboard strip
     for (let p = pTop; p >= pBot; p--) {
@@ -174,6 +187,14 @@ export function createNotesPage(app, nav) {
     const beat = xToBeat(v, p.x - KW), pitch = yToPitch(v, p.y - RULER);
     const hit = hitNote(pat.notes, beat, pitch, { edgeBeats: 16 / v.ppb }) || (scaleLock ? hitNote(pat.notes, beat, nearestInScale(pitch, pcs()), { edgeBeats: 16 / v.ppb }) : null);
     g = { type: hit ? (hit.zone === 'end' ? 'resize' : 'move') : 'empty', x: p.x, y: p.y, beat, pitch, moved: false, t0: performance.now(), v0: { ...v } };
+    // group drag: a note of the multi-selection (or any note in Select mode) moves the whole selection
+    if (hit && (selectMode || (selIds.length > 1 && selIds.includes(hit.note.id)))) {
+      g.type = 'group';
+      g.note = { ...hit.note };
+      g.lastPitch = hit.note.pitch;
+      return;
+    }
+    if (!hit && selectMode) { g.type = 'lasso'; g.additive = true; return; }
     if (hit) {
       g.note = { ...hit.note };
       g.lastPitch = hit.note.pitch;
@@ -186,7 +207,8 @@ export function createNotesPage(app, nav) {
         draw();
       }, 450);
     } else {
-      g.lp = setTimeout(() => { if (g && !g.moved && g.type === 'empty') { haptic(15); const gg = g; g = null; emptyMenu(gg); } }, 500);
+      // long-press empty space arms the lasso: drag = select notes, release = pattern menu
+      g.lp = setTimeout(() => { if (g && !g.moved && g.type === 'empty') { haptic(15); g.type = 'lasso'; g.armed = true; g.additive = selIds.length > 1; } }, 500);
     }
   });
 
@@ -206,6 +228,33 @@ export function createNotesPage(app, nav) {
     if (!g.moved && Math.hypot(dx, dy) < 8) return;
     if (!g.moved) { g.moved = true; clearTimeout(g.lp); }
     const v = g.v0;
+    if (g.type === 'lasso') {
+      g.cx = p.x; g.cy = p.y;
+      const pat0 = pattern();
+      if (!pat0) return;
+      const ids = notesInBox(pat0.notes, xToBeat(v, Math.min(g.x, p.x) - KW), xToBeat(v, Math.max(g.x, p.x) - KW), yToPitch(v, Math.max(g.y, p.y) - RULER), yToPitch(v, Math.min(g.y, p.y) - RULER));
+      selIds = g.additive ? [...new Set([...(g.base ||= selIds.slice()), ...ids])] : ids;
+      syncSelBar();
+      draw();
+      return;
+    }
+    if (g.type === 'group') {
+      const pat0 = pattern();
+      if (!pat0) return;
+      if (!g.orig) {
+        if (!selIds.includes(g.note.id)) selIds = [...selIds, g.note.id];
+        g.orig = noteOrigins(pat0, selIds);
+        syncSelBar();
+      }
+      let db = dx / v.ppb;
+      if (snap > 0) db = snapRound(g.note.start + db, snap) - g.note.start;
+      const rows = Math.round(-dy / v.rowH);
+      const np = scaleLock ? stepPitch(scaleSnap(g.note.pitch), rows, pcs()) : g.note.pitch + rows;
+      if (np !== g.lastPitch) { g.lastPitch = np; preview(np); haptic(3); }
+      editNotes(selIds.length > 1 ? 'Move notes' : 'Move note', (pt) => moveNotes(pt, g.orig, db, rows, { pcs: scaleLock ? pcs() : null }));
+      draw();
+      return;
+    }
     if (g.type === 'empty' || g.type === 'pan') {
       g.type = 'pan';
       setView({ ...view(), x0: g.v0.x0 - (g.keys ? 0 : dx / v.ppb), top: g.v0.top + (g.ruler ? 0 : dy / v.rowH) });
@@ -241,9 +290,26 @@ export function createNotesPage(app, nav) {
     if (g.type === 'pinch') { if (pts.size === 0) g = null; return; }
     const gg = g;
     g = null;
-    if (e.type === 'pointercancel' || gg.moved) return;
+    if (e.type === 'pointercancel') return;
+    if (gg.type === 'lasso') {
+      if (gg.moved) { haptic(8); syncSelBar(); draw(); return; }
+      if (gg.armed) { patternMenu(); return; }
+      if (selIds.length) { selIds = []; syncSelBar(); draw(); }
+      return;
+    }
+    if (gg.moved) { if (gg.type === 'group') haptic(6); return; }
     const pat = pattern();
     if (!pat) return;
+    if (gg.type === 'group') {
+      // tap in Select mode / on a multi-selected note: toggle it (Select mode) or make it the only selection
+      if (selectMode) selIds = selIds.includes(gg.note.id) ? selIds.filter((x) => x !== gg.note.id) : [...selIds, gg.note.id];
+      else { selIds = []; selId = gg.note.id; }
+      preview(gg.note.pitch);
+      syncSelBar();
+      draw();
+      return;
+    }
+    if (gg.type === 'empty' && selIds.length > 1) { selIds = []; syncSelBar(); draw(); return; }
     if (gg.type === 'empty') {
       // tap: add a note
       const start = snap > 0 ? snapFloor(gg.beat, snap) : gg.beat;
@@ -282,8 +348,72 @@ export function createNotesPage(app, nav) {
     });
   }
 
-  function emptyMenu() {
-    patternMenu();
+  // ---------------------------------------------------------- multi-select action bar
+  const selNotes = () => { const pat = pattern(); const s = new Set(selIds); return pat ? pat.notes.filter((n) => s.has(n.id)) : []; };
+  const editSel = (label, fn) => editNotes(label, (pt) => fn(pt, selIds));
+  function selIb(ic, label, fn, txt = null) {
+    const b = h('button.pk-ib', { type: 'button', 'aria-label': label, title: label }, ic ? icon(ic, 18) : null, txt ? h('span.pk-ib-txt', txt) : null);
+    b.addEventListener('click', () => { haptic(5); fn(); });
+    return b;
+  }
+  function transposeBtn(dir) {
+    const b = h('button.pk-ib', { type: 'button', 'aria-label': dir > 0 ? 'Up' : 'Down', title: dir > 0 ? 'Transpose up (scale step with the lock on; hold to repeat)' : 'Transpose down (hold to repeat)' }, h('span.pk-ib-txt', dir > 0 ? '▲' : '▼'));
+    holdRepeat(b, () => { editSel('Transpose', (pt, ids) => transposeNotes(pt, ids, dir, scaleLock ? pcs() : null)); const n = selNotes()[0]; if (n) preview(n.pitch); draw(); }, (n) => (n < 2 ? 380 : 120));
+    return b;
+  }
+  function velocityPopup() {
+    const avg = () => { const ns = selNotes(); return ns.length ? ns.reduce((a, n) => a + (n.vel ?? 0.8), 0) / ns.length : 0.8; };
+    openParamPopup(app, valueTarget({ key: 'vel', label: `Velocity (${selIds.length} notes)`, type: 'number', min: 0.05, max: 1, step: 0.01, default: 0.8, unit: '%' }, avg, (v) => { editSel('Velocity', (pt, ids) => setVelocity(pt, ids, { set: v })); draw(); }));
+  }
+  function quantizeMenu() {
+    const q = snap || 0.25;
+    const lbl = SNAPS.find((x) => x.value === q)?.label || `${q} beat`;
+    actionSheet(`Quantize ${selIds.length} notes`, [
+      { label: `Start + length to ${lbl}`, icon: 'magnet', onClick: () => editSel('Quantize', (pt, ids) => quantizeNotes(pt, ids, q)) },
+      { label: `Starts only to ${lbl}`, onClick: () => editSel('Quantize', (pt, ids) => quantizeNotes(pt, ids, q, { ends: false })) },
+      { label: '50 % towards the grid (keep the feel)', onClick: () => editSel('Quantize', (pt, ids) => quantizeNotes(pt, ids, q, { strength: 0.5, ends: false })) },
+      { header: 'The grid is the snap setting above' },
+    ]);
+  }
+  function selMoreMenu() {
+    const pat = pattern();
+    if (!pat) return;
+    const bpb = beatsPerBar(get());
+    const ns = selNotes();
+    const bar0 = ns.length ? Math.floor(Math.min(...ns.map((n) => n.start)) / bpb) : 0;
+    actionSheet('Selection', [
+      { label: 'Select all notes', icon: 'layers', onClick: () => { selIds = pat.notes.map((n) => n.id); syncSelBar(); draw(); } },
+      { label: `All notes in bar ${bar0 + 1}`, onClick: () => { selIds = notesInBox(pat.notes, bar0 * bpb, (bar0 + 1) * bpb, 0, 127); syncSelBar(); draw(); } },
+      ns.length ? { label: 'Same pitch as the selection', onClick: () => { const ps = new Set(ns.map((n) => n.pitch)); selIds = pat.notes.filter((n) => ps.has(n.pitch)).map((n) => n.id); syncSelBar(); draw(); } } : null,
+      { label: 'Invert selection', onClick: () => { const s = new Set(selIds); selIds = pat.notes.filter((n) => !s.has(n.id)).map((n) => n.id); syncSelBar(); draw(); } },
+      '-',
+      ns.length ? { label: '+1 octave', onClick: () => { editSel('Transpose', (pt, ids) => transposeNotes(pt, ids, 12)); draw(); } } : null,
+      ns.length ? { label: '−1 octave', onClick: () => { editSel('Transpose', (pt, ids) => transposeNotes(pt, ids, -12)); draw(); } } : null,
+      ns.length ? { label: 'Softer (−20 %)', onClick: () => editSel('Velocity', (pt, ids) => setVelocity(pt, ids, { scale: 0.8 })) } : null,
+      ns.length ? { label: 'Louder (+20 %)', onClick: () => editSel('Velocity', (pt, ids) => setVelocity(pt, ids, { scale: 1.2 })) } : null,
+      { label: 'Select none', icon: 'x', disabled: !ns.length, onClick: () => { selIds = []; syncSelBar(); draw(); } },
+    ].filter(Boolean));
+  }
+  function syncSelBar() {
+    selModeBtn.classList.toggle('on', selectMode);
+    selModeBtn.textContent = selectMode ? '☑ Select' : '☐ Select';
+    const pat = pattern();
+    if (pat) { const ids = new Set(pat.notes.map((n) => n.id)); selIds = selIds.filter((id) => ids.has(id)); }
+    const n = selIds.length;
+    const show = mode === 'roll' && (n > 1 || selectMode);
+    selBar.hidden = !show;
+    if (!show) return;
+    const chip = h('button.pk-selcount', { type: 'button', title: n ? 'Clear the selection' : 'Leave Select mode' }, n ? `${n} note${n === 1 ? '' : 's'}` : 'Tap notes', n ? h('span.pk-selcount-x', '×') : null);
+    chip.addEventListener('click', () => { haptic(5); if (n) selIds = []; else selectMode = false; syncSelBar(); draw(); });
+    selBar.replaceChildren(...[chip,
+      n ? transposeBtn(1) : null, n ? transposeBtn(-1) : null,
+      n ? selIb('magnet', 'Quantize', quantizeMenu) : null,
+      n ? selIb('volume', 'Velocity', velocityPopup) : null,
+      n ? selIb('copy', 'Duplicate', () => { let ids; editNotes('Duplicate notes', (pt) => { ids = duplicateNotes(pt, selIds, snap > 0 ? beatsPerBar(get()) : 0); }); if (ids?.length) selIds = ids; else app.toast('No room after the selection — make the pattern longer first.', { level: 'warn' }); syncSelBar(); draw(); }) : null,
+      n ? selIb('trash', 'Delete', () => { editSel('Delete notes', (pt, ids) => deleteNotes(pt, ids)); selIds = []; selId = null; syncSelBar(); draw(); }) : null,
+      selIb('menu', 'More', selMoreMenu),
+      selectMode ? h('button.pk-chip.on.pk-sel-done', { type: 'button', onclick: () => { selectMode = false; haptic(5); syncSelBar(); draw(); } }, 'Done') : null,
+    ].filter(Boolean));
   }
 
   // ============================================================ drum grid
@@ -419,10 +549,12 @@ export function createNotesPage(app, nav) {
       else host.replaceChildren(emptyState('Pick an instrument track', 'Notes are written into the selected track\'s pattern.', bigButton('Choose a track', () => pickTrack(app, { onPick: () => render() }), { ic: 'layers', cls: 'primary' }), bigButton('Add a track', () => addTrackSheet(app, () => render()), { ic: 'plus' })));
       toolbar.hidden = mode === 'none';
       lockBtn.hidden = mode === 'drums';
+      selModeBtn.hidden = mode !== 'roll';
     }
     humBtn.hidden = mode !== 'roll';
     if (mode === 'drums') renderDrums();
     if (mode === 'roll') requestAnimationFrame(draw);
+    syncSelBar();
   }
   let lastDrumSig = '';
   const frame = () => {
