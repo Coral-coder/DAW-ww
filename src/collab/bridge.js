@@ -103,7 +103,12 @@ export class CollabBridge extends Emitter {
   detach() {
     this._off?.();
     this._off = null;
-    if (this.store.history === this) this.store.history = null;
+    if (this.store.history === this) {
+      this.store.history = null;
+      // the snapshot undo stack would roll back other people's edits — start fresh
+      this.store.undoStack.length = 0;
+      this.store.redoStack.length = 0;
+    }
   }
 
   _onChange(project, label) {

@@ -16,6 +16,7 @@ src/
   audio/             Web Audio engine: instruments, drum synth, sampler, effects, scheduler, render
   io/                project save/load, MIDI import/export, WAV encode, autosave
   ui/                views & components
+  collab/            real-time collaboration (CRDT, WebRTC, presence) + versions — docs/COLLAB.md
 tests/               node:test unit tests (*.test.js)
 ```
 

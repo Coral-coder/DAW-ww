@@ -51,13 +51,21 @@ export class PeerLink extends Emitter {
     dc.onmessage = (e) => this._recv(e.data);
   }
 
+  /** Wait for ICE gathering: until complete, or shortly after a public (srflx/relay) candidate, max 5 s. */
   _gathered() {
     if (this.trickle || this.pc.iceGatheringState === 'complete') return Promise.resolve();
     return new Promise((resolve) => {
-      const done = () => { clearTimeout(timer); this.pc.removeEventListener('icegatheringstatechange', check); resolve(); };
+      let soon = null;
+      const done = () => { clearTimeout(timer); clearTimeout(soon); this.pc.removeEventListener('icegatheringstatechange', check); this.pc.removeEventListener('icecandidate', onCand); resolve(); };
       const check = () => { if (this.pc.iceGatheringState === 'complete') done(); };
-      const timer = setTimeout(done, 5000); // use what we have (host + srflx usually arrive fast)
+      const onCand = (e) => {
+        const c = e.candidate?.candidate || '';
+        const wait = / typ (srflx|relay)/.test(c) ? 400 : 2500; // host-only (LAN / same machine) still works
+        if (!soon || wait < 1000) { clearTimeout(soon); soon = setTimeout(done, wait); }
+      };
+      const timer = setTimeout(done, 5000);
       this.pc.addEventListener('icegatheringstatechange', check);
+      this.pc.addEventListener('icecandidate', onCand);
     });
   }
 
