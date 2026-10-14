@@ -10,16 +10,19 @@ const LAST = 'daw3-groove-last';
 const load = () => { try { return JSON.parse(localStorage.getItem(LAST) || 'null') || {}; } catch { return {}; } };
 const save = (o) => { try { localStorage.setItem(LAST, JSON.stringify(o)); } catch { /* */ } };
 
-/** Tiny bar drawing of a groove's per-slot offsets (and accents). */
+/** Tiny timeline of a groove: faint lines = the straight grid, bars = where each slot lands (height = accent). */
 function grooveSketch(g) {
-  const wrap = h('div.groove-sketch', { title: 'Timing offset per slot (bar height = accent)' });
+  const wrap = h('div.groove-sketch', { title: 'Grid (faint) and where each slot lands with this groove (bar height = accent)' });
   if (!g) return wrap;
   const n = g.offsets.length;
-  g.offsets.forEach((off, i) => {
-    const pct = (off / g.grid) * 100; // ±% of a slot
+  const unit = g.grid === 0.25 ? '16th' : g.grid === 0.5 ? '8th' : 'slot';
+  for (let i = 0; i < n; i++) {
+    wrap.appendChild(h('span.groove-grid', { style: { left: `${(i / n) * 100}%` } }));
+    const off = g.offsets[i] || 0;
     const vel = g.velocities?.[i] ?? 1;
-    wrap.appendChild(h('span.groove-slot', { style: { height: `${Math.round(30 + 60 * vel)}%`, transform: `translateX(${Math.max(-40, Math.min(40, pct))}%)`, width: `${100 / n}%` }, title: `Slot ${i + 1}: ${off >= 0 ? '+' : ''}${Math.round(pct)}% of a ${g.grid === 0.25 ? '16th' : g.grid === 0.5 ? '8th' : 'slot'}${g.velocities?.[i] != null ? `, accent ${Math.round(vel * 100)}%` : ''}` }));
-  });
+    const pct = Math.round((off / g.grid) * 100);
+    wrap.appendChild(h('span.groove-hit', { style: { left: `${((i + off / g.grid) / n) * 100}%`, height: `${Math.round(25 + 70 * vel)}%` }, title: `Slot ${i + 1}: ${pct >= 0 ? '+' : ''}${pct}% of a ${unit}${g.velocities?.[i] != null ? `, accent ${Math.round(vel * 100)}%` : ''}` }));
+  }
   return wrap;
 }
 
