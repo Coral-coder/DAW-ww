@@ -982,6 +982,12 @@ export class MixGraph {
     }
   }
 
+  /**
+   * Live tempo edit while playing: warped audio clips that span transport `beat` follow `map` from dispatch time
+   * `time` on (the scheduler's next window boundary, where its new anchor starts). See WarpPlayer.retime.
+   */
+  retimeClips(map, time, beat) { return this._warp ? this._warp.retime(map, time, beat) : 0; }
+
   /** Warp engine for audio clips (warp modes / tempo maps), created on first use. */
   _warpPlayer() {
     return this._warp || (this._warp = new WarpPlayer(this, { getSampleBuffer: (id) => this.o.getSampleBuffer(id), getSampleAnalysis: (id) => this.o.getSampleAnalysis?.(id) || null, worklet: this.o.warpWorklet !== false }));
@@ -1067,6 +1073,7 @@ export class MixGraph {
       try { e.instrument?.allNotesOff(t); } catch (err) { this.onError(err); }
       try { e.code?.allNotesOff(t); } catch (err) { this.onError(err); }
     }
+    this._warp?.clear(); // stopped voices must not be retimed (a later stop() would revive them)
     for (const rec of this.sources) {
       try {
         rec.g.gain.cancelScheduledValues(t);

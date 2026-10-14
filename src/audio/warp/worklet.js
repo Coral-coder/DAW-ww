@@ -2,7 +2,8 @@
 // Sample PCM is shared by every node of the context: the first node of a sample posts
 // { type:'sample', id, sr, channels } and it is kept in this (per-context) global scope.
 // processorOptions: { sampleId, when (ctx time of output t = 0), mode, curve, transpose, formants, quality, slices, srcRate }
-// Messages in: { type:'stop', at } — silence from ctx time `at` on and end. Out: { type:'ended' }.
+// Messages in: { type:'stop', at } — silence from ctx time `at` on and end; { type:'curve', curve } — live tempo edit
+// (new curve, same origin `when`; the renderer carries on seamlessly). Out: { type:'ended' }.
 import { WarpRenderer } from './core.js';
 
 const SAMPLES = new Map();
@@ -18,6 +19,7 @@ class WarpProcessor extends AudioWorkletProcessor {
       const d = m.data || {};
       if (d.type === 'sample') SAMPLES.set(d.id, { sr: d.sr, channels: d.channels });
       else if (d.type === 'stop') this.stopAt = Math.min(this.stopAt, d.at || 0);
+      else if (d.type === 'curve' && d.curve?.length) { this.o.curve = d.curve; this.r?.setCurve(d.curve); }
     };
   }
   _end() { if (!this.ended) { this.ended = true; this.port.postMessage({ type: 'ended' }); } return false; }

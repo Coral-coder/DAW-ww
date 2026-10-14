@@ -89,6 +89,20 @@ export class WarpRenderer {
     else if (this.mode === 'tones' || this.mode === 'complex') this._initWsola(o.quality || 'normal');
   }
 
+  /**
+   * Replace the curve while streaming (live tempo edit; see markers.spliceCurve): the part already output must be
+   * unchanged, so the grain / slice state carries straight on — no restart, no click.
+   */
+  setCurve(curve) {
+    if (!curve?.length) return;
+    this.curve = curve;
+    this.duration = curve[curve.length - 1].t;
+    this.total = Math.max(0, Math.round(this.duration * this.outRate));
+    this.hint = { i: 0 };
+    this.done = this.n >= this.total;
+    if (this.mode === 'beats' && this.slices) this.sliceT = this.slices.map((x) => curveTimeAt(this.curve, x));
+  }
+
   /** Source seconds at output seconds t. */
   s(t) { return curveAt(this.curve, t, this.hint); }
 

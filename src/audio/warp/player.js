@@ -8,7 +8,10 @@
 //              PCM is posted once per context into the worklet scope;
 //              fallback (no AudioWorklet, worklet still loading, offline renders / export): the same WarpRenderer
 //              runs once on the main thread and the result is cached (LRU) and played as a plain buffer.
-import { clipCurve, curveRates, curveTimeAt, isWarped, secAtBeat } from './markers.js';
+// Live tempo edits: retime(map, time, beat) re-curves every voice that spans `beat` from ctx `time` on (worklet
+// voices get the spliced curve and carry on seamlessly; repitch re-schedules playbackRate; cached voices restart).
+import { clipCurve, curveRates, curveTimeAt, isWarped, secAtBeat, spliceCurve } from './markers.js';
+import { envelopePoints } from '../../record/clips.js';
 import { renderWarp } from './core.js';
 import { TempoMap } from '../../time/tempo-map.js';
 
@@ -74,7 +77,8 @@ export class WarpPlayer {
     this.cacheFrames = 0;
     this.useWorklet = o.worklet !== false && typeof OfflineAudioContext !== 'undefined' && !(this.ctx instanceof OfflineAudioContext);
     if (this.useWorklet) loadWarpWorklet(this.ctx);
-    this.stats = { worklet: 0, cached: 0, rendered: 0, native: 0 };
+    this.stats = { worklet: 0, cached: 0, rendered: 0, native: 0, retimed: 0 };
+    this.voices = new Set(); // { e, ev, clip, time, points, mode, kind: 'worklet'|'native'|'cached', src, g, dest }
   }
 
   play(e, ev, time, spb, map) {
@@ -96,8 +100,83 @@ export class WarpPlayer {
     if (!src) { try { g.disconnect(); } catch { /* */ } return; }
     const rec = { src, g };
     this.g.sources.add(rec);
-    src.onended = () => { this.g.sources.delete(rec); try { g.disconnect(); } catch { /* */ } };
+    const voice = { e, ev, clip, time, points, mode, kind: src.node ? 'worklet' : (mode === 'off' || mode === 'repitch') ? 'native' : 'cached', src, g, rec };
+    this.voices.add(voice);
+    this._onEnded(voice, src);
   }
+
+  _onEnded(voice, src) {
+    src.onended = () => {
+      if (voice.src !== src) return; // replaced by a retimed source
+      this.voices.delete(voice);
+      this.g.sources.delete(voice.rec);
+      try { voice.g.disconnect(); } catch { /* */ }
+    };
+  }
+
+  /**
+   * Live tempo edit: from ctx `time` (dispatch time of transport `beat` — the scheduler's next window boundary,
+   * where the new map takes over) every voice that spans `beat` follows `map`. Returns the number of voices retimed.
+   */
+  retime(map, time, beat) {
+    let n = 0;
+    for (const v of [...this.voices]) {
+      const { ev, clip } = v;
+      const end = ev.beat + ev.dur;
+      if (!(beat > ev.beat + 1e-9 && beat < end - 1e-9)) continue;
+      const tc = time - v.time;
+      if (!(tc > 0) || tc >= v.points[v.points.length - 1].t) continue;
+      const tail = clipCurve(clip, map, beat, end).points;
+      const points = spliceCurve(v.points, tc, tail);
+      const duration = points[points.length - 1].t;
+      try {
+        if (v.kind === 'worklet') v.src.node.port.postMessage({ type: 'curve', curve: points });
+        else if (v.kind === 'native') this._retimeNative(v, points, tc, duration);
+        else this._retimeCached(v, tail, time);
+      } catch (err) { console.warn('[warp] retime failed', err); continue; }
+      v.points = points;
+      this._retimeEnvelope(v, map, beat, end, time, duration - tc);
+      n++;
+    }
+    this.stats.retimed += n;
+    return n;
+  }
+
+  _retimeNative(v, points, tc, duration) {
+    const src = v.src, t = v.time + tc;
+    if (v.mode === 'repitch') {
+      src.playbackRate.cancelScheduledValues(t);
+      for (const r of curveRates(points)) if (r.t >= tc - 1e-9) src.playbackRate.setValueAtTime(Math.max(0.01, r.rate), v.time + r.t);
+    }
+    src.stop(v.time + duration + 0.001); // a later stop() replaces the earlier stop time
+  }
+
+  _retimeCached(v, tail, time) {
+    const buffer = this.o.getSampleBuffer(v.clip.sampleId);
+    if (!buffer) return;
+    const out = this._cached(v.clip.sampleId, buffer, this._opts(v.clip, buffer, tail, v.mode));
+    if (!out) return;
+    const src = this.ctx.createBufferSource();
+    src.buffer = out;
+    src.connect(v.g);
+    src.start(time, 0, tail[tail.length - 1].t + 0.001);
+    try { v.src.stop(time); } catch { /* */ }
+    v.src = src; v.rec.src = src;
+    this._onEnded(v, src);
+  }
+
+  /** Clip gain envelope from `time` on, under the new map (no de-click dip at the splice). */
+  _retimeEnvelope(v, map, beat, end, time, dur) {
+    const p = v.g.gain;
+    const pts = envelopePoints(v.clip, beat - v.clip.start, dur, map);
+    if (pts.length > 1) pts[0] = { t: 0, v: pts[1].v };
+    if (p.cancelAndHoldAtTime) p.cancelAndHoldAtTime(time); else p.cancelScheduledValues(time);
+    p.setValueAtTime(pts[0].v, time);
+    for (let i = 1; i < pts.length; i++) p.linearRampToValueAtTime(pts[i].v, time + pts[i].t);
+  }
+
+  /** Forget every voice (transport stop / seek: the mixer stops the sources). */
+  clear() { this.voices.clear(); }
 
   _native(buffer, points, duration, time, dest, mode) {
     const ctx = this.ctx;

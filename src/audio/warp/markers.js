@@ -127,6 +127,16 @@ export function curveTimeAt(points, s) {
   return ds > 0 ? a.t + ((s - a.s) * (b.t - a.t)) / ds : a.t;
 }
 
+/**
+ * Live tempo edit: keep `points` (a playing clip's curve) before output time `tc` and continue with `tail`
+ * (a fresh clipCurve from the edit's beat, t = 0 at that beat) shifted to start at `tc`. Pure.
+ */
+export function spliceCurve(points, tc, tail) {
+  const head = points.filter((p) => p.t < tc - 1e-9);
+  const out = head.concat(tail.map((p) => ({ t: p.t + tc, s: p.s })));
+  return out.length >= 2 ? out : [...out, { t: tc, s: tail[0]?.s ?? 0 }];
+}
+
 /** Piecewise-constant playback rates reproducing the curve exactly at every breakpoint: [{t, rate}]. */
 export function curveRates(points) {
   const out = [];
