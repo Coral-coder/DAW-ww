@@ -15,6 +15,7 @@ import { Scheduler, CodeCache } from './scheduler.js';
 import { renderOffline as renderOfflineImpl, decodeSampleData, findSampleIdByName } from './render.js';
 import { prefetchCodeSamples } from './code-instrument.js';
 import { activeLanes, automationOwner, valueAt } from '../core/automation.js';
+import { nativeAudioForEngine } from '../native/client.js';
 
 export class AudioEngine extends Emitter {
   constructor(store) {
@@ -66,10 +67,14 @@ export class AudioEngine extends Emitter {
     this._initPromise = (async () => {
       const AC = globalThis.AudioContext || globalThis.webkitAudioContext;
       if (!AC) throw new Error('Web Audio API is not supported in this browser');
-      const ctx = new AC({ latencyHint: 'interactive' });
+      // Mac app: the native audio engine (device / rate / buffer size from Audio Settings) — null in browsers
+      const native = await nativeAudioForEngine().catch(() => null);
+      const ctx = new AC({ latencyHint: 'interactive', ...(native?.contextOptions() || {}) });
       this.ctx = ctx;
+      this.native = native;
+      const destination = native ? await native.attachOutput(ctx).catch(() => ctx.destination) : ctx.destination;
       this.graph = new MixGraph(ctx, {
-        destination: ctx.destination,
+        destination,
         getBpm: () => this.project.bpm,
         getBeatAt: (t) => this.scheduler?.beatAt(t) ?? null,
         getSampleBuffer: (id) => this.getSampleBuffer(id),
@@ -433,7 +438,17 @@ export class AudioEngine extends Emitter {
 
   // ------------------------------------------------------------------ rendering
   /** See render.js. Uses (and fills) the engine's decoded-sample cache. */
-  renderOffline(opts = {}) {
+  async renderOffline(opts = {}) {
+    // Mac app: native effects / realtime-only plugins can't run in an OfflineAudioContext -> realtime bounce
+    if (this.native) {
+      const { nativeExportMode, realtimeBounce } = await import('../native/export.js');
+      const m = nativeExportMode(this.project);
+      if (m.mode === 'realtime') {
+        opts.onNotice?.(`Realtime bounce: ${m.reason}, so the song plays through once while it is recorded${opts.stems ? ' (stems: master only)' : ''}.`);
+        const buf = await realtimeBounce(this, { startBeat: opts.startBeat ?? 0, endBeat: opts.endBeat, tail: opts.tail ?? 2, onProgress: opts.onProgress, signal: opts.signal });
+        return opts.stems ? { master: buf } : buf;
+      }
+    }
     return renderOfflineImpl(this.project, {
       ...opts,
       sampleCache: this.buffers,

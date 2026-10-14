@@ -15,7 +15,31 @@ export function openPluginDialog(opts = {}) {
   return null;
 }
 
-const KIND_NAMES = { soundfont: 'SoundFont', faust: 'Faust', wam: 'WAM' };
+const KIND_NAMES = { soundfont: 'SoundFont', faust: 'Faust', wam: 'WAM', native: 'Native' };
+const FORMAT_NAMES = { vst3: 'VST3', au: 'Audio Unit', clap: 'CLAP' };
+
+/** Native plugin (Mac app) buttons: open its own editor window, keep its state in the project. */
+function nativeButtons(app, getPlugin, edit) {
+  const save = async (quiet) => {
+    const pl = getPlugin();
+    const s = await pl?.getState?.().catch(() => null);
+    if (s == null) { if (!quiet) app.toast('This plugin does not save a state', { level: 'warn' }); return; }
+    edit('Plugin state', (p) => { p.state = s; }, { undo: !quiet });
+    if (!quiet) app.toast('Plugin state saved in the project', { level: 'success' });
+  };
+  const open = button('Open plugin window', async () => {
+    try {
+      await app.engine.init();
+      const pl = getPlugin();
+      if (!pl) throw new Error('The plugin is still loading');
+      // edits in the plugin's own window flow back into the project (automation / undo see them)
+      pl.onValues = (values) => edit('Plugin edit', (p) => { p.values = values; }, { coalesce: true });
+      pl.onEditorClosed = () => save(true);
+      await pl.openEditor();
+    } catch (e) { app.toast(String(e?.message || e), { level: 'error' }); }
+  }, { icon: 'sliders', cls: 'small primary', title: 'Show the plugin’s own interface in a separate window' });
+  return [open, button('Save state', () => save(false), { icon: 'save', cls: 'small', title: 'Store the plugin’s current settings in the project (saved with it)' })];
+}
 
 /** Live plugin engine of a track instrument (FaustEngine / SoundfontEngine / WamEngine) or null. */
 export function liveInstrumentPlugin(app, trackId) {
@@ -128,7 +152,8 @@ export function pluginInstrumentEditor(app, body, tgt, ins, { edit, resolved }) 
       if (params.url) src.append(h('span.plg-name', name || 'Custom soundfont'), h('a.plg-url', { href: params.url, target: '_blank', rel: 'noopener', title: params.url }, shortUrl(params.url)));
       else src.append(h('span.plg-name', 'General MIDI library'));
     } else {
-      src.append(h('span.plg-name', name || (ins.type === 'faust' ? 'Faust program' : 'Web Audio Module')));
+      src.append(h('span.plg-name', name || (ins.type === 'faust' ? 'Faust program' : ins.type === 'native' ? 'Native plugin' : 'Web Audio Module')));
+      if (ins.type === 'native') src.append(h('span.plg-url', `${FORMAT_NAMES[params.format] || ''}${params.vendor ? ` · ${params.vendor}` : ''}`));
       if (params.url) src.append(h('a.plg-url', { href: params.url, target: '_blank', rel: 'noopener', title: params.url }, shortUrl(params.url)));
     }
   };
@@ -139,6 +164,11 @@ export function pluginInstrumentEditor(app, body, tgt, ins, { edit, resolved }) 
   buttons.appendChild(button('Change…', () => openPluginDialog({ tab: 'catalog', kind: ins.type, type: 'instrument', trackId }), { icon: 'plug', cls: 'small', title: 'Pick another plugin for this track' }));
   if (ins.type === 'soundfont') {
     if (params.url) buttons.appendChild(button('Use GM library', () => edit('SoundFont: GM library', (p) => { delete p.url; delete p.name; }), { cls: 'small', title: 'Forget the custom link and use the Instrument / Library pickers below' }));
+  }
+  if (ins.type === 'native') {
+    for (const b of nativeButtons(app, () => liveInstrumentPlugin(app, trackId), edit)) buttons.appendChild(b);
+    knobsHost = h('div.plg-faust-knobs');
+    extra.appendChild(knobsHost);
   }
   if (ins.type === 'faust') {
     buttons.appendChild(button('Edit source', () => openPluginDialog({ tab: 'faust', trackId, code: params.code, name: params.name }), { icon: 'code', cls: 'small', title: 'Open the Faust editor with this program; recompile to update the track' }));
@@ -169,7 +199,7 @@ export function pluginInstrumentEditor(app, body, tgt, ins, { edit, resolved }) 
       } else {
         clear(knobsHost);
         knobs = new Map();
-        knobsHost.appendChild(h('div.dv-note', st.state === 'error' ? 'Fix the error above (Edit source) to get the controls.' : 'Controls appear once the program is compiled.'));
+        knobsHost.appendChild(h('div.dv-note', ins.type === 'native' ? (st.state === 'error' ? 'Retry above to reload the plugin.' : 'Controls appear once the plugin is loaded.') : st.state === 'error' ? 'Fix the error above (Edit source) to get the controls.' : 'Controls appear once the program is compiled.'));
       }
     } else {
       for (const [addr, k] of knobs) if (params.values && addr in params.values) k.set(params.values[addr]);
@@ -199,13 +229,15 @@ export function pluginEffectEditor(app, body, fx, { edit }) {
   body.appendChild(wrap);
   if (fx.type === 'faust') {
     buttons.appendChild(button('Edit source', () => openPluginDialog({ tab: 'faust', fxId: fx.id, code: params.code, name: params.name, type: 'effect' }), { icon: 'code', cls: 'small' }));
+  } else if (fx.type === 'native') {
+    for (const b of nativeButtons(app, () => liveEffectPlugin(app, fx.id), edit)) buttons.appendChild(b);
   } else {
     buttons.appendChild(button('Open plugin UI', () => openWamGui(app, () => liveEffectPlugin(app, fx.id), params.name || 'Plugin', (state) => edit('Plugin state', (p) => { p.state = state; }, { undo: false })), { icon: 'sliders', cls: 'small primary' }));
   }
   let knobSig = '', knobs = new Map();
   const refresh = () => {
     status.update();
-    if (fx.type !== 'faust') return;
+    if (fx.type !== 'faust' && fx.type !== 'native') return;
     const st = getStatus(keyOf());
     const list = st.info?.params || (st.state === 'ready' ? [] : null);
     const sig = list ? list.map((p) => p.address).join('|') : `#${st.state}`;

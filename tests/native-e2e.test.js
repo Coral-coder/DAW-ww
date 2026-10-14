@@ -116,3 +116,23 @@ test('native e2e: scan, load, process, params, state, latency (CLAP + VST3 throu
     assert.notEqual(server.host.pid, pid);
   } finally { cleanup(); }
 });
+
+test('native e2e: Audio Units through the plugin host (macOS)', { skip: !have ? opts.skip : process.platform !== 'darwin' ? 'Audio Units exist only on macOS' : false }, async () => {
+  const { server, cleanup } = await setup();
+  try {
+    await server.handle('plugins.scan', [{ formats: ['au'] }]);
+    const { plugins } = await server.handle('plugins.list');
+    const delay = plugins.find((p) => p.key === 'au:aufx:dely:appl');
+    assert.ok(delay, 'AUDelay listed');
+    assert.equal(delay.vendor, 'Apple');
+    const info = await server.handle('plugins.load', [{ key: delay.key, sampleRate: 48000 }]);
+    assert.ok(info.params.some((p) => p.id === 0 && p.max === 100), 'wet/dry param');
+    await server.handle('plugins.setParam', [info.inst, 0, 0]);
+    let r;
+    for (let i = 0; i < 4; i++) r = server.stream({ t: 'proc', inst: info.inst, block: i, numIn: 2, numOut: 2, input: block(0.5), midi: new Float64Array(0) });
+    assert.ok(Math.abs(r.output[100] - 0.5) < 1e-3, 'dry signal passes');
+    const state = await server.handle('plugins.getState', [info.inst]);
+    const again = await server.handle('plugins.load', [{ key: delay.key, state }]);
+    assert.equal(Math.round(again.values['0']), 0, 'state restored');
+  } finally { cleanup(); }
+});

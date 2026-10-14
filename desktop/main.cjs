@@ -3,16 +3,20 @@
 // Finder file associations (.daW3), drag & drop / open-file of audio and folders, native open / save
 // dialogs and microphone permission. Run: npm run mac:dev · build: npm run mac:build (README appendix).
 'use strict';
-const { app, BrowserWindow, Menu, dialog, ipcMain, protocol, shell, session, systemPreferences } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, protocol, shell, session, systemPreferences, utilityProcess, MessageChannelMain } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const lib = require('./lib.cjs');
+const { setupNative } = require('./native-bridge.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const APP_ORIGIN = 'app://daw3';
 const isMac = process.platform === 'darwin';
 const isDev = !app.isPackaged;
+
+// SharedArrayBuffer for the native audio bridge (also unlocked by the COOP/COEP headers below).
+app.commandLine.appendSwitch('enable-features', 'SharedArrayBuffer');
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true, codeCache: true } },
@@ -116,7 +120,7 @@ function registerProtocol() {
     if (!file) return new Response('Forbidden', { status: 403 });
     try {
       const body = await fsp.readFile(file);
-      return new Response(body, { headers: { 'content-type': lib.mimeFor(file), 'cache-control': 'no-cache' } });
+      return new Response(body, { headers: lib.appHeaders(file) });
     } catch {
       return new Response('Not found', { status: 404 });
     }
@@ -185,6 +189,7 @@ else {
   app.whenReady().then(() => {
     registerProtocol();
     registerIpc();
+    setupNative({ app, ipcMain, utilityProcess, MessageChannelMain, getWindow: () => win });
     setupPermissions();
     Menu.setApplicationMenu(Menu.buildFromTemplate(lib.buildMenuTemplate({
       isMac, appName: 'daW³', send, openProject: openProjectDialog, importMusic: importMusicDialog, openExternal: (u) => shell.openExternal(u), isDev,

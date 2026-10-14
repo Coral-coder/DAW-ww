@@ -3,7 +3,9 @@
 // The plugin runtime (src/plugins/index.js) is imported lazily on first use.
 import { h, icon, clear } from './dom.js';
 import { modal, tabs, button, select } from './components.js';
-import { CATALOG, KIND_LABELS, catalogCategories, searchCatalog } from '../plugins/catalog.js';
+import { CATALOG, KIND_LABELS, catalogCategories, searchCatalog, setNativeEntries } from '../plugins/catalog.js';
+import { nativePluginsApi } from '../native/client.js';
+import { catalogEntries } from '../native/plugin-db.js';
 import { FAUST_TEMPLATE } from '../plugins/faust-library.js';
 import { onStatus, shortUrl } from '../plugins/status.js';
 import { setPluginDialogOpener } from './plugin-device.js';
@@ -19,12 +21,37 @@ const LINK_EXAMPLES = [
 
 /** catalog entry -> plugin info used by the runtime helpers */
 const entryInfo = (e) => ({
+  entry: e,
   kind: e.kind, type: e.type, name: e.name, url: e.source?.url || '', code: e.source?.code || '',
   library: e.source?.library, instrument: e.source?.instrument, experimental: !!e.experimental, description: e.description,
 });
 
+/** Mac app: load the native plugin database into the catalog (scans once on first launch). */
+export function refreshNativeCatalog() {
+  const api = nativePluginsApi();
+  if (!api) return Promise.resolve(false);
+  return api.list().then((r) => { setNativeEntries(catalogEntries(r)); return r; }).catch(() => false);
+}
+
+/** Rescan the plugin folders (progress via onProgress({done, total, path})). */
+export async function scanNativePlugins({ force = false, onProgress } = {}) {
+  const api = nativePluginsApi();
+  if (!api) return null;
+  const off = api.onEvent((ev) => { if (ev?.event === 'scan-progress') onProgress?.(ev); });
+  try {
+    const r = await api.scan({ force });
+    await refreshNativeCatalog();
+    return r;
+  } finally { off(); }
+}
+
 export function installPluginUi(app) {
   setPluginDialogOpener((opts) => openPluginsDialog(app, opts));
+  const napi = nativePluginsApi();
+  if (napi) {
+    refreshNativeCatalog().then((r) => { if (r && !r.scannedAt) scanNativePlugins().then((s) => s && app.toast(`Found ${s.count} VST3 / AU / CLAP plugins`, { level: 'success' })).catch(() => {}); });
+    napi.onEvent((ev) => { if (ev?.event === 'plugins-changed') refreshNativeCatalog(); });
+  }
   // friendly toasts for plugin load failures (live) and render problems
   const toasted = new Map();
   onStatus((key, st, prev) => {
@@ -132,6 +159,20 @@ export function openPluginsDialog(app, opts = {}) {
     };
     refreshCats();
     search.addEventListener('input', () => { filt.query = search.value; draw(); });
+    let scanBtn = null;
+    if (nativePluginsApi()) {
+      scanBtn = button('Scan plugins', async () => {
+        scanBtn.disabled = true;
+        const label = scanBtn.querySelector('span');
+        try {
+          const r = await scanNativePlugins({ force: true, onProgress: (p) => { if (label) label.textContent = `Scanning ${p.done}/${p.total}…`; } });
+          setMsg(`${r.count} native plugins${r.failed.length ? ` · ${r.failed.length} could not be loaded (${r.failed.slice(0, 3).map((f) => f.path.split('/').pop()).join(', ')}${r.failed.length > 3 ? '…' : ''})` : ''}`, r.failed.length ? 'warn' : 'info');
+          refreshCats();
+          draw();
+        } catch (e) { setMsg(String(e?.message || e), 'error'); }
+        finally { scanBtn.disabled = false; if (label) label.textContent = 'Scan plugins'; }
+      }, { icon: 'search', cls: 'small', title: 'Look for VST3, Audio Unit and CLAP plugins in the standard macOS plugin folders' });
+    }
     function draw() {
       clear(list);
       const items = searchCatalog(filt);
@@ -149,13 +190,14 @@ export function openPluginsDialog(app, opts = {}) {
           h('span.plg-cat', e.category)),
         h('div.plg-card-name', e.name),
         h('div.plg-card-desc', e.description),
-        h('div.plg-card-meta', `${e.author} · ${e.license} · `, h('a', { href: e.homepage, target: '_blank', rel: 'noopener' }, 'source')),
+        e.kind === 'native' ? h('div.plg-card-meta', { title: e.source?.path || '' }, `${e.author || 'Unknown vendor'} · ${e.license}`)
+          : h('div.plg-card-meta', `${e.author} · ${e.license} · `, h('a', { href: e.homepage, target: '_blank', rel: 'noopener' }, 'source')),
         actionButtons(info, { close: () => dlg.close() }));
     }
     draw();
     setTimeout(() => search.focus(), 30);
     return h('div.plg-tab.plg-catalog',
-      h('div.plg-toolbar', icon('search', 14), search, kindSel, typeSel, catHost, count),
+      h('div.plg-toolbar', icon('search', 14), search, kindSel, typeSel, catHost, count, scanBtn),
       list);
   }
 

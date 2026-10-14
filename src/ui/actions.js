@@ -560,6 +560,7 @@ export function createActions(app) {
     try {
       const result = await engine.renderOffline({
         startBeat: 0, endBeat, stems, mode: songMode ? 'song' : 'pattern',
+        onProgress: (f) => { prog.firstChild.style.width = `${Math.round(35 + f * 55)}%`; }, // realtime bounce (native plugins)
         // shown when Strudel-engine code tracks had to be exported with daW³ instruments
         onNotice: (msg) => { if (!exportNoticeShown) toast(msg, { level: 'warn', timeout: 9000 }); exportNoticeShown = true; },
       });

@@ -173,6 +173,14 @@ async function renderOnceWith(project, cfg) {
   }
   // plugin instruments / effects (soundfont, faust, wam) load asynchronously: wait before scheduling
   await awaitPluginsReady(graph, project, onError);
+  // native (VST3 / AU / CLAP) instruments in the Mac app: rendered faster than realtime by the plugin host
+  if ([...(graph.tracks?.values?.() || [])].some((e) => e.instrument?.engine?.plugin?.isNative)) {
+    const { prerenderNative } = await import('../native/export.js');
+    const all = collectEvents(project, startBeat, endBeat, { mode, jump: true, codeCache, metronome: false, onError });
+    const notesFor = (id) => all.filter((ev) => ev.type === 'note' && ev.trackId === id)
+      .map((ev) => ({ time: Math.max(0, (ev.beat - startBeat) * spb), pitch: ev.pitch, vel: ev.vel, dur: ev.dur * spb }));
+    await prerenderNative(graph, notesFor, length, onError);
+  }
   // code tracks playing library samples (Strudel drum machines, Dirt-Samples…): fetch + decode first
   // (daW³-instrument code tracks only; superdough loads its own samples while the render waits in flushCode)
   const daw3Code = { ...project, tracks: project.tracks.filter((t) => t.type !== 'code' || codeSoundOf(t, cfg.codeSound) === 'daw3') };

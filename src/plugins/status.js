@@ -36,6 +36,7 @@ export function pluginKey(def) {
     case 'soundfont': return 'sf:' + soundfontSourceUrl(p) + (p.multisample ? `|ms:${p.multisample}|${(p.range || []).join(',')}` : '');
     case 'faust': return p.code ? 'faust:' + hashString(p.code) : (p.url ? 'faust-url:' + p.url : null);
     case 'wam': return p.url ? 'wam:' + p.url : null;
+    case 'native': return p.key ? 'native:' + p.key : null;
     default: return null;
   }
 }

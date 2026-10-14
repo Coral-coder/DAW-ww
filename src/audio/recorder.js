@@ -29,6 +29,9 @@ export function pickRecorderMime() {
 
 /** Rough round-trip latency compensation (seconds) for a context + input track. */
 export function estimateLatency(ctx, track) {
+  // native audio engine: the measured loopback round trip (Audio Settings → Measure) is exact
+  const nat = globalThis.daw3NativeAudio;
+  if (nat?.config?.enabled && Number(nat.config.latencyMs) > 0) return Math.min(1, nat.config.latencyMs / 1000);
   let lat = 0;
   if (ctx) lat += (Number(ctx.baseLatency) || 0) + (Number(ctx.outputLatency) || 0);
   try {
@@ -66,7 +69,12 @@ export class AudioRecorder extends Emitter {
     this._opening = (async () => {
       await this.engine.init();
       let stream;
-      try {
+      // Mac app with the native audio engine on: record from the chosen interface inputs instead
+      const nat = globalThis.daw3NativeAudio;
+      if (nat?.config?.enabled && nat.config.inputEnabled) {
+        try { stream = await nat.inputStream(this.engine.ctx, { channels: this.nativeChannels || [0, 1] }); } catch (e) { console.warn('[recorder] native input', e); }
+      }
+      if (!stream) try {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
         });

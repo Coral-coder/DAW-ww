@@ -6,6 +6,7 @@ const LOADERS = {
   soundfont: () => import('../plugins/soundfont.js'),
   faust: () => import('../plugins/faust.js'),
   wam: () => import('../plugins/wam.js'),
+  native: () => import('../plugins/native.js'),
 };
 
 import { getStatus, setStatus, pluginKey, soundfontSourceUrl } from '../plugins/status.js';
@@ -124,7 +125,7 @@ export async function preloadInstrument(def, { sampleRate = 44100 } = {}) {
       if (getStatus(key).state !== 'ready') setStatusInfo(key, f);
       return true;
     }
-    return !isPluginType(def?.type) || def?.type === 'wam';
+    return !isPluginType(def?.type) || def?.type === 'wam' || def?.type === 'native';
   } catch {
     return false;
   }

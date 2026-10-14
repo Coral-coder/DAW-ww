@@ -382,6 +382,11 @@ export const EFFECT_DEFS = {
     description: 'A Faust DSP program compiled in the browser — load one from the plugin catalog, a GitHub link or the Faust editor.',
     params: [num('mix', 'Mix', 0, 1, 1, { step: 0.01, section: 'Plugin' })],
   },
+  native: {
+    name: 'Native Plugin', category: 'Plugins', plugin: true,
+    description: 'A VST3, Audio Unit or CLAP effect installed on this Mac (daW³ Mac app; runs in the out-of-process plugin host).',
+    params: [num('mix', 'Mix', 0, 1, 1, { step: 0.01, section: 'Plugin' })],
+  },
   wam: {
     name: 'Web Audio Module', category: 'Plugins', plugin: true,
     description: 'A Web Audio Modules 2.0 effect plugin loaded from a URL (experimental; may only run live).',

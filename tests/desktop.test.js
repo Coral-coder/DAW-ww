@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 const lib = require('../desktop/lib.cjs');
 
 test('desktop: main / preload / lib parse', () => {
-  for (const f of ['desktop/main.cjs', 'desktop/preload.cjs', 'desktop/lib.cjs', 'src/ui/native.js']) execFileSync(process.execPath, ['--check', path.join(root, f)]);
+  for (const f of ['desktop/main.cjs', 'desktop/preload.cjs', 'desktop/lib.cjs', 'desktop/native-bridge.cjs', 'desktop/audio-server.cjs', 'desktop/native-server.cjs', 'desktop/plughost.cjs', 'src/ui/native.js', 'src/ui/audio-prefs.js', 'src/native/client.js', 'src/native/bridge-worklet.js', 'src/native/pump-worker.js', 'src/native/export.js', 'src/plugins/native.js']) execFileSync(process.execPath, ['--check', path.join(root, f)]);
 });
 
 test('desktop: app:// paths stay inside the app folder', () => {
@@ -82,4 +82,24 @@ test('desktop: icon generator is deterministic and valid PNG', async () => {
   const a = renderIcon(64), b = renderIcon(64);
   assert.deepEqual(a, b);
   assert.deepEqual([...a.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+});
+
+test('desktop: cross-origin isolation headers (SharedArrayBuffer for the audio bridge) + Audio Settings menu', () => {
+  const hd = lib.appHeaders('/x/index.html');
+  assert.equal(hd['cross-origin-opener-policy'], 'same-origin');
+  assert.equal(hd['cross-origin-embedder-policy'], 'credentialless');
+  assert.equal(hd['content-type'], 'text/html; charset=utf-8');
+  const sent = [];
+  for (const isMac of [true, false]) {
+    const t = lib.buildMenuTemplate({ isMac, send: (c) => sent.push(c) });
+    const item = t.flatMap((m) => m.submenu || []).find((i) => i.label === 'Audio & Plugin Settings…');
+    assert.ok(item, `settings item (isMac=${isMac})`);
+    assert.equal(item.accelerator, 'CmdOrCtrl+,');
+    item.click();
+  }
+  assert.deepEqual(sent, ['audio-prefs', 'audio-prefs']);
+  const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert.deepEqual(pkg.build.extraResources[0].filter, ['daw3_audio.node', 'daw3-plughost']);
+  assert.ok(pkg.build.files.includes('!desktop/native/**'), 'native sources stay out of the app bundle');
+  assert.ok(pkg.build.asarUnpack.includes('src/native/**'));
 });

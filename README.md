@@ -175,6 +175,10 @@ npm test       # asks the machine whether it still believes in itself
 | first launch | the build is ad-hoc signed, not notarized: right-click → *Open*, or `xattr -dr com.apple.quarantine /Applications/daW3.app` |
 | to sign it properly | set `CSC_LINK` / `CSC_KEY_PASSWORD` (Developer ID cert) and `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`, change `build.mac.identity` from `"-"` to your identity, add `"hardenedRuntime": true` and `"notarize": true` |
 | the icon | `npm run mac:icon` regenerates `build/icon.png` |
+| your audio interface | **daW³ → Audio & Plugin Settings… (⌘,)**: switch on the *native audio engine*, pick the output / input device, output pair, input channels, sample rate and buffer size (32–1024); *Measure* times the round trip with a loopback ping (recordings are shifted by it) |
+| your plugins | VST3, Audio Units and CLAP from the standard `~/Library/Audio/Plug-Ins` / `/Library/Audio/Plug-Ins` folders are scanned on first launch (*Scan plugins* in the plugin browser rescans) and appear there as kind **Native**. They run in a separate host process — a crashing plugin can't take daW³ down — open their own editor windows, keep their state in the `.daW3` project and expose their parameters to automation and MIDI learn |
+| export with plugins | native instruments render faster than realtime; native effects (or realtime-only plugins) make *Export* play the song through once while recording it |
+| the native layer | `npm run native:build` (or `native:test`) compiles `desktop/native` (miniaudio, CLAP, VST3 pluginterfaces — all MIT / public domain, fetched pinned at build time) into the N-API addon, the plugin host and test plugins; see `desktop/native/build.sh` |
 
 *The browser needs none of this:* `npm start` still works, and `npm test` never touches Electron.
 

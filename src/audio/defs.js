@@ -283,6 +283,10 @@ const WAM_PARAMS = section('Host', [
   numP('transpose', 'Transpose', -24, 24, 0, { step: 1, unit: 'st', adv: true }),
   numP('gain', 'Volume', 0, 2, 0.8, { step: 0.01 }),
 ]);
+const NATIVE_PARAMS = section('Host', [
+  numP('transpose', 'Transpose', -24, 24, 0, { step: 1, unit: 'st', adv: true }),
+  numP('gain', 'Volume', 0, 2, 1, { step: 0.01 }),
+]);
 // ---- 'strudel': a superdough patch (Strudel's own audio engine, src/audio/strudel-voice.js). Keys are Strudel's
 // control names (see src/audio/strudel-patches.js strudelValue). Defaults are superdough's own (lpf 20000 / hpf 20 /
 // 0 amounts = off); envelope defaults play samples / soundfonts untouched.
@@ -331,7 +335,7 @@ const STRUDEL_PARAMS = [
 ];
 
 /** Instrument types implemented by lazily loaded plugin hosts (src/plugins). */
-export const PLUGIN_INSTRUMENT_TYPES = ['soundfont', 'faust', 'wam'];
+export const PLUGIN_INSTRUMENT_TYPES = ['soundfont', 'faust', 'wam', 'native'];
 
 export const INSTRUMENT_DEFS = {
   synth: { name: 'Subtractive Synth', params: SYNTH_PARAMS },
@@ -343,6 +347,8 @@ export const INSTRUMENT_DEFS = {
   soundfont: { name: 'SoundFont Instrument', params: SOUNDFONT_PARAMS, plugin: true },
   faust: { name: 'Faust Instrument', params: FAUST_PARAMS, plugin: true },
   wam: { name: 'Web Audio Module', params: WAM_PARAMS, plugin: true },
+  // VST3 / AU / CLAP in the Mac app (src/plugins/native.js); params {key, format, uid, path, name, vendor, state, values}
+  native: { name: 'Native Plugin (VST3 / AU / CLAP)', params: NATIVE_PARAMS, plugin: true },
   strudel: { name: 'Strudel Sound (superdough)', params: STRUDEL_PARAMS },
 };
 

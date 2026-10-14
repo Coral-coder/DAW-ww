@@ -4,6 +4,7 @@
 const LOADERS = {
   faust: () => import('../plugins/faust.js'),
   wam: () => import('../plugins/wam.js'),
+  native: () => import('../plugins/native.js'),
 };
 
 export const PLUGIN_EFFECT_TYPES = Object.keys(LOADERS);

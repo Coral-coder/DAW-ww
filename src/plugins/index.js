@@ -1,5 +1,6 @@
 // Plugin host entry points used by the UI: detect a plugin from a link, turn a plugin into project
 // JSON, preview it. Browser-only (lazy-imported by the plugins dialog).
+import { nativeParamsFor } from '../native/state.js';
 import { resolveGitHubUrl, manifestUrls, validateManifest, detectPluginKind, joinUrl, nameFromUrl } from './github.js';
 import { fetchText } from './fetch-cache.js';
 import { parseSoundfontText } from './soundfont-parse.js';
@@ -13,6 +14,7 @@ const ENGINES = {
   soundfont: () => import('./soundfont.js'),
   faust: () => import('./faust.js'),
   wam: () => import('./wam.js'),
+  native: () => import('./native.js'),
 };
 
 /**
@@ -82,6 +84,7 @@ async function describe(kind, url, { r, name, description = '', type, onStage })
 
 /** Instrument JSON for a detected plugin / catalog-style info {kind, name, url, code, library, instrument}. */
 export function pluginInstrument(info) {
+  if (info.kind === 'native') return { type: 'native', preset: null, params: nativeParamsFor(info.entry || info) };
   if (info.kind === 'soundfont') {
     if (info.library && info.instrument) return { type: 'soundfont', preset: null, params: { library: info.library, instrument: info.instrument } };
     return { type: 'soundfont', preset: null, params: { url: info.url, name: info.name } };
@@ -92,6 +95,7 @@ export function pluginInstrument(info) {
 
 /** Effect params for a detected plugin (Effect { type: info.kind, params }). */
 export function pluginEffectParams(info) {
+  if (info.kind === 'native') return nativeParamsFor(info.entry || info);
   if (info.kind === 'faust') return { name: info.name, code: info.code || '', url: info.url || '' };
   return { name: info.name, url: info.url };
 }

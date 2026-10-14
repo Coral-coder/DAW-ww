@@ -87,7 +87,9 @@ function buildMenuTemplate({ isMac = process.platform === 'darwin', appName = 'd
   const template = [];
   if (isMac) {
     template.push({ label: appName, submenu: [
-      { role: 'about' }, { type: 'separator' }, { role: 'services' }, { type: 'separator' },
+      { role: 'about' }, { type: 'separator' },
+      { label: 'Audio & Plugin Settings…', accelerator: 'CmdOrCtrl+,', click: cmd('audio-prefs') },
+      { type: 'separator' }, { role: 'services' }, { type: 'separator' },
       { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' },
     ] });
   }
@@ -106,6 +108,7 @@ function buildMenuTemplate({ isMac = process.platform === 'darwin', appName = 'd
       { label: 'MIDI…', click: cmd('export-midi') },
     ] },
     { type: 'separator' },
+    ...(isMac ? [] : [{ label: 'Audio & Plugin Settings…', accelerator: 'CmdOrCtrl+,', click: cmd('audio-prefs') }, { type: 'separator' }]),
     isMac ? { role: 'close' } : { role: 'quit' },
   ] });
   template.push({ label: 'Edit', submenu: [
@@ -131,4 +134,16 @@ function buildMenuTemplate({ isMac = process.platform === 'darwin', appName = 'd
   return template;
 }
 
-module.exports = { mimeFor, isAudioPath, isProjectPath, resolveAppPath, classifyPaths, saveFiltersFor, openDialogOptions, buildMenuTemplate, AUDIO_EXT, PROJECT_EXT, VIEW_MENU };
+/**
+ * Response headers for app:// pages: cross-origin isolation (COOP + COEP) unlocks SharedArrayBuffer,
+ * which the native audio bridge's AudioWorklet ring buffers need. COEP 'credentialless' still lets
+ * the web app load CDN resources (soundfonts, WAMs) that don't send CORP headers.
+ */
+function appHeaders(file) {
+  return {
+    'content-type': mimeFor(file), 'cache-control': 'no-cache',
+    'cross-origin-opener-policy': 'same-origin', 'cross-origin-embedder-policy': 'credentialless', 'cross-origin-resource-policy': 'same-origin',
+  };
+}
+
+module.exports = { appHeaders, mimeFor, isAudioPath, isProjectPath, resolveAppPath, classifyPaths, saveFiltersFor, openDialogOptions, buildMenuTemplate, AUDIO_EXT, PROJECT_EXT, VIEW_MENU };

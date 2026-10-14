@@ -40,6 +40,7 @@ export function installNative(app) {
     'toggle-browser': () => app.ui.set({ browserOpen: !app.ui.get('browserOpen') }),
     'toggle-assistant': () => app.ui.set({ assistantOpen: !app.ui.get('assistantOpen') }),
     help: () => actions.showHelp(),
+    'audio-prefs': () => import('./audio-prefs.js').then((m) => m.openAudioPrefs(app)),
   };
   nat.onCommand((cmd, payload) => {
     const fn = handlers[cmd];
