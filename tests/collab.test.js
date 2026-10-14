@@ -284,7 +284,8 @@ test('reconcile keeps identities and matches the source', () => {
 
 test('relay: room join, peer list and signal forwarding', { skip: typeof WebSocket !== 'function' }, async () => {
   const { spawn } = await import('node:child_process');
-  const srv = spawn(process.execPath, [new URL('../tools/collab-relay/server.js', import.meta.url).pathname], { env: { ...process.env, PORT: '0' } });
+  const { fileURLToPath } = await import('node:url');
+  const srv = spawn(process.execPath, [fileURLToPath(new URL('../tools/collab-relay/server.js', import.meta.url))], { env: { ...process.env, PORT: '0' } });
   try {
     const port = await new Promise((res, rej) => {
       srv.stdout.on('data', (d) => { const m = /:(\d+)/.exec(String(d)); if (m) res(+m[1]); });

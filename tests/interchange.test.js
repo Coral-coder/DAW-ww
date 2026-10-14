@@ -113,7 +113,8 @@ test('ZIP: store + deflate round trip (node:zlib codec), unicode names, CRC', as
 test('ZIP: the archive is readable by the system unzip when available', async (t) => {
   const { spawnSync } = await import('node:child_process');
   if (spawnSync('unzip', ['-v']).status !== 0) { t.skip('unzip not installed'); return; }
-  const dir = fs.mkdtempSync('/tmp/daw3-zip-');
+  const { tmpdir } = await import('node:os');
+  const dir = fs.mkdtempSync(`${tmpdir()}/daw3-zip-`);
   const file = `${dir}/t.zip`;
   fs.writeFileSync(file, await writeZip([{ name: 'x/project.xml', data: '<a>' + 'b'.repeat(500) + '</a>' }], { codec: zlibCodec }));
   const r = spawnSync('unzip', ['-t', file]);

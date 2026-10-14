@@ -9,7 +9,7 @@
     "test": "node --test tests/*.test.js",
     "desktop:dev": "electron .",
     "mac:dev": "electron .",
-    "mac:build": "sh desktop/native/build.sh && electron-builder --mac --arm64 --publish never && electron-builder --mac --x64 --publish never && bash scripts/make-dmg.sh",
+    "mac:build": "sh desktop/native/build.sh && electron-builder --mac --publish never && bash scripts/make-dmg.sh",
     "win:build": "sh desktop/native/build.sh && electron-builder --win --x64 --publish never",
     "linux:build": "sh desktop/native/build.sh && electron-builder --linux --x64 --publish never",
     "smoke": "node scripts/smoke-electron.mjs",

@@ -12,8 +12,11 @@ for app in dist/mac*/daW3.app; do
   # magic (`file`), not by name or exec bit: the x64 "Electron Framework" binary has no extension, no +x and is
   # not linker-signed (the arm64 one is), so a name / +x filter missed it ("code object is not signed at all").
   # Then the helper apps and frameworks, then a final --deep pass over the app, then a strict verify.
-  find "$app/Contents" -type f ! -name '*.asar' ! -name '*.pak' ! -name '*.png' ! -name '*.js' -print0 \
-    | while IFS= read -r -d '' f; do
+  # Deepest first, and never the main executable here: codesign treats Contents/MacOS/daW3 as the whole bundle and
+  # refuses while anything nested is still unsigned — it is sealed by the final pass over the app.
+  find "$app/Contents" -type f ! -path "$app/Contents/MacOS/*" ! -name '*.asar' ! -name '*.pak' ! -name '*.png' ! -name '*.js' \
+    | awk -F/ '{ print NF "\t" $0 }' | sort -rn | cut -f2- \
+    | while IFS= read -r f; do
         if file -b "$f" | grep -q 'Mach-O'; then codesign --force --sign - --timestamp=none "$f"; fi
       done
   for h in "$app"/Contents/Frameworks/*.app; do [ -e "$h" ] && codesign --force --sign - --timestamp=none "$h"; done

@@ -73,8 +73,7 @@ jobs:
       - name: Package macOS (arm64 + x64 .app/.zip, ad-hoc signed .dmg)
         if: matrix.platform == 'mac'
         run: |
-          npx electron-builder --mac --arm64 --publish never
-          npx electron-builder --mac --x64 --publish never
+          npx electron-builder --mac --publish never   # arm64 + x64 (build.mac.target)
           for app in $(find dist -maxdepth 2 -name 'daW3.app'); do
             n="$app/Contents/Resources/native"
             lipo -info "$n/daw3-plughost" "$n/daw3_audio.node" "$n/daw3-link"
