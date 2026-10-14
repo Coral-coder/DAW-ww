@@ -20,6 +20,7 @@ import { createFreezeGuard } from '../core/freeze.js';
 import * as freeze from './freeze.js';
 import { EngineMonitor } from './monitor.js';
 import { SampleStreamer } from './stream/streamer.js';
+import { tempoMapFor } from '../time/tempo-map.js';
 
 /** Sample rates offered in the UI (the device / browser decides what actually works). */
 export const SAMPLE_RATES = [44100, 48000, 88200, 96000];
@@ -101,6 +102,7 @@ export class AudioEngine extends Emitter {
         getSampleBuffer: (id) => this.getSampleBuffer(id),
         getSampleByName: (name) => this.getSampleByName(name),
         getSampleStream: (id) => this.streamer?.handle(id) || null,
+        getSampleAnalysis: (id) => this.project.samples?.[id]?.analysis || null, // warp: transients (beats mode)
         isStreamed: (id) => this._streams(id),
         playStream: (meta, dest, when, off, dur) => this.streamer.play(meta, dest, when, off, dur),
         onError: (e) => this._error(e),
@@ -110,11 +112,11 @@ export class AudioEngine extends Emitter {
         ctx,
         getProject: () => this.project,
         codeCache: this.codeCache,
-        dispatch: (ev, time, spb) => this.graph.playEvent(ev, time, spb),
+        dispatch: (ev, time, spb, map) => this.graph.playEvent(ev, time, spb, map),
         onError: (e) => this._error(e),
         onWrap: (time) => this.graph.syncLfos(time),
         onWindow: (project, b0, b1, t0, spb, jump, pre) => this._automateWindow(project, b0, b1, t0 - (pre || 0), spb, jump),
-        onTick: (project) => this._automateTick(project),
+        onTick: (project) => { this._automateTick(project); this._tempoTick(project); },
         getPreroll: () => this.graph?.latency || 0, // plugin delay compensation (see latency.js)
       });
       try { this.graph.sync(this.project); } catch (e) { this._error(e); }
@@ -279,6 +281,24 @@ export class AudioEngine extends Emitter {
     this.graph.applyControl(project, b0, { inst: true, fx: jump === 'seek', immediate: jump === 'seek' });
   }
 
+  // Tempo map: tempo-synced effects (delays, LFOs) follow the current tempo while the transport runs; 'tempo'
+  // events (bpm at the audible position) drive the LCD. Constant maps keep the old project.bpm behaviour.
+  _tempoTick(project) {
+    const map = tempoMapFor(project, project.mode);
+    if (map.isConstant) {
+      if (this._mapTempo != null) { this._mapTempo = null; this.graph.setTempo(project.bpm); this.emit('tempo', project.bpm); }
+      return;
+    }
+    const b = this.getAudiblePosition();
+    const bpm = Math.round(map.bpmAt(b) * 10) / 10;
+    if (bpm !== this._mapTempo) { this._mapTempo = bpm; this.graph.setTempo(bpm); this.emit('tempo', bpm); }
+  }
+
+  /** The tempo map the transport follows now (song mode: tempo changes; pattern mode: constant). */
+  getTempoMap() { return tempoMapFor(this.project, this.project.mode); }
+  /** Tempo (bpm) at the audible position (or the playhead when stopped). */
+  getCurrentTempo() { return this.getTempoMap().bpmAt(Math.max(0, this.getAudiblePosition())); }
+
   _automateTick(project) {
     if (project.mode !== 'song' || !this._autoActive) return;
     project = this._withoutOverrides(project);
@@ -325,6 +345,7 @@ export class AudioEngine extends Emitter {
       master: strip('master', project.master),
       buses: (project.buses || []).map((b) => strip(b.id, b)),
       tracks: project.tracks.map((t) => strip(t.id, t)),
+      ...(project.mixer?.vcas?.length ? { mixer: { ...project.mixer, vcas: project.mixer.vcas.map((v) => strip(v.id, v)) } } : {}),
     };
   }
 
@@ -356,14 +377,19 @@ export class AudioEngine extends Emitter {
   }
 
   // ------------------------------------------------------------------ transport
-  async play() {
+  /**
+   * Start the transport. opts.from: start beat (may be negative: silent count-in bars, used by recording);
+   * opts.at: AudioContext time at which `from` must be HEARD (sample-accurate start after a count-in).
+   */
+  async play(opts = {}) {
     await this.init();
     if (this._playing) return;
     const p = this.project;
-    let beat = Math.max(0, this._pos);
+    let beat = Number.isFinite(opts.from) ? opts.from : Math.max(0, this._pos);
     if (p.mode === 'song' && p.loop?.enabled && p.loop.end > p.loop.start && beat >= p.loop.end) beat = p.loop.start;
     this._playing = true;
-    const t0 = this.scheduler.start(beat);
+    const delay = Number.isFinite(opts.at) ? Math.max(0.02, opts.at - this.ctx.currentTime - (this.scheduler.preroll || 0)) : undefined;
+    const t0 = this.scheduler.start(beat, delay);
     this.graph.syncLfos(t0);
     this._startPosTimer();
     this.emit('state', { playing: true });
@@ -507,6 +533,8 @@ export class AudioEngine extends Emitter {
   // ------------------------------------------------------------------ meters / analysis
   getMeter(id = 'master') { return this.graph ? this.graph.getMeter(id) : { l: 0, r: 0 }; }
   getAnalyser() { return this.graph ? this.graph.analyser : null; }
+  /** Master loudness / correlation / scope / pre-post spectrum (audio/meters.js), created on first use. */
+  getMasterAnalysis() { return this.graph ? this.graph.masterAnalysis() : null; }
   /** Gain reduction (dB) of a compressor / limiter effect by its effect id. */
   getReduction(fxId) { return this.graph ? this.graph.getReduction(fxId) : 0; }
   /** Last code-evaluation status of a code track: {ok, error, cps} | null. */

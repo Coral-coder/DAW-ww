@@ -10,6 +10,7 @@ import {
   soundKey, adoptSound, queueNextSound, addLoopLayer, loopBarsFor, loopLevel,
 } from './setlist-engine.js';
 import { valueAt } from '../core/automation.js';
+import { songTempoMap } from '../time/tempo-map.js';
 
 const MAX_PHRASES = 256; // older phrases are pruned (clips + patterns) to bound memory
 const sig = (notes) => (notes || []).map((n) => `${n.pitch}@${(+n.start).toFixed(3)}:${(+n.dur).toFixed(3)}`).join(',');
@@ -97,7 +98,10 @@ export class SetlistRunner extends Emitter {
   get nextPrepareBeat() {
     const last = this.lastPhrase;
     if (!last) return 0;
-    return prepareBeat(0, last.length, { bpb: this.state.bpb, bpm: this.app.store.get().bpm }) + last.start;
+    // safety lead at the fastest tempo the phrase reaches (tempo map: src/time)
+    const map = songTempoMap(this.app.store.get());
+    const bpm = map.isConstant ? map.bpm : Math.max(map.bpmAt(last.start), map.bpmAt(last.start + last.length));
+    return prepareBeat(0, last.length, { bpb: this.state.bpb, bpm }) + last.start;
   }
 
   tick() {
@@ -113,7 +117,8 @@ export class SetlistRunner extends Emitter {
     if (!last) { this._placeNext(); return; }
     if (pos > last.start + last.length) {
       // the user seeked past the set: continue from the bar the playhead is in
-      this._placeNext(Math.floor(pos / this.state.bpb) * this.state.bpb);
+      const map = songTempoMap(p);
+      this._placeNext(map.meters.length > 1 ? map.barAt(pos).start : Math.floor(pos / this.state.bpb) * this.state.bpb);
       return;
     }
     if (pos >= this.nextPrepareBeat) this._placeNext();

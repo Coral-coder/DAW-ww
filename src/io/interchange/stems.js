@@ -10,6 +10,7 @@
 //       render path (src/audio/render.js renderOffline), injected so this module stays Node-safe.
 //   buildMixBundle(project, {stems:[{track, wav, …}], …}) -> [{name, data, compress}] (ZIP entries, pure)
 //   tempoMapText(project), readmeText(project, info)
+import { songTempoMap, hasTempoChanges, hasMeterChanges } from '../../time/tempo-map.js';
 import { beatsPerBar, songLengthBeats } from '../../core/model.js';
 import { keySourcesFor } from '../../core/patch.js';
 import { pitchClassName, keySignature } from '../../theory/index.js';
@@ -75,21 +76,27 @@ const fmtTime = (sec) => {
   const s = sec - m * 60;
   return `${m}:${s.toFixed(3).padStart(6, '0')}`;
 };
-const barBeat = (beat, bpb) => `${Math.floor(beat / bpb + 1e-9) + 1}.${(Math.floor((beat % bpb) + 1e-9) + 1)}`;
 
-/** Human-readable tempo map: tempo / meter (incl. project.tempoAutomation if present) and markers. */
+/** Human-readable tempo map: tempo / meter changes (project.tempoMap / meterMap, src/time) and markers. */
 export function tempoMapText(project) {
-  const bpb = beatsPerBar(project);
-  const spb = 60 / project.bpm;
+  const map = songTempoMap(project);
+  const bbt = (b) => { const p = map.position(b); return `${p.bar}.${p.beat}`; };
   const [num, den] = project.timeSig || [4, 4];
   const lines = ['TEMPO MAP', '', 'Position (bar.beat)\tBeat\tTime\tEvent'];
   lines.push(`1.1\t0\t${fmtTime(0)}\tTempo ${project.bpm} BPM, meter ${num}/${den}`);
-  for (const p of project.tempoAutomation || []) if (p.beat > 0) lines.push(`${barBeat(p.beat, bpb)}\t${p.beat}\t${fmtTime(p.beat * spb)}\tTempo ${p.bpm} BPM (${p.interpolation === 'hold' ? 'step' : 'ramp'}; not played back by daW³)`);
-  for (const p of project.timeSigAutomation || []) if (p.beat > 0) lines.push(`${barBeat(p.beat, bpb)}\t${p.beat}\t${fmtTime(p.beat * spb)}\tMeter ${p.num}/${p.den}`);
-  for (const m of [...(project.markers || [])].sort((a, b) => a.beat - b.beat)) lines.push(`${barBeat(m.beat, bpb)}\t${m.beat}\t${fmtTime(m.beat * spb)}\tMarker "${m.name}"`);
+  const ev = [];
+  map.segs.forEach((g, i) => {
+    if (i > 0) ev.push([g.beat, `Tempo ${r3(g.bpm)} BPM`]);
+    if (g.k && g.end < Infinity) ev.push([g.beat, `Ramp to ${r3(map.segs[i + 1].bpm)} BPM at beat ${r3(g.end)}`]);
+  });
+  for (const m of map.meters.slice(1)) ev.push([m.beat, `Meter ${m.num}/${m.den}`]);
+  for (const m of project.markers || []) ev.push([m.beat, `Marker "${m.name}"`]);
+  ev.sort((a, b) => a[0] - b[0]);
+  for (const [b, text] of ev) lines.push(`${bbt(b)}\t${r3(b)}\t${fmtTime(map.secAt(b))}\t${text}`);
   lines.push('', 'The tempo is constant unless listed above. The MIDI file carries the same tempo, meter and markers.');
   return lines.join('\n') + '\n';
 }
+const r3 = (x) => Math.round(x * 1000) / 1000;
 
 export function keyText(project) {
   const k = project.key || { root: 0, scale: 'minor' };
@@ -108,7 +115,7 @@ export function readmeText(project, { sampleRate, bitDepth, tap, lengthSec, stem
     `${project.name || 'Untitled'} — stems for mixing`,
     '='.repeat(48),
     '',
-    `Tempo:        ${project.bpm} BPM${project.tempoAutomation?.length > 1 ? ' (has tempo changes — see Tempo map.txt)' : ''}`,
+    `Tempo:        ${project.bpm} BPM${hasTempoChanges(project) || hasMeterChanges(project) ? ' (has tempo / meter changes — see Tempo map.txt)' : ''}`,
     `Meter:        ${num}/${den}`,
     `Key:          ${keyText(project)}`,
     `Sample rate:  ${sampleRate} Hz`,

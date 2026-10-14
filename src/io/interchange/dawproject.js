@@ -25,8 +25,10 @@
 //   audio clips            -> <Clip contentTimeUnit="beats" fade*><Warps> (beats->seconds, natural speed) <Audio><File>
 //   automation             -> <Points><Target parameter=…> in the owner's arrangement lane (volume, pan, mute, sends,
 //                             instrument / effect params, effect on/off); others are reported and omitted
-//   tempo / time signature -> <Transport> + <TempoAutomation>/<TimeSignatureAutomation> (project.tempoAutomation /
-//                             project.timeSigAutomation, optional), markers -> <Markers>
+//   tempo / time signature -> <Transport> + <TempoAutomation>/<TimeSignatureAutomation> (project.tempoMap /
+//                             project.meterMap — see src/time/; round-trips ramps), markers -> <Markers>
+//   warped audio clips      -> <Warps> with one <Warp> per warp marker (content beats -> seconds); imported
+//                             stretched clips become warped clips (mode 'complex')
 import { el, toXml, parseXml, child, children, numAttr, boolAttr } from './xml.js';
 import { writeZip, readZip, zipText } from './zip.js';
 import { wavInfo, extForMime, mimeForPath, safeName, uniqueNamer } from './media.js';
@@ -42,6 +44,9 @@ import { PRESETS, resolveInstrumentDef } from '../../audio/presets.js';
 import { DRUM_KITS } from '../../audio/kits.js';
 import { codeToPatterns } from '../../code/convert.js';
 import { base64ToArrayBuffer, arrayBufferToBase64 } from '../samples.js';
+import { songTempoMap } from '../../time/tempo-map.js';
+import { applyTempoPoints, applyMeterPoints, tempoPoints, meterPoints } from '../../time/convert.js';
+import { isWarped, normalizeMarkers, beatAtSec } from '../../audio/warp/markers.js';
 
 export const DAWPROJECT_EXTENSION = '.dawproject';
 export const DAWPROJECT_VERSION = '1.0';
@@ -358,8 +363,16 @@ export function buildDawproject(project, opts = {}) {
       }))));
   };
 
-  const audioClipEl = ({ start, length, offset = 0, fadeIn = 0, fadeOut = 0, name }, file) => {
+  const audioClipEl = ({ start, length, offset = 0, fadeIn = 0, fadeOut = 0, name, warp }, file) => {
     const dur = file.info.duration || (offset + length) * spb;
+    if (isWarped({ warp }) && warp.markers?.length) {
+      // warp markers: content beats -> seconds (extrapolated to cover the file)
+      const ms = warp.markers.length > 1 ? warp.markers : [...warp.markers, { beat: beatAtSec(warp, dur), sec: dur }];
+      return el('Clip', { time: r6(start), duration: r6(length), contentTimeUnit: 'beats', playStart: r6(offset), fadeTimeUnit: 'beats', fadeInTime: r6(fadeIn), fadeOutTime: r6(fadeOut), name },
+        el('Warps', { id: nextId(), timeUnit: 'beats', contentTimeUnit: 'seconds' },
+          el('Audio', { id: nextId(), channels: file.info.channels || 2, sampleRate: Math.round(file.info.sampleRate || 44100), duration: r6(dur) }, el('File', { path: file.path })),
+          ms.map((m) => el('Warp', { time: r6(m.beat), contentTime: r6(m.sec) }))));
+    }
     return el('Clip', { time: r6(start), duration: r6(length), contentTimeUnit: 'beats', playStart: r6(offset), fadeTimeUnit: 'beats', fadeInTime: r6(fadeIn), fadeOutTime: r6(fadeOut), name },
       el('Warps', { id: nextId(), timeUnit: 'beats', contentTimeUnit: 'seconds' },
         el('Audio', { id: nextId(), channels: file.info.channels || 2, sampleRate: Math.round(file.info.sampleRate || 44100), duration: r6(dur) }, el('File', { path: file.path })),
@@ -407,22 +420,22 @@ export function buildDawproject(project, opts = {}) {
           const f = c.sampleId && sampleFile(c.sampleId);
           if (!f) { report.warnings.push(`Track "${t.name}": audio clip at beat ${c.start} has no sample — skipped.`); continue; }
           if ((c.gain ?? 1) !== 1) report.unmapped.push(`Track "${t.name}": audio clip gain ${c.gain} (DAWproject clips have no gain) — omitted`);
-          clipEls.push(audioClipEl({ start: c.start, length: c.length, offset: c.offset || 0, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0, name: c.name || project.samples[c.sampleId]?.name }, f));
+          clipEls.push(audioClipEl({ start: c.start, length: c.length, offset: c.offset || 0, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0, name: c.name || project.samples[c.sampleId]?.name, warp: c.warp }, f));
         } else if (t.type === 'instrument') {
           const ce = noteClip(c);
           if (ce) clipEls.push(ce);
         }
       }
     } else if (o.rendered) {
-      clipEls.push(audioClipEl({ start: 0, length: r6(o.rendered.info.duration / spb), name: o.name }, o.rendered));
+      clipEls.push(audioClipEl({ start: 0, length: r6(songTempoMap(project).beatAt(o.rendered.info.duration)), name: o.name }, o.rendered));
     }
     const pts = (o.automation || []).map((l) => pointsEl(l, o.owner, o.name)).filter(Boolean);
     return el('Lanes', { id: nextId(), track: o.trackXmlId }, el('Clips', { id: nextId() }, clipEls), pts);
   });
 
   const markers = [...(project.markers || [])].filter((m) => Number.isFinite(m.beat)).sort((a, b) => a.beat - b.beat);
-  const tempoPts = (project.tempoAutomation || []).filter((p) => Number.isFinite(p.beat) && p.bpm > 0);
-  const tsPts = (project.timeSigAutomation || []).filter((p) => Number.isFinite(p.beat) && p.num > 0 && p.den > 0);
+  const tempoPts = tempoPoints(project);
+  const tsPts = project.meterMap?.length ? meterPoints(project) : [];
   const arrangement = el('Arrangement', { id: nextId() },
     el('Lanes', { id: nextId(), timeUnit: 'beats' }, trackLanes),
     markers.length ? el('Markers', { id: nextId() }, markers.map((m) => el('Marker', { time: r6(m.beat), name: m.name || 'Marker', color: m.color }))) : null,
@@ -912,7 +925,7 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
     const wu = warps.attrs.timeUnit || contentUnit || 'beats';
     const cu = warps.attrs.contentTimeUnit || 'seconds';
     const pts = children(warps, 'Warp').map((w) => ({ t: toBeats(numAttr(w, 'time', 0), wu), c: cu === 'beats' ? numAttr(w, 'contentTime', 0) * spb() : numAttr(w, 'contentTime', 0) })).sort((a, b) => a.t - b.t);
-    if (pts.length < 2) return { map: (b) => b * spb(), stretched: false };
+    if (pts.length < 2) return { map: (b) => b * spb(), stretched: false, pts };
     const map = (b) => {
       let i = 0;
       while (i < pts.length - 2 && b > pts[i + 1].t) i++;
@@ -920,7 +933,7 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
       return z.t > a.t ? a.c + ((b - a.t) * (z.c - a.c)) / (z.t - a.t) : a.c;
     };
     const stretched = pts.some((p, i) => i > 0 && p.t > pts[i - 1].t && Math.abs((p.c - pts[i - 1].c) / ((p.t - pts[i - 1].t) * spb()) - 1) > 0.01);
-    return { map, stretched };
+    return { map, stretched, pts };
   };
 
   const companions = new Map();
@@ -1001,15 +1014,22 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
     const sampleId = sampleFromPath(file.attrs.path, null, { duration: numAttr(audio, 'duration', null) });
     if (!sampleId) { report.warnings.push(`Track "${track.name}": audio file "${file.attrs.path}" missing from the archive — clip skipped.`); return; }
     const target = track.type === 'audio' ? track : audioCompanion(track);
-    let offSec;
+    let offSec, warp = null;
     if (content.name === 'Warps') {
       const w = warpMap(content, contentUnit);
-      if (w.stretched) stretchedClips++;
+      if (w.stretched) {
+        stretchedClips++;
+        // stretched: becomes a warped clip (markers = the warp points); clip.offset is in content beats then
+        const markers = normalizeMarkers(w.pts.map((p) => ({ beat: p.t, sec: p.c })));
+        const span = markers[markers.length - 1].sec - markers[0].sec;
+        warp = { mode: 'complex', markers, bpm: span > 0 ? r6((60 * (markers[markers.length - 1].beat - markers[0].beat)) / span) : project.bpm, transpose: 0, formants: false, quality: 'normal' };
+      }
       offSec = w.map(ps + trim);
     } else {
       offSec = (ps + trim) * spb(); // ps is already in beats (content unit converted)
     }
-    const clip = createClip(target.id, { type: 'audio', sampleId, start: r6(start), length: r6(end - start), offset: r6(Math.max(0, offSec / spb())), name: clipEl.attrs.name || ctx.outer?.name || project.samples[sampleId].name });
+    const clip = createClip(target.id, { type: 'audio', sampleId, start: r6(start), length: r6(end - start), offset: r6(warp ? ps + trim : Math.max(0, offSec / spb())), name: clipEl.attrs.name || ctx.outer?.name || project.samples[sampleId].name });
+    if (warp) clip.warp = warp;
     let fi = trim > 0 ? 0 : fadeIn;
     let fo = end < t0 + dur - 1e-9 ? 0 : fadeOut;
     if (ctx.outer) {
@@ -1053,20 +1073,14 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
     const ta = child(arrangement, 'TempoAutomation');
     if (ta) {
       const pts = children(ta).filter((p) => p.name === 'RealPoint').map((p) => ({ beat: r6(numAttr(p, 'time', 0)), bpm: r6(numAttr(p, 'value', project.bpm)), ...(p.attrs.interpolation === 'hold' ? { interpolation: 'hold' } : {}) }));
-      if (pts.length) {
-        project.tempoAutomation = pts;
-        const first = pts.reduce((a, b) => (b.beat < a.beat ? b : a));
-        project.bpm = first.bpm;
-        if (pts.some((p) => Math.abs(p.bpm - first.bpm) > 1e-6)) report.warnings.push(`Tempo changes (${pts.length} points) are kept in the project but daW³ plays a constant ${first.bpm} BPM.`);
-      }
+      if (pts.length) applyTempoPoints(project, pts.map((p) => ({ ...p, interpolation: p.interpolation || 'linear' })));
     }
     const tsa = child(arrangement, 'TimeSignatureAutomation');
     if (tsa) {
       const pts = children(tsa, 'TimeSignaturePoint').map((p) => ({ beat: r6(numAttr(p, 'time', 0)), num: numAttr(p, 'numerator', 4), den: numAttr(p, 'denominator', 4) }));
       if (pts.length) {
-        project.timeSigAutomation = pts;
-        project.timeSig = [pts[0].num, pts[0].den];
-        if (pts.some((p) => p.num !== pts[0].num || p.den !== pts[0].den)) report.warnings.push('Time-signature changes are kept in the project but daW³ plays the first one.');
+        const moved = applyMeterPoints(project, pts);
+        if (moved) report.warnings.push(`${moved} time-signature change(s) not on a bar line moved to the next bar.`);
       }
     }
   }
@@ -1103,7 +1117,7 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
   }
 
   if (disabledClips) report.warnings.push(`${disabledClips} disabled clip(s) skipped.`);
-  if (stretchedClips) report.warnings.push(`${stretchedClips} time-stretched audio clip(s) play at their original speed in daW³.`);
+  if (stretchedClips) report.warnings.push(`${stretchedClips} time-stretched audio clip(s) imported as warped clips (Complex mode) — check their warp markers.`);
   const scenes = children(child(root, 'Scenes'), 'Scene');
   if (scenes.length) report.unmapped.push(`${scenes.length} clip-launcher scene(s) not imported.`);
 

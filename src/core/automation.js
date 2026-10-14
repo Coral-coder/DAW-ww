@@ -149,14 +149,14 @@ export function cableOverrides(track, beat) {
 
 /** Every automation owner of a project: tracks, buses, master. */
 export function automationOwners(project) {
-  return [...(project?.tracks || []), ...(project?.buses || []), ...(project?.master ? [project.master] : [])];
+  return [...(project?.tracks || []), ...(project?.buses || []), ...(project?.master ? [project.master] : []), ...(project?.mixer?.vcas || [])];
 }
 
 /** Owner by id: a track id, a bus id or 'master'. */
 export function automationOwner(project, id) {
   if (!project) return null;
   if (id === 'master') return project.master || null;
-  return project.tracks?.find((t) => t.id === id) || project.buses?.find((b) => b.id === id) || null;
+  return project.tracks?.find((t) => t.id === id) || project.buses?.find((b) => b.id === id) || project.mixer?.vcas?.find((v) => v.id === id) || null;
 }
 
 const CONTROL_KINDS = new Set(['inst', 'fx', 'fxen', 'cable']);

@@ -274,6 +274,9 @@ export class DrumInstrument extends BaseInstrument {
 
   _kit() { return DRUM_KITS[this.params.kit] || DRUM_KITS['808']; }
 
+  /** Multi-out: {padKey: AudioNode} — those pads play into their own mixer channel instead of the track. */
+  setPadOutputs(map) { this.padOuts = map && Object.keys(map).length ? map : null; }
+
   trigger(time, pitch, vel = 0.8, durSec, extra = {}) {
     const t = this._t(time);
     return this.hit(t, pitchToPad(pitch), num(vel, 0.8, 0, 1), extra || {});
@@ -300,8 +303,9 @@ export class DrumInstrument extends BaseInstrument {
     };
     let v = null;
     const buf = pad.sampleId ? this.opts.getSampleBuffer?.(pad.sampleId) : null;
-    if (buf) v = playSampleHit(this.ctx, this.out.input, t, buf, o);
-    else v = playDrumVoice(this.ctx, this.out.input, t, def, o);
+    const dest = this.padOuts?.[padKey] || this.out.input;
+    if (buf) v = playSampleHit(this.ctx, dest, t, buf, o);
+    else v = playDrumVoice(this.ctx, dest, t, def, o);
     v.group = group;
     v.pad = padKey;
     v.pitch = padKey;

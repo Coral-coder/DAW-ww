@@ -73,7 +73,8 @@ function richProject() {
   p.buses[0].automation.push(createAutomationLane('volume', [{ beat: 0, value: 0.5 }, { beat: 4, value: 0.9 }]));
   p.master.automation.push(createAutomationLane('volume', [{ beat: 0, value: 0.9 }, { beat: 24, value: 0 }]));
   p.markers.push({ id: 'mk1', beat: 0, name: 'Intro' }, { id: 'mk2', beat: 16, name: 'Drop' });
-  p.tempoAutomation = [{ beat: 0, bpm: 124 }, { beat: 16, bpm: 130 }];
+  p.tempoMap = [{ beat: 0, bpm: p.bpm, curve: 'linear' }, { beat: 16, bpm: 130, curve: 'jump' }, { beat: 32, bpm: 128, curve: 'jump' }];
+  p.meterMap = [{ bar: 6, num: 7, den: 8 }, { bar: 7, num: 4, den: 4 }];
   p.mode = 'song';
   return p;
 }
@@ -175,7 +176,9 @@ test('DAWproject round trip: export -> import gives an equivalent project', asyn
   assert.equal(q.name, 'Interchange Demo');
   assert.equal(q.bpm, 124);
   assert.deepEqual(q.timeSig, [4, 4]);
-  assert.deepEqual(q.tempoAutomation.map((x) => [x.beat, x.bpm]), [[0, 124], [16, 130]]);
+  // tempo map (ramp + jump) and meter changes round-trip exactly
+  assert.deepEqual(q.tempoMap, [{ beat: 0, bpm: 124, curve: 'linear' }, { beat: 16, bpm: 130, curve: 'jump' }, { beat: 32, bpm: 128, curve: 'jump' }]);
+  assert.deepEqual(q.meterMap, [{ bar: 6, num: 7, den: 8 }, { bar: 7, num: 4, den: 4 }]);
   assert.deepEqual(q.markers.map((m) => [m.beat, m.name]), [[0, 'Intro'], [16, 'Drop']]);
   assert.deepEqual(q.tracks.map((t) => [t.name, t.type]), p.tracks.map((t) => [t.name, t.type]));
   assert.deepEqual(q.buses.map((b) => b.name), p.buses.map((b) => b.name));
@@ -231,7 +234,6 @@ test('DAWproject round trip: export -> import gives an equivalent project', asyn
   assert.deepEqual(got, expected);
   assert.deepEqual(lanes(q, q.buses[0]), lanes(p, p.buses[0]));
   assert.deepEqual(lanes(q, q.master), lanes(p, p.master));
-  assert.match(report.warnings.join('\n'), /Tempo changes/);
   assert.equal(q.mode, 'song');
   assert.equal(typeof summarizeReport(report), 'string');
 });
@@ -376,7 +378,12 @@ test('DAWproject import of a foreign (Bitwig-style) file: mapping, placeholders,
   const ac = q.clips.find((c) => c.type === 'audio');
   assert.equal(ac.trackId, loop.id);
   assert.ok(near(ac.start, 4) && near(ac.length, 8.000034));
-  assert.ok(near(ac.offset, (2.823541666666667 / 8.00003433227539) / (60 / 149)), 'warped playStart -> seconds -> beats at the project tempo');
+  // the stretched loop (170 BPM material on a 149 BPM timeline) becomes a warped clip: offset in content beats
+  assert.equal(ac.warp.mode, 'complex');
+  assert.ok(near(ac.offset, 1), 'playStart in content beats');
+  assert.equal(ac.warp.markers.length, 2);
+  assert.ok(near(ac.warp.markers[1].beat, 8.000034) && near(ac.warp.markers[1].sec, 2.823542) && ac.warp.markers[0].sec === 0);
+  assert.ok(Math.abs(ac.warp.bpm - 170) < 0.01, `source tempo ${ac.warp.bpm}`);
   assert.equal(ac.fadeIn, 0.5);
   assert.equal(q.samples[ac.sampleId].name, 'Drumfunk3 170bpm');
   assert.deepEqual(q.markers.map((m) => [m.beat, m.name]), [[0, 'Verse'], [12, 'Chorus']]);

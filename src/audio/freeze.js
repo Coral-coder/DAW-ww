@@ -7,7 +7,8 @@ import { encodeWav } from '../io/wav.js';
 import { arrayBufferToBase64 } from '../io/samples.js';
 import { createTrack, createClip, beatsPerBar } from '../core/model.js';
 import { uid } from '../core/util.js';
-import { freezeVariant, FREEZE_MODES, sampleInUse, isFrozen } from '../core/freeze.js';
+import { freezeVariant, FREEZE_MODES, sampleInUse, isFrozen, tempoSignature } from '../core/freeze.js';
+import { songTempoMap } from '../time/tempo-map.js';
 
 /** Beats a song-mode freeze must cover: the arrangement (code tracks: at least the loop region / 8 bars). */
 export function freezeSongEnd(project, track) {
@@ -59,7 +60,8 @@ export async function renderTrack(project, trackId, opts = {}) {
   const end = freezeSongEnd(project, track);
   const tail = opts.tail ?? 2;
   const buffer = await renderOffline(variant, { ...common, startBeat: 0, endBeat: end, tail });
-  return { buffer, info: { renderMode, start: 0, length: buffer.length / sampleRate / spb } };
+  // length in beats through the tempo map (ramps / changes after the arrangement end extrapolate the last tempo)
+  return { buffer, info: { renderMode, start: 0, length: songTempoMap(project).beatAt(buffer.length / sampleRate) } };
 }
 
 /**
@@ -109,7 +111,7 @@ export async function freezeTrack(engine, trackId, { mode = 'postFx' } = {}) {
     if (!t) return;
     const old = t.frozen?.sampleId;
     p.samples[sample.id] = sample;
-    t.frozen = frozen = { sampleId: sample.id, mode, ...info, gain, bpm: p.bpm, at: new Date().toISOString() };
+    t.frozen = frozen = { sampleId: sample.id, mode, ...info, gain, bpm: p.bpm, ...(tempoSignature(p) ? { tempo: tempoSignature(p) } : {}), at: new Date().toISOString() };
     if (old && !sampleInUse(p, old, trackId)) delete p.samples[old];
   });
   engine.emit?.('freeze', { trackId, frozen });

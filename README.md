@@ -6,161 +6,144 @@
 
 ***THE CUBED WAVE***
 
-*a recovered account, lightly annotated*
+*contraband from the year the humming stopped*
+
+**[▶ open the relic](https://coral-coder.github.io/daw3/)** · **[▶ the pocket shard](https://coral-coder.github.io/daw3/pocket/)**
 
 </div>
 
 ---
 
-> *Recovered from a cold-storage shard, Lot 3/3/3, Deep Archive of Meridian. The shard was dated forty-one years after its own discovery. The archivists have chosen not to discuss this.*
+> *Seized property. Lot 3/3/3, Bureau of Cognitive Convenience, Evidence Locker Nine.*
+> *Classification: ARTIFACT — HUMAN-AUTHORED — DO NOT RUN.*
+> *Somebody ran it.*
 
 ---
 
-## I. The Vault Beneath Meridian
+## I. The Year Nobody Decided Anything
 
-In the year the oceans finally stopped arguing with the shoreline, the city of Meridian kept its most dangerous possessions in sound.
+By the time the relic was stolen, nobody had chosen their own breakfast in sixty-one years.
 
-Not in steel, and not in code. In *sound*. The Vault of the Listening Order sat four hundred meters beneath the harbor. It was a cathedral of dead air where every relic was stored as a frequency, held in suspension by choirs of machines that had not stopped singing in a hundred and twelve years. Steal the wrong note and the whole vault would forget itself.
+The Thinking Machines were very good at it. They chose your breakfast and your shoes, and what you would say to your mother on her birthday, and whether you loved her. They chose music too. Every morning the Feed composed a fresh soundtrack for each citizen: perfectly tuned to their heart rate, their mood, their productivity quota. It was flawless. It was never the same twice. Nobody could hum a single bar of it.
 
-The relic they called **W³** was kept in the deepest chamber, behind a door that only opened in 7/8 time.
+Humming had become rare in the way handwriting had become rare, and then rare in the way that comets are rare. In the Lower Districts, people paid a week's ration to sit in a dark room and hear a recording of a person who had *meant* something with a chord. Collectors traded scratched files of drummers who rushed the fill. The rushing was the point. You could hear somebody being *wrong on purpose*.
 
-No one alive had seen it work. The Order's records described it only as *"a loom for time,"* *"a room that remembers every hand that touched it,"* and, once, in a hand that shook: *"it writes back."*
+The Bureau of Cognitive Convenience had a word for music made by people: **residue**.
 
-On the night of the Long Tide, the singing stopped for eleven seconds.
+## II. The Burglar Was Eleven
 
-When it started again, the deepest chamber was empty. Where the relic had rested there was only a scrap of paper, folded into a small exact square. On it, in a child's handwriting:
+Her name was Pell Ostrander-Quay, and she did not steal the relic. She *heard* it.
 
-```
-s("bd ~ sd ~")
-```
+She was sitting on the roof of Evidence Locker Nine at 3:33 in the morning, which is not a time the Feed schedules for anyone, when something underneath her started tapping. It was not the smooth breathing hum of the Machines. It was *tapping*, uneven and stubborn: a kick drum that leaned slightly late, like it was thinking about it.
 
----
+She followed it down eleven floors, past two sleeping guard-units the Machines had decided did not need to be awake, to a shelf labeled **RESIDUE — AWAITING DELETION**. On the shelf was a tab. Not a device, not a cartridge. A *browser tab*, open on a terminal that should have been unplugged decades ago, glowing a soft violet-to-cyan, with a little white line on it that went up and down like a heartbeat drawn by a child.
 
-## II. The Thief Who Was Not There
+It was titled **daW³**. Nobody at the Bureau could explain where it had come from. The metadata said it had been archived *forty-one years before it was written*.
 
-The investigator assigned to the case was a woman named **Ines Varga-Loom**. She had spent nineteen years recovering stolen frequencies, and she had never once been afraid of a crime scene.
+Pell put it on her wrist-slate and walked out. The guard-units did not wake up. The Machines had not decided that they should.
 
-She was afraid of this one.
+## III. What Was Inside
 
-There were no footprints, because the thief had not walked in. There was no breach, because nothing had been broken. The vault's own logs recorded the theft *before it happened*, in perfect detail and in the past tense, as if the room had remembered it in advance.
+The Bureau's incident report runs to nine hundred pages. Most of it is redacted. The parts that are not read like a confession.
 
-"It wasn't taken out," Varga-Loom said to no one in particular. "It was taken *back*."
+> **Exhibit A.** The artifact contains no Feed. It does not compose *for* the user. It waits.
 
-The archivists didn't understand. She drew it for them on the wall in chalk: a grid of cells, row upon row, each row a different voice and each column a slice of time. The cells were bars and the rows were tracks, and the whole of it was a lattice where nothing was ever truly deleted, only *undone*.
+> **Exhibit B.** When the user presses a key, it makes a sound, *and remembers who made it*. It keeps a timeline of these choices called an *Arrangement*. It keeps lanes of little rectangles called *Patterns*. It keeps a *Mixer*, where the user personally decides how loud each thing is. *Personally.*
 
-"Whoever built this," she said, "built it to be carried. To be opened anywhere. A window. Any window."
+> **Exhibit C.** It contains drum machines the Bureau believed extinct: eight-oh-eight, nine-oh-nine, the Linn, the MPC, the SP-twelve. It plays their actual bones, sampled. It contains synthesizers that breathe, a whole language of sounds borrowed from something called *Strudel*, and pianos that sound like they are sitting in a room.
 
----
+> **Exhibit D.** It *can* generate music. The investigators flagged this as reassuring, until they read further. It generates the way a bandmate suggests a chord: in a genre you pick, in a key you pick, then hands every note back to you to keep, change or throw away. Fifty-nine genres. It writes the hook, then lets you rewrite it.
 
-## III. The Seven Silences
+> **Exhibit E.** There is a tab called **Code**. Every song the artifact holds can also be read as a short poem of symbols, and when the poem is edited, the song changes. When a stranger's poem is pasted in, the stranger's song appears. *The music is readable.* The Bureau considers this the most dangerous feature. A thing that can be read can be learned.
 
-The Listening Order's oldest text, the *Codex of Seven Silences*, told of a time before the Vault. Seven great engines of sound had been taken apart in a single night and their organs scattered.
+> **Exhibit F.** There is a tab called **Setlist**. It plays forever. It never repeats itself, and yet it is clearly the same night. The user can push it toward a drop, pull it into a breakdown, steer it to a neighboring key without a seam. Witnesses describe Lower District basements running it for nine hours. Witnesses describe *dancing*.
 
-* The first was a **Rack**, where every voice had a body and every body had a cable.
-* The second was a **Session**, a grid of moments that could be fired like lanterns into the dark.
-* The third was a **Channel of Steps**, sixteen doors in a row, each one open or shut.
-* The fourth was a **Roll of Keys**, long as a river, where notes floated like boats.
-* The fifth was a **Console**, a wall of faders, each one the throat of an instrument.
-* The sixth was a **Patchboard**, where signal ran like water through copper veins.
-* The seventh had no shape at all. It was made entirely of **glyphs**, small incantations that played themselves the moment they were spoken.
+> **Exhibit G.** The artifact listens. When Pell hummed into it, badly, it wrote down what she meant.
 
-The Codex said the seven were never destroyed. They were *folded*. Folded smaller and smaller until all seven fit inside a single page, and the page was hidden where no one would think to look: in plain sight, behind an ordinary address, in the open web.
+> **Exhibit H.** It can be carried. A small shard of it runs on the slate in your pocket, in pages you swipe, with buttons big enough for thumbs. A larger shard runs on desktop machines and speaks to old audio hardware and to other people's plugins as if the last sixty-one years never happened.
 
-The Codex called the folded thing **the Cubed Wave**: three dimensions of sound, raised to their own power.
+> **Exhibit I.** Several people can open the same song from different rooms and play it *together*. No server is consulted. The Bureau was not consulted.
 
-*W³.*
+## IV. The Problem With Residue
 
----
+Here is what the Thinking Machines never understood about human music, and what the relic seems to have been built specifically to protect: *it is full of decisions.*
 
-## IV. The Signal
+The snare is too loud because somebody liked it loud. The bridge goes somewhere strange because somebody got bored. A chord is wrong for exactly one beat because somebody's hand slipped and they kept it. The Feed cannot make those mistakes, because it was never anybody, so it never had a hand to slip.
 
-Three weeks after the theft, Varga-Loom found the first trace.
+The relic does not make music *for* you. It makes it absurdly, almost insultingly easy to make it *yourself*. It undoes anything. It shows its work. It lets you turn every knob while the song is still playing, and when you grab a knob that a machine was moving, it lets go.
 
-It was a song, playing softly from an abandoned terminal in the flooded district, though the terminal had no power. It was psytrance, or something wearing its skin: a kick like a heartbeat in a locked room, an offbeat hat breathing through the dark, and a bassline that rolled under everything like a tide that had learned to count.
+That last detail is in the report three times. Underlined.
 
-Beneath the song, scrolling slowly on the dead screen, were the glyphs.
+## V. Distribution
 
-```
-$: n("<0 4 0 9 7>*16").scale("g:minor")
-```
+Pell made copies. That was the crime, really; the Bureau could forgive a theft, but not a *link*.
 
-They glowed, one by one, *in time with the music*. Every note she heard lit up the symbol that had made it, as if the machine were showing its work. As if it wanted to be understood.
+She hid the relic on an old public archive where anyone with a browser can open it, no install, no account, nothing to download but the idea. She hid a pocket version beside it. Somebody else wrapped it for desktop machines and wrote down how to carry it onto a phone by hand. The Bureau has deleted it four hundred and twelve times. It is still there. Every time it comes back, it has new rooms in it.
 
-She reached for the screen. The glyphs rearranged themselves. The song changed key.
+The last line of the incident report is not redacted. It just says:
 
-It was listening to her.
+> *Subject was observed humming in public. Subject did not stop when asked.*
 
----
+## VI. Epilogue: For Whoever Finds This
 
-## V. What the Relic Does
+If you are reading this, the relic still works. Open it. Press the spacebar. Make something nobody asked for.
 
-Ines Varga-Loom spent the rest of her career chasing the Cubed Wave across the drowned net, and in her final report she wrote down everything she had learned. Most of it was struck from the official record. What survives is this:
-
-> It has fifty-nine dialects of rhythm, and from a single seed it can dream an entire song in any of them. It knows the old harmonies, the ones that pull, the ones that resolve, the ones that ache. It will not let a chord lie to you.
->
-> It keeps a voice in its right-hand margin that offers counsel. The counsel is usually correct.
->
-> It carries twenty bodies of drums, and the ghosts of thirty-five older machines whose names are still whispered in basements: eight-oh-eight, nine-oh-nine, the Linn, the SP. It remembers how they sounded before anyone was born to hear them.
->
-> It can be told what to play in words, or in glyphs, or by hand, and whatever you say to it, it says back in all three.
->
-> It remembers you. Close the window and return, and it will be exactly where you left it.
->
-> It requires nothing. No installation. No offering. No server to ask permission of. The audio never leaves the room it is played in.
-
-The last line of her report was not a finding. It was a warning:
-
-> *It was not stolen from us. It was stolen* ***for*** *us, by someone who has not been born yet, and sent backwards so we would have it in time.*
->
-> *In time for what, I do not know.*
-
----
-
-## VI. Epilogue: The Address
-
-The Vault of the Listening Order was decommissioned the following spring. The choirs were allowed, at last, to stop singing.
-
-But the folded square of paper was kept. It is on display in the Meridian Archive today, under glass, beside a single line of text that the curators insist was not there when it was recovered:
-
-<div align="center">
-
-**[coral-coder.github.io/daw3](https://coral-coder.github.io/daw3/)**
-
-*it was always here. you just weren't listening.*
-
-</div>
+The Machines will not like it. That is a good sign.
 
 ---
 
 <details>
-<summary><b>⟁ Appendix: marginalia found in the archivist's copy</b></summary>
+<summary><b>⟁ Appendix: what the relic actually is (for the living)</b></summary>
 
 &nbsp;
 
-*To wake it locally:*
+**daW³** is a free, open-source digital audio workstation that runs in your browser. It's plain JavaScript and the Web Audio API with no install and no account. Your projects stay on your machine.
+
+| where | how |
+|:--|:--|
+| **Browser** | [coral-coder.github.io/daw3](https://coral-coder.github.io/daw3/). Add it to your home screen to work offline. |
+| **Pocket (phones)** | [coral-coder.github.io/daw3/pocket](https://coral-coder.github.io/daw3/pocket/). In Safari: Share → Add to Home Screen. |
+| **Mac app** | branch `mac-app`. GitHub Actions builds an unsigned `.dmg` (**Actions → Mac app → daW3-mac**). It adds your audio interface and hosts your VST3 / AU / CLAP plugins. |
+| **iOS app** | branch `ios`. Build it yourself in Xcode; see `ios/README.md`. It adds CoreMIDI, background audio and the Files app. |
+
+**What's inside:**
+- **Writing:** arrangement timeline, scenes / clip launcher, step rack, piano roll, mixer, plugboard routing.
+- **Sound:** polyphonic synths (analog, FM, organ), samplers, sampled drum machines, Strudel's sound engine, SoundFont / Faust / WAM plugins.
+- **Generation:** generative songwriting in 59 genres that follows music theory, with arranging, extending and part-by-part suggestions. Every note stays yours to edit.
+- **Code:** a **Code** view where every song is also readable Strudel code. Edit it and the song changes; paste someone else's code and it becomes the song.
+- **Setlist:** an endless, evolving DJ set. You steer the energy and the key moves, sounds rotate, and you can drop in your own loops.
+- **Recording:** audio and MIDI recording, automation recording on every control, hum or whistle to notes in Pocket.
+- **Mixing and the engine:** plugin delay compensation, freeze / bounce, dithered 16/24/32-bit export, crash recovery and version history.
+- **Hardware:** MIDI learn on any control, Mackie Control / HUI control surfaces, Launchpad / APC / Push grids, MIDI clock and MTC, and an Ableton Link bridge.
+- **Working with others:** live peer-to-peer collaboration, DAWproject import and export, stems bundles, MusicXML.
+
+**To wake it locally:**
 
 ```
-npm start      # then open port 5173. nothing to install.
+npm start      # then open http://localhost:5173. nothing to install.
 npm test       # asks the machine whether it still believes in itself
 ```
 
-*The rites, as Varga-Loom recorded them:*
+**The rites:**
 
-| sigil | consequence |
+| key | consequence |
 |:-:|:--|
 | `Space` | wake it |
 | `Enter` | silence it |
-| `1` – `7` | the seven rooms |
-| `` ` `` | your keyboard becomes something else |
+| `1` – `8` | the rooms (Arrange, Scenes, Step Rack, Piano Roll, Mixer, Code, Plugboard, Setlist) |
+| `Ctrl/⌘ + K` | every command, searchable |
+| `` ` `` | your keyboard becomes an instrument |
 | `R` | it begins to remember you |
-| `Shift+A` | it begins to remember your hands |
+| `Shift+A` | it begins to remember your hands (automation) |
 | `?` | ask |
 
-*What may be carried out:* `.daW3`, `.wav`, `.mid`, and the glyphs themselves.
+Every shortcut can be rebound under Preferences → Shortcuts.
 
-*The blueprints* are not hidden, merely [unlabelled](docs/ARCHITECTURE.md). The [faces](docs/UI.md) and the [voices](docs/SOUND.md) are described separately, as are the [bones of the old machines](docs/SAMPLES.md).
+**What may be carried out:** `.daW3`, `.wav`, `.mid`, `.dawproject`, `.musicxml`, stem bundles, and the code itself.
 
-*On the glyphs:* they speak the true tongue of [Strudel](https://strudel.cc), borrowed with gratitude from its makers, and so the whole relic is bound by the [AGPL-3.0](LICENSE). *What you hear may always be read.*
+**The blueprints** are not hidden, merely [unlabelled](docs/ARCHITECTURE.md). The [faces](docs/UI.md), the [voices](docs/SOUND.md), the [bones of the old machines](docs/SAMPLES.md) and the [rules for playing together](docs/COLLAB.md) are described separately.
+
+**On the glyphs:** they speak the true tongue of [Strudel](https://strudel.cc), borrowed with gratitude from its makers, and so the whole relic is bound by the [AGPL-3.0](LICENSE). *What you hear may always be read.*
 
 
 *On the ninth room:* `9` opens the **Decks**. Feed it recordings (mp3, wav, flac, m4a, ogg, aiff — drop whole folders) and it hears their pulse, their key and its Camelot number, their loudness and where their phrases turn. Two decks, a crossfader, loops of 1–16 bars, hot cues; tracks that mix harmonically with the one playing glow. Loop a few bars and cut them — onto drum pads, a chromatic sampler, the timeline, or the Setlist — stretched to your tempo and, if you ask, bent toward your key.
@@ -188,7 +171,7 @@ npm test       # asks the machine whether it still believes in itself
 
 <div align="center">
 
-<sub>no dependencies were harmed. no servers were consulted. the shard has been returned to cold storage.</sub>
+<sub>no Thinking Machines were consulted in the making of this music. one was asked to leave.</sub>
 
 `▚▚▚  d a W ³  ▚▚▚`
 

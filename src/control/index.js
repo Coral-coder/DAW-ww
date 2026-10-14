@@ -21,6 +21,7 @@ import { NoteRouter } from './router.js';
 import { SurfaceController, faderToGain } from './surface.js';
 import { GridController } from './grid.js';
 import { MidiClockOut, MidiClockIn, MtcOut } from './clock.js';
+import { tempoMapFor } from '../time/tempo-map.js';
 import { LinkClient, LINK_DEFAULT_URL } from './link-client.js';
 import { applyNorm, applyLaneValue, targetNorm, targetSteps, resolveOwner } from './targets.js';
 import { flattenMenu } from './commands.js';
@@ -149,8 +150,10 @@ export function installControl(app) {
   const syncStart = () => {
     const p = store.get();
     const t0 = now() + (+settings.sync.offsetMs || 0);
-    if (settings.sync.clockOut?.length) clockOut.start(Math.max(0, pos()), p.bpm, t0);
-    if (settings.sync.mtcOut) { mtcOut.fps = [24, 25, 30].includes(+settings.sync.mtcFps) ? +settings.sync.mtcFps : 25; mtcOut.start(Math.max(0, pos()) * 60 / p.bpm, t0); }
+    // tempo map (src/time): clock ticks follow ramps / changes; MTC runs on the map's seconds
+    const map = tempoMapFor(p, p.mode);
+    if (settings.sync.clockOut?.length) clockOut.start(Math.max(0, pos()), map.bpmAt(Math.max(0, pos())), t0, map);
+    if (settings.sync.mtcOut) { mtcOut.fps = [24, 25, 30].includes(+settings.sync.mtcFps) ? +settings.sync.mtcFps : 25; mtcOut.start(map.secAt(Math.max(0, pos())), t0); }
   };
   const syncStop = () => { clockOut.stop(now()); mtcOut.stop(); };
   engine.on?.('state', ({ playing }) => {
@@ -158,18 +161,23 @@ export function installControl(app) {
     link.sendPlay(playing);
   });
   let lastBpm = store.get().bpm;
+  let lastMap = tempoMapFor(store.get(), store.get().mode);
   store.on('change', (p, label) => {
-    if (p.bpm !== lastBpm) {
+    const map = tempoMapFor(p, p.mode);
+    if (p.bpm !== lastBpm || map !== lastMap) {
       lastBpm = p.bpm;
-      clockOut.setTempo(p.bpm, now());
-      if (label !== 'Tempo (Link)' && label !== 'Tempo (MIDI clock)') link.sendTempo(p.bpm);
+      lastMap = map;
+      clockOut.setTempo(map.bpmAt(Math.max(0, pos())), now(), map);
+      if (label !== 'Tempo (Link)' && label !== 'Tempo (MIDI clock)' && map.isConstant) link.sendTempo(p.bpm);
     }
   });
+  // tempo map playback: Link peers follow the tempo at the playhead
+  engine.on?.('tempo', (bpm) => { if (!lastMap.isConstant) link.sendTempo(bpm); });
   setInterval(() => {
     // the playhead jumped (seek, loop wrap in song mode): Stop + SPP + Continue so slaves follow
     if (clockOut.running && engine.isPlaying) {
       const t = now() + (+settings.sync.offsetMs || 0);
-      if (Math.abs(clockOut.beatAt(t) - pos()) > 0.25) { clockOut.stop(t); clockOut.start(Math.max(0, pos()), store.get().bpm, t); }
+      if (Math.abs(clockOut.beatAt(t) - pos()) > 0.25) { const p = store.get(), map = tempoMapFor(p, p.mode); clockOut.stop(t); clockOut.start(Math.max(0, pos()), map.bpmAt(Math.max(0, pos())), t, map); }
     }
     clockOut.pump(now()); mtcOut.pump(now());
   }, 25);
