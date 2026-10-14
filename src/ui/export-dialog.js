@@ -110,11 +110,11 @@ export async function openExportDialog(app, { stems = false } = {}) {
     const vars = { project: p, title: o.title, artist: o.artist, sampleRate: o.sampleRate, bits: fmt.bitDepth ? (fmt.bitDepth === 32 ? '32f' : `${fmt.bitDepth}bit`) : fmt.id };
     const first = stemTargets(p, { which: o.stems === 'none' ? 'all' : o.stems, selectedIds })[0];
     clear(summary);
-    summary.append(
+    summary.append(...[
       o.mixdown !== false ? h('div', h('span.muted', 'File: '), `${formatFileName(o.nameTemplate, vars)}.${fmt.ext}`) : null,
       o.stems !== 'none' && first ? h('div', h('span.muted', 'Stem: '), `${formatFileName(o.stemTemplate, { ...vars, n: 1, stem: first.name })}.${fmt.ext}`) : null,
       h('div', h('span.muted', 'Loudness: '), o.normalize === 'lufs' ? `${o.target} LUFS integrated, true peak ≤ ${o.ceiling} dBTP` : o.normalize === 'peak' ? `true peak at ${o.target > -0.01 ? -1 : o.target} dBTP` : o.limit ? `as mixed, true peak ≤ ${o.ceiling} dBTP` : 'as mixed (no processing)'),
-    );
+    ].filter(Boolean));
   }
 
   let busy = false;
@@ -125,6 +125,7 @@ export async function openExportDialog(app, { stems = false } = {}) {
     const status = h('div.xp-status', 'Preparing…');
     clear(preview);
     preview.append(status, bar);
+    preview.scrollIntoView({ block: 'end', behavior: 'smooth' });
     try {
       const { runExport } = await import('../audio/export.js');
       const { renderOffline } = await import('../audio/render.js');
@@ -168,6 +169,7 @@ export async function openExportDialog(app, { stems = false } = {}) {
       preview.append(h('table.xp-report.stems', h('tr', h('th', 'Stem'), h('th', 'LUFS'), h('th', 'dBTP')),
         rep.stems.map((s) => h('tr', h('td', s.name), h('td', Number.isFinite(s.measure.integrated) ? s.measure.integrated.toFixed(1) : '−∞'), h('td', Number.isFinite(s.measure.truePeakDb) ? s.measure.truePeakDb.toFixed(1) : '−∞')))));
     }
+    requestAnimationFrame(() => preview.scrollIntoView({ block: 'end' }));
     preview.append(button('Copy report', () => navigator.clipboard?.writeText(rep.text).then(() => toast('Report copied')), { cls: 'small' }));
   }
 
