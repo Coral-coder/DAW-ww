@@ -526,8 +526,9 @@ export function createActions(app) {
   }
 
   async function openProject(file) {
-    if (!(file instanceof Blob)) [file] = await fileInput('.daW3,.daw3,.json,application/json');
+    if (!(file instanceof Blob)) [file] = await fileInput('.daW3,.daw3,.json,application/json,.dawproject');
     if (!file) return;
+    if (/\.dawproject$/i.test(file.name || '')) return interchange('importDawprojectFile', file);
     try {
       const text = await file.text();
       loadProjectObject(parseProjectFile(text), 'Opened');
@@ -550,6 +551,12 @@ export function createActions(app) {
   }
 
   // ---------------------------------------------------------------- export / import
+  /** Interchange formats (DAWproject, stems bundle, MusicXML) — lazy-loaded, see src/io/interchange/ui.js. */
+  function interchange(fn, ...args) {
+    return import('../io/interchange/ui.js')
+      .then((m) => m[fn]({ app, ensureAudio, loadProjectObject, selectTrack }, ...args))
+      .catch((e) => { console.error(e); toast(`Interchange failed: ${e.message}`, { level: 'error', timeout: 7000 }); });
+  }
   let exportNoticeShown = false;
   async function exportWav({ stems = false } = {}) {
     await ensureAudio();
@@ -912,6 +919,8 @@ export function createActions(app) {
       { label: 'Import', icon: 'upload', submenu: [
         { label: 'Audio samples…', icon: 'wave', onClick: () => importSamples() },
         { label: 'MIDI file…', icon: 'music', onClick: () => importMidiFile() },
+        { label: 'DAWproject (Bitwig, Studio One, Cubase)…', icon: 'folder', onClick: () => interchange('importDawprojectFile') },
+        { label: 'MusicXML melody…', icon: 'music', onClick: () => interchange('importMusicXmlFile') },
         { label: 'Strudel / code file…', icon: 'code', onClick: () => importStrudel() },
         { label: 'Paste Strudel code…', icon: 'code', onClick: async () => { const code = await promptText('Paste Strudel code', '', { multiline: true }); if (code) importStrudel(new File([code], 'pasted.strudel')); } },
       ] },
@@ -919,6 +928,9 @@ export function createActions(app) {
         { label: 'Mixdown WAV', icon: 'wave', shortcut: 'Ctrl+E', onClick: () => exportWav() },
         { label: 'Stems (WAV per track)', icon: 'layers', onClick: () => exportWav({ stems: true }) },
         { label: 'MIDI file', icon: 'music', onClick: () => exportMidiFile() },
+        { label: 'DAWproject (Bitwig, Studio One, Cubase)…', icon: 'folder', onClick: () => interchange('exportDawprojectDialog') },
+        { label: 'For mixing engineer (stems + MIDI ZIP)…', icon: 'layers', onClick: () => interchange('exportMixBundleDialog') },
+        { label: 'MusicXML lead sheet…', icon: 'music', onClick: () => interchange('exportMusicXmlDialog') },
         { label: 'Strudel code', icon: 'code', onClick: () => exportCode() },
         { label: 'Project file (.daW3)', icon: 'save', onClick: () => saveProject() },
       ] },
@@ -1288,7 +1300,7 @@ export function createActions(app) {
     togglePlay, play, stop, setPosition, setMode, toggleRecord, liveNoteOn,
     recorder, startAudioRecording, finishAudioRecording, getCountIn, setCountIn, liveNoteOff, enableMidiInput, ensureAudio,
     setGenre, applyGenreDefaults, newProject, openProject, saveProject, renameProject, loadProjectObject,
-    exportWav, exportMidiFile, exportCode, importMidiFile, importStrudel, renderCodeToTracks, importSamples, placeSample, sampleToSampler,
+    exportWav, exportMidiFile, exportCode, importMidiFile, interchange, importStrudel, renderCodeToTracks, importSamples, placeSample, sampleToSampler,
     generatePart, generateSong, newProgression, currentProgression, applyAssistantAction, showExtendDialog, extendSongBy, removeSectionAt,
     mainMenuItems, generateMenuItems, showSongWizard, showHelp, showAbout, showWelcome, showLocalProjects,
     undo: () => { const l = store.undo(); if (l) app.setStatus?.(`Undo: ${l}`); },
