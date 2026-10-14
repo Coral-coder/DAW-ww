@@ -15,11 +15,18 @@ export class Store extends Emitter {
     this._pendingEmit = false;
     this._lastLabel = null;
     this._lastTime = 0;
+    this.guards = []; // edit guards: {capture(project), check(captured, project) -> violation|null, restore(violation, project)}
     // Optional undo provider (collaboration: undo only your own ops) — { undo, redo, canUndo, canRedo }.
     this.history = null;
     // How the last top-level transaction was made ({ label, undo, coalesce }) — read by 'change' listeners.
     this.lastCommit = null;
   }
+
+  /**
+   * Install an edit guard (e.g. core/freeze.js createFreezeGuard): checked after every top-level transaction; a
+   * violation is rolled back by the guard and reported as store.on('blocked', {label, message}).
+   */
+  addGuard(guard) { this.guards.push(guard); return () => { this.guards = this.guards.filter((g) => g !== guard); }; }
 
   get() { return this.project; }
 
@@ -37,6 +44,7 @@ export class Store extends Emitter {
    * Mutate the project inside fn(project). Records an undo step.
    * opts.coalesce: merge with previous step if same label within 800ms (knob drags).
    * opts.undo === false: no undo step (transient things like playhead / UI-only fields).
+   * opts.guard === false: skip the edit guards (addGuard) — for whole-project restores (version history).
    */
   transact(label, fn, opts = {}) {
     const recordUndo = opts.undo !== false;
@@ -51,12 +59,21 @@ export class Store extends Emitter {
       this._lastLabel = label;
       this._lastTime = now;
     }
+    const caps = this._batchDepth === 0 && this.guards.length && opts.guard !== false ? this.guards.map((g) => g.capture(this.project)) : null;
     this._batchDepth++;
     let result;
     try {
       result = fn(this.project);
     } finally {
       this._batchDepth--;
+    }
+    if (caps) {
+      this.guards.forEach((g, i) => {
+        const v = g.check(caps[i], this.project);
+        if (!v) return;
+        g.restore(v, this.project);
+        this.emit('blocked', { label, message: v.message, detail: v });
+      });
     }
     if (this._batchDepth === 0) {
       this.lastCommit = { label, undo: recordUndo, coalesce: !!opts.coalesce };

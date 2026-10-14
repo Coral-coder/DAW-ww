@@ -84,6 +84,12 @@ export class Instrument {
     }
     this.type = type;
     this.params = params;
+    if (this._padOuts) { try { this.engine?.setPadOutputs?.(this._padOuts); } catch (e) { warn(e); } }
+  }
+  /** Drum multi-out ({padKey: AudioNode}); engines without per-pad outputs ignore it. */
+  setPadOutputs(map) {
+    this._padOuts = map || null;
+    try { this.engine?.setPadOutputs?.(map); } catch (e) { warn(e); }
   }
   /** A built-in engine playing preset `presetId` (fallback of 'strudel' instruments). */
   _fallbackEngine(presetId) {
@@ -122,6 +128,13 @@ export class Instrument {
   allNotesOff(time) { try { this.engine.allNotesOff(time); } catch (e) { warn(e); } }
   /** Plugin instruments (soundfont/faust/wam): resolves true when playable, false on failure. Built-ins: null. */
   get ready() { return this._fallbackReady || (this.engine?.ready ?? null); }
+  /** Processing latency (s): the def's manual `latency` (samples) or what the engine / plugin reports (PDC). */
+  get latency() {
+    const man = Number(this.def?.latency);
+    if (Number.isFinite(man) && man >= 0 && this.def?.latency != null) return man / this.ctx.sampleRate;
+    const l = Number(this.engine?.latency);
+    return Number.isFinite(l) && l > 0 ? l : 0;
+  }
   /** User-facing load error of a plugin instrument (null when fine or when the fallback preset is playing). */
   get error() { return this.fallbackActive ? null : (this.engine?.error ?? null); }
   /** value -1..1 (synth only; others ignore). */

@@ -42,6 +42,8 @@ export class PluginInstrument {
 
   get error() { return this._error || this.impl?.error || null; }
   get voices() { return this.impl?.voices || []; }
+  /** Latency (s) the plugin reports once loaded (WAM getCompensationDelay), else 0. */
+  get latency() { return Number(this.impl?.latency) || 0; }
   /** The live plugin engine (FaustEngine / SoundfontEngine / WamEngine) or null while loading. */
   get plugin() { return this.impl; }
 

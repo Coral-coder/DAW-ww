@@ -4,11 +4,17 @@
 // control never rebuilds the DOM. One rAF loop drives every meter while visible.
 import { h, icon, startDrag, fitCanvas, clear } from '../dom.js';
 import { knob, contextMenu, promptText, confirmDialog, button, iconButton, markAuto, touchStart, touchEnd } from '../components.js';
+import { freezeButton } from '../engine-ui.js';
 import { createBus, createEffect } from '../../core/model.js';
 import { clamp, dbToGain, gainToDb } from '../../core/util.js';
 import { EFFECT_DEFS, INSTRUMENT_DEFS, PRESETS, DRUM_KITS } from '../../audio/index.js';
 import { showEffectMenu } from '../panels/device.js';
 import { isPatchActive, patchFxOrder } from '../../core/patch.js';
+import {
+  mixerOf, ensureMixer, applyLinkedEdit, toggleSolo, groupSelection, groupsOf, vcasOf, vcaDb, trackRows, sendTap, SOLO_MODES,
+} from '../../core/mixer-model.js';
+import { createMixerTools, SOLO_LABELS } from '../mixer-tools.js';
+import { createLoudnessPanel } from '../panels/loudness.js';
 
 // ---------------------------------------------------------------- helpers
 const VOL_MAX = 1.5;
@@ -26,6 +32,11 @@ const METER_MIN_DB = -60, METER_MAX_DB = 6;
 const meterPos = (lin) => (lin <= 0 ? 0 : clamp((20 * Math.log10(lin) - METER_MIN_DB) / (METER_MAX_DB - METER_MIN_DB), 0, 1));
 
 const PAN_DEF = { key: 'pan', label: 'Pan', min: -1, max: 1, step: 0.01, default: 0, description: 'Pan — drag up/down, double-click to center' };
+const TRIM_DEF = { key: 'trim', label: 'Trim', min: -24, max: 24, step: 0.1, default: 0, unit: 'dB', description: 'Input trim (gain before the inserts) — double-click to reset' };
+const WIDTH_DEF = { key: 'width', label: 'Width', min: 0, max: 2, step: 0.01, default: 1, description: 'Stereo width: 0 = mono, 100 % = unchanged, 200 % = extra wide — double-click to reset' };
+const VCA_MAX_UI = 1.5;
+/** Buses tracks send to (folder sums and drum multi-outs are routing targets, not returns). */
+const returnBuses = (p) => p.buses.filter((b) => !b.source && !b.folderId);
 const SEND_DEF = (bus) => ({ key: 'send', label: bus.name, min: 0, max: 1, step: 0.01, default: 0, unit: '%', description: `Send level to “${bus.name}” — double-click to reset` });
 
 const ROLE_RE = [
@@ -68,7 +79,8 @@ const BUS_TEMPLATES = [
 
 const LS_KEY = 'daw3-mixer';
 function loadPrefs() {
-  try { return { narrow: false, showBuses: true, ...JSON.parse(localStorage.getItem(LS_KEY) || '{}') }; } catch { return { narrow: false, showBuses: true }; }
+  const d = { narrow: false, showBuses: true, showInput: true, loudness: false, exclusiveSolo: false };
+  try { return { ...d, ...JSON.parse(localStorage.getItem(LS_KEY) || '{}') }; } catch { return d; }
 }
 
 // ---------------------------------------------------------------- view
@@ -92,15 +104,37 @@ export function createMixerView(app) {
   const narrowToggle = h('button.toggle', { type: 'button', title: 'Narrow strips: fit more channels on screen' }, 'Narrow');
   narrowToggle.addEventListener('click', () => { prefs.narrow = !prefs.narrow; savePrefs(); render(true); });
   const resetPeaksBtn = button('Reset peaks', () => resetAllPeaks(), { title: 'Clear every clip indicator and peak-hold readout', cls: 'small' });
+  // pro mixer structure (core/mixer-model.js, ui/mixer-tools.js)
+  const tools = (app.mixerTools ||= createMixerTools(app));
+  const mxSel = new Set(); // multi-selected channels (Ctrl/Shift-click a strip name)
+  app.mixerSelection = () => [...mxSel];
+  let groupBypass = false; // Ctrl/Cmd held while editing: the edit doesn't follow groups
+  const soloSel = h('select.mx-solo-mode', { title: 'Solo mode — Solo in place mutes everything else; AFL / PFL send the soloed channels to the cue (monitor) bus and leave the mix and exports untouched' },
+    SOLO_MODES.map((m) => h('option', { value: m }, m === 'sip' ? 'SIP' : m.toUpperCase())));
+  soloSel.addEventListener('change', () => tools.cmd.setSoloMode(soloSel.value));
+  const structBtn = button('Groups & VCA ▾', (e) => contextMenu(menuPos(e), structureMenuItems()), { icon: 'layers', title: 'Folders, groups (linked faders / mutes / solos), VCA faders, channel link' });
+  const snapBtn = button('Snapshots ▾', (e) => contextMenu(menuPos(e), snapshotMenuItems()), { icon: 'history', title: 'Mixer scenes: save and recall complete mixer states' });
+  const inputToggle = h('button.toggle', { type: 'button', title: 'Show the input section (trim, phase, width) on every strip' }, 'Input');
+  inputToggle.addEventListener('click', () => { prefs.showInput = !prefs.showInput; savePrefs(); render(true); });
+  const loudBtn = h('button.toggle', { type: 'button', title: 'Loudness meter: LUFS momentary / short-term / integrated, LRA, true peak, correlation, vector scope, spectrum' }, icon('gauge', 13), ' Loudness');
+  loudBtn.addEventListener('click', () => { prefs.loudness = !prefs.loudness; savePrefs(); syncLoudness(); });
   const toolbar = h('div.view-toolbar.mx-toolbar',
     h('span.mx-title', icon('mixer', 15), 'Mixer'),
-    h('div.sep'), addTrackBtn, addBusBtn, h('div.sep'), assistBtn, h('div.sep'), busToggle, narrowToggle,
-    h('div.spacer'), resetPeaksBtn);
+    h('div.sep'), addTrackBtn, addBusBtn, h('div.sep'), assistBtn, structBtn, snapBtn, h('div.sep'),
+    h('label.mx-solo-wrap', { title: soloSel.title }, h('span', 'Solo'), soloSel), h('div.sep'), busToggle, inputToggle, narrowToggle,
+    h('div.spacer'), loudBtn, resetPeaksBtn);
 
   const scroller = h('div.mx-scroll');
   const masterHost = h('div.mx-master-host');
-  const body = h('div.mx-body', scroller, masterHost);
+  const loudness = createLoudnessPanel(app, { onClose: () => { prefs.loudness = false; savePrefs(); syncLoudness(); } });
+  const body = h('div.mx-body', scroller, loudness.el, masterHost);
+  function syncLoudness() {
+    loudBtn.classList.toggle('on', !!prefs.loudness);
+    if (prefs.loudness && visible) loudness.show(); else loudness.hide();
+  }
   const el = h('div.mixer-view', toolbar, body);
+  el.addEventListener('pointerdown', (e) => { groupBypass = e.ctrlKey || e.metaKey; }, true);
+  el.addEventListener('wheel', (e) => { groupBypass = e.ctrlKey || e.metaKey; }, { capture: true, passive: true });
 
   scroller.addEventListener('wheel', (e) => {
     // vertical wheel over empty strip areas scrolls the console horizontally
@@ -119,9 +153,13 @@ export function createMixerView(app) {
   function signature(p) {
     return JSON.stringify([
       prefs.narrow, prefs.showBuses,
-      p.tracks.map((t) => [t.id, t.name, t.color, t.type, t.instrument?.type, t.instrument?.preset, fxSig(t.fx), isPatchActive(t) ? patchFxOrder(t).join(',') : 0]),
-      p.buses.map((b) => [b.id, b.name, fxSig(b.fx)]),
+      p.tracks.map((t) => [t.id, t.name, t.color, t.type, t.instrument?.type, t.instrument?.preset, fxSig(t.fx), isPatchActive(t) ? patchFxOrder(t).join(',') : 0, t.frozen ? `${t.frozen.sampleId}:${t.frozen.mode}` : 0]),
+      p.bpm, p.mode, // (a frozen track goes stale with tempo / mode)
+      p.buses.map((b) => [b.id, b.name, fxSig(b.fx), b.source ? 1 : 0, b.folderId || 0]),
       fxSig(p.master.fx),
+      prefs.showInput,
+      p.tracks.map((t) => [t.folderId || 0, t.notes ? 1 : 0, Object.keys(t.sendModes || {}).join()]),
+      (() => { const m = mixerOf(p); return [m.groups.map((g) => [g.id, g.name, g.color, g.members.join()]), m.vcas.map((v) => [v.id, v.name, v.color, v.members.join()]), m.folders.map((f) => [f.id, f.name, f.collapsed, f.busId])]; })(),
     ]);
   }
 
@@ -144,9 +182,11 @@ export function createMixerView(app) {
     clear(scroller);
     clear(masterHost);
     el.classList.toggle('narrow', prefs.narrow);
-    const sendRows = prefs.showBuses && p.buses.length ? Math.min(3, Math.ceil(p.buses.length / 2)) : 0;
+    const nRet = returnBuses(p).length;
+    const sendRows = prefs.showBuses && nRet ? Math.min(3, Math.ceil(nRet / 2)) : 0;
     el.style.setProperty('--mx-send-rows', sendRows);
     busToggle.classList.toggle('on', prefs.showBuses);
+    inputToggle.classList.toggle('on', prefs.showInput);
     narrowToggle.classList.toggle('on', prefs.narrow);
 
     const trackGroup = h('div.mx-group.mx-tracks');
@@ -156,13 +196,26 @@ export function createMixerView(app) {
         h('p', 'Every track gets a channel strip here with inserts, sends, pan and a fader.'),
         button('Add a track', (e) => contextMenu(menuPos(e), actions.addTrackMenuItems()), { icon: 'plus', primary: true })));
     }
-    for (const t of p.tracks) {
+    for (const row of trackRows(p)) {
+      if (row.kind === 'folder') { trackGroup.appendChild(folderTab(row.folder, row.members, p)); continue; }
+      const t = row.track;
       const s = trackStrip(t, p);
       carryPeaks(oldStrips.get(t.id), s);
       strips.set(t.id, s);
       trackGroup.appendChild(s.el);
     }
     scroller.appendChild(trackGroup);
+    const vcas = mixerOf(p).vcas;
+    if (vcas.length) {
+      const vg = h('div.mx-group.mx-vcas', h('div.mx-group-label', 'VCA'));
+      for (const v of vcas) {
+        const s = vcaStrip(v, p);
+        carryPeaks(oldStrips.get(v.id), s);
+        strips.set(v.id, s);
+        vg.appendChild(s.el);
+      }
+      scroller.appendChild(vg);
+    }
 
     if (prefs.showBuses) {
       const busGroup = h('div.mx-group.mx-buses', h('div.mx-group-label', 'Returns'));
@@ -195,8 +248,11 @@ export function createMixerView(app) {
   }
 
   function update(p) {
+    const sip = mixerOf(p).soloMode === 'sip';
     const anySolo = p.tracks.some((t) => t.solo);
     const sel = ui.get('selectedTrackId');
+    soloSel.value = mixerOf(p).soloMode;
+    el.classList.toggle('cue-solo', !sip);
     for (const t of p.tracks) {
       const s = strips.get(t.id);
       if (!s) continue;
@@ -205,10 +261,24 @@ export function createMixerView(app) {
       s.panVal.textContent = fmtPan(t.pan);
       s.mute.classList.toggle('on', !!t.mute);
       s.solo.classList.toggle('on', !!t.solo);
+      s.solo.classList.toggle('safe', !!t.soloSafe);
+      s.solo.textContent = sip ? 'S' : mixerOf(p).soloMode === 'afl' ? 'A' : 'P';
       s.arm?.classList.toggle('on', !!t.arm);
-      for (const [busId, k] of s.sends) k.setValue(t.sends?.[busId] || 0);
+      for (const [busId, k] of s.sends) { k.setValue(t.sends?.[busId] || 0); k.classList.toggle('pre', sendTap(t, busId) === 'pre'); }
+      s.trim?.setValue(t.trim || 0);
+      s.width?.setValue(t.width ?? 1);
+      s.phase?.classList.toggle('on', !!t.phase);
+      if (s.vcaEl) { const d = vcaDb(p, t.id); s.vcaEl.textContent = vcasOf(p, t.id).length ? `VCA ${d === -Infinity ? '−∞' : (d > 0.05 ? '+' : '') + d.toFixed(1)}` : ''; }
       s.el.classList.toggle('selected', t.id === sel);
-      s.el.classList.toggle('silenced', !!t.mute || (anySolo && !t.solo));
+      s.el.classList.toggle('multi', mxSel.has(t.id));
+      s.el.classList.toggle('silenced', !!t.mute || (sip && anySolo && !t.solo && !t.soloSafe));
+    }
+    for (const v of mixerOf(p).vcas) {
+      const s = strips.get(v.id);
+      if (!s) continue;
+      s.setVolume(v.volume ?? 1);
+      s.mute.classList.toggle('on', !!v.mute);
+      s.el.classList.toggle('silenced', !!v.mute);
     }
     for (const b of p.buses) {
       const s = strips.get(b.id);
@@ -262,6 +332,28 @@ export function createMixerView(app) {
       markAuto(dot, ownerId, `fxen:${f.id}`).autoSet = (on) => { dot.parentElement?.classList.toggle('off', !on); };
       const slot = h(`div.mx-slot${f.enabled ? '' : '.off'}`, { title: `${def?.name || f.type}${def?.description ? ' — ' + def.description : ''}\nClick to edit in the device panel · right-click for options` }, dot, h('span.mx-slot-name', def?.name || f.type));
       slot.addEventListener('click', () => openChain(kind, id, f.id));
+      if (!patched) {
+        // drag to reorder inserts
+        slot.draggable = true;
+        slot.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/x-daw3-fx', JSON.stringify({ owner: ownerId, fxId: f.id })); e.dataTransfer.effectAllowed = 'move'; slot.classList.add('dragging'); });
+        slot.addEventListener('dragend', () => slot.classList.remove('dragging'));
+        slot.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/x-daw3-fx')) { e.preventDefault(); slot.classList.add('drop'); } });
+        slot.addEventListener('dragleave', () => slot.classList.remove('drop'));
+        slot.addEventListener('drop', (e) => {
+          slot.classList.remove('drop');
+          let d;
+          try { d = JSON.parse(e.dataTransfer.getData('text/x-daw3-fx')); } catch { return; }
+          if (!d || d.owner !== ownerId || d.fxId === f.id) return;
+          e.preventDefault();
+          store.transact('Reorder effects', (p) => {
+            const o = getFxOwner(p);
+            const from = o.fx.findIndex((x) => x.id === d.fxId);
+            if (from < 0) return;
+            const [m] = o.fx.splice(from, 1);
+            o.fx.splice(o.fx.findIndex((x) => x.id === f.id) + (from <= i ? 1 : 0), 0, m);
+          });
+        });
+      }
       slot.addEventListener('contextmenu', (e) => contextMenu(e, [
         { header: def?.name || f.type },
         { label: 'Edit in device panel', icon: 'sliders', onClick: () => openChain(kind, id, f.id) },
@@ -386,11 +478,29 @@ export function createMixerView(app) {
   function trackStrip(t, p) {
     const get = (pp) => pp.tracks.find((x) => x.id === t.id);
     const nameEl = h('div.mx-name', { title: `${t.name} — click to select, double-click to rename, right-click for track options` }, t.name);
+    const chips = h('div.mx-chips');
+    for (const g of groupsOf(p, t.id)) chips.appendChild(h('span.mx-chip', { style: { '--chip': g.color || 'var(--accent)' }, title: `Group “${g.name}” (${g.mode}) — linked: ${Object.entries(g.link).filter(([, v]) => v).map(([k]) => k).join(', ')}. Ctrl/Cmd while editing = this channel only.` }, g.name.slice(0, 3)));
+    for (const v of vcasOf(p, t.id)) chips.appendChild(h('span.mx-chip.vca', { style: { '--chip': v.color || 'var(--accent-2)' }, title: `Controlled by VCA “${v.name}”` }, v.name.slice(0, 3)));
+    if (t.notes) {
+      const n = h('span.mx-chip.note', { title: `Notes: ${t.notes}` }, '✎');
+      n.addEventListener('click', (e) => { e.stopPropagation(); tools.cmd.editNotes(t.id); });
+      chips.appendChild(n);
+    }
+    const swatch = h('input.mx-swatch', { type: 'color', value: /^#[0-9a-f]{6}$/i.test(t.color || '') ? t.color : '#7c5cff', title: 'Track colour' });
+    swatch.addEventListener('click', (e) => e.stopPropagation());
+    swatch.addEventListener('change', () => editTrack(t.id, 'Track color', (tt) => { tt.color = swatch.value; }));
     const head = h('div.mx-head', { style: { '--strip-color': t.color } },
-      h('div.mx-color'),
+      h('div.mx-color'), swatch,
       nameEl,
-      h('div.mx-sub', { title: trackSubtitle(t) }, icon(trackIcon(t), 11), h('span', trackSubtitle(t))));
-    head.addEventListener('click', () => actions.selectTrack(t.id));
+      h('div.mx-sub', { title: trackSubtitle(t) }, icon(trackIcon(t), 11), h('span', trackSubtitle(t))),
+      chips.childNodes.length ? chips : null);
+    head.addEventListener('click', (e) => {
+      if (e.ctrlKey || e.metaKey || e.shiftKey) { if (mxSel.has(t.id)) mxSel.delete(t.id); else mxSel.add(t.id); update(store.get()); return; }
+      mxSel.clear();
+      for (const id of groupSelection(store.get(), t.id)) if (id !== t.id) mxSel.add(id);
+      actions.selectTrack(t.id);
+      update(store.get());
+    });
     head.addEventListener('dblclick', () => actions.renameTrack(t.id));
     head.addEventListener('contextmenu', (e) => contextMenu(e, actions.trackMenuItems(t.id)));
 
@@ -401,46 +511,114 @@ export function createMixerView(app) {
     // sends
     const sends = new Map();
     let sendsSec = null;
-    if (p.buses.length && prefs.showBuses) {
+    if (returnBuses(p).length && prefs.showBuses) {
       const grid = h('div.mx-send-grid');
-      for (const b of p.buses) {
+      for (const b of returnBuses(p)) {
         const k = knob({
           def: SEND_DEF(b), value: t.sends?.[b.id] || 0, size: prefs.narrow ? 22 : 24, label: b.name, showValue: false,
           onChange: (v, { final }) => { if (final && same(trackOf(t.id)?.sends?.[b.id] || 0, v)) return; editTrack(t.id, `Send ${b.name}`, (tt) => { if (v <= 0.001) delete tt.sends[b.id]; else tt.sends[b.id] = v; }, !final); },
         });
         k.classList.add('mx-send-knob');
+        k.addEventListener('contextmenu', (e) => {
+          e.stopPropagation();
+          const pre = sendTap(trackOf(t.id), b.id) === 'pre';
+          contextMenu(e, [
+            { header: `Send → ${b.name}` },
+            { label: `${pre ? '' : '● '}Post-fader`, onClick: () => editTrack(t.id, 'Send post-fader', (tt) => { if (tt.sendModes) delete tt.sendModes[b.id]; }) },
+            { label: `${pre ? '● ' : ''}Pre-fader (independent of the fader)`, onClick: () => editTrack(t.id, 'Send pre-fader', (tt) => { tt.sendModes ||= {}; tt.sendModes[b.id] = 'pre'; }) },
+            '-',
+            { label: 'Remove send', icon: 'trash', onClick: () => editTrack(t.id, 'Remove send', (tt) => { delete tt.sends[b.id]; if (tt.sendModes) delete tt.sendModes[b.id]; }) },
+          ]);
+        });
         markAuto(k, t.id, `send:${b.id}`);
         sends.set(b.id, k);
         grid.appendChild(k);
       }
-      sendsSec = h('div.mx-sends', h('div.mx-sec-label', { title: 'Post-fader sends to the return buses' }, 'Sends'), grid);
+      sendsSec = h('div.mx-sends', h('div.mx-sec-label', { title: 'Sends to the return buses (post-fader; right-click a knob for pre-fader). Highlighted knobs are pre-fader.' }, 'Sends'), grid);
     }
 
-    const pan = panSection(t.pan, (v, { final }) => { if (final && same(trackOf(t.id)?.pan, v)) return; editTrack(t.id, `Pan ${t.name}`, (tt) => { tt.pan = v; }, !final); }, { owner: t.id });
+    const linked = (key, label, v, coalesce = false) => store.transact(label, (pp) => applyLinkedEdit(pp, t.id, key, v, { bypass: groupBypass }), { coalesce });
+    const pan = panSection(t.pan, (v, { final }) => { if (final && same(trackOf(t.id)?.pan, v)) return; linked('pan', `Pan ${t.name}`, v, !final); }, { owner: t.id });
     const mute = h('button.toggle.mute.mx-btn', { type: 'button', title: 'Mute (silence this track)' }, 'M');
     markAuto(mute, t.id, 'mute').autoSet = (on) => mute.classList.toggle('on', !!on);
     const solo = h('button.toggle.solo.mx-btn', { type: 'button', title: 'Solo (hear only soloed tracks) — Ctrl/Cmd-click for exclusive solo' }, 'S');
     const arm = t.type !== 'code' ? h('button.toggle.arm.mx-btn', { type: 'button', title: 'Record arm' }, h('span.mx-arm-dot')) : null;
-    mute.addEventListener('click', () => editTrack(t.id, 'Mute', (tt) => { tt.mute = !tt.mute; }));
+    mute.addEventListener('click', (e) => linked('mute', 'Mute', !trackOf(t.id)?.mute, false, e));
+    solo.title = 'Solo (hear only soloed tracks; AFL / PFL: send to the cue bus) — Ctrl/Cmd-click: exclusive · Alt-click: this channel only · right-click: solo safe';
     solo.addEventListener('click', (e) => {
-      if (e.ctrlKey || e.metaKey) {
-        store.transact('Exclusive solo', (pp) => {
-          const onlyThis = get(pp).solo && !pp.tracks.some((y) => y.solo && y.id !== t.id);
-          for (const x of pp.tracks) x.solo = !onlyThis && x.id === t.id;
-        });
-      }
-      else editTrack(t.id, 'Solo', (tt) => { tt.solo = !tt.solo; });
+      const exclusive = e.ctrlKey || e.metaKey || prefs.exclusiveSolo;
+      store.transact(exclusive ? 'Exclusive solo' : 'Solo', (pp) => toggleSolo(pp, t.id, { exclusive, bypass: e.altKey }));
     });
-    arm?.addEventListener('click', () => editTrack(t.id, 'Arm', (tt) => { tt.arm = !tt.arm; }));
+    solo.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); tools.cmd.toggleSoloSafe(t.id); });
+    arm?.addEventListener('click', () => linked('arm', 'Arm', !trackOf(t.id)?.arm));
 
-    const fad = faderSection({ value: t.volume, color: t.color, title: `${t.name} volume`, auto: { owner: t.id }, onChange: (v, { final }) => { if (final && same(trackOf(t.id)?.volume, v)) return; editTrack(t.id, `Volume ${t.name}`, (tt) => { tt.volume = v; }, !final); } });
+    const fad = faderSection({ value: t.volume, color: t.color, title: `${t.name} volume`, auto: { owner: t.id }, onChange: (v, { final }) => { if (final && same(trackOf(t.id)?.volume, v)) return; linked('volume', `Volume ${t.name}`, v, !final); } });
+    // input section: trim, polarity, width
+    let inputSec = null, trimK = null, widthK = null, phaseB = null;
+    if (prefs.showInput) {
+      trimK = knob({ def: TRIM_DEF, value: t.trim || 0, size: 22, label: 'Trim', showValue: false, onChange: (v, { final }) => { if (final && same(trackOf(t.id)?.trim || 0, v)) return; editTrack(t.id, 'Input trim', (tt) => { if (Math.abs(v) < 0.05) delete tt.trim; else tt.trim = +v.toFixed(2); }, !final); } });
+      widthK = knob({ def: WIDTH_DEF, value: t.width ?? 1, size: 22, label: 'Width', showValue: false, onChange: (v, { final }) => { if (final && same(trackOf(t.id)?.width ?? 1, v)) return; editTrack(t.id, 'Stereo width', (tt) => { if (Math.abs(v - 1) < 0.005) delete tt.width; else tt.width = +v.toFixed(3); }, !final); } });
+      phaseB = h('button.toggle.mx-btn.mx-phase', { type: 'button', title: 'Polarity (phase) invert' }, 'Ø');
+      phaseB.addEventListener('click', () => editTrack(t.id, 'Phase invert', (tt) => { tt.phase = !tt.phase; if (!tt.phase) delete tt.phase; }));
+      inputSec = h('div.mx-input', trimK, phaseB, widthK);
+    }
+    const vcaEl = h('div.mx-vca-off', { title: 'Offset applied by the VCA faders controlling this channel' });
 
-    const el = h('div.mx-strip.mx-track', { dataset: { id: t.id }, style: { '--strip-color': t.color } },
-      head, inserts, sendsSec, pan.el,
-      h('div.mx-btns', mute, solo, arm),
-      fad.area,
+    const frz = freezeButton(app, t); // engine-ui.js
+    const el = h(`div.mx-strip.mx-track${t.frozen?.sampleId ? '.is-frozen' : ''}${t.folderId ? '.in-folder' : ''}`, { dataset: { id: t.id }, style: { '--strip-color': t.color } },
+      head, inputSec, inserts, sendsSec, pan.el,
+      h('div.mx-btns', mute, solo, arm, frz),
+      fad.area, vcaEl,
       h('div.mx-foot', fad.readout, fad.peakEl));
-    return { kind: 'track', id: t.id, el, pan: pan.knob, panVal: pan.panVal, mute, solo, arm, sends, setVolume: fad.setVolume, meterState: fad.meterState, reset: fad.reset };
+    return { kind: 'track', id: t.id, el, pan: pan.knob, panVal: pan.panVal, mute, solo, arm, sends, trim: trimK, width: widthK, phase: phaseB, vcaEl, setVolume: fad.setVolume, meterState: fad.meterState, reset: fad.reset };
+  }
+
+  // ---------------------------------------------------------------- folder tab (collapse / sum)
+  function folderTab(f, members, p) {
+    const bus = f.busId ? p.buses.find((b) => b.id === f.busId) : null;
+    const tog = h('button.mx-folder-tog', { type: 'button', title: f.collapsed ? 'Expand folder' : 'Collapse folder' }, icon(f.collapsed ? 'chevronRight' : 'chevronDown', 12));
+    tog.addEventListener('click', () => tools.cmd.toggleFolder(f.id));
+    const el = h(`div.mx-folder${f.collapsed ? '.collapsed' : ''}`, { style: { '--strip-color': f.color || 'var(--accent)' }, title: `Folder “${f.name}”: ${members.length} track${members.length === 1 ? '' : 's'}${bus ? ` summed into bus “${bus.name}”` : ''} — right-click for options` },
+      tog, h('div.mx-folder-name', icon('folder', 12), h('span', f.name)), h('div.mx-folder-n', `${members.length}${bus ? ' Σ' : ''}`));
+    el.addEventListener('contextmenu', (e) => contextMenu(e, [
+      { header: `Folder ${f.name}` },
+      { label: f.collapsed ? 'Expand' : 'Collapse', onClick: () => tools.cmd.toggleFolder(f.id) },
+      { label: bus ? 'Stop summing (no folder bus)' : 'Sum into a folder bus', icon: 'layers', onClick: () => tools.cmd.setFolderSum(f.id, !bus) },
+      { label: 'Rename…', icon: 'pencil', onClick: async () => { const n = await promptText('Rename folder', f.name); if (n) tools.cmd.folderEdit(f.id, (ff, pp) => { ff.name = n; const b = pp.buses.find((x) => x.id === ff.busId); if (b) b.name = n; }, 'Rename folder'); } },
+      { label: 'Solo folder', icon: 'headphones', onClick: () => store.transact('Solo folder', (pp) => { const on = !members.every((m) => pp.tracks.find((x) => x.id === m.id)?.solo); for (const x of pp.tracks) if (x.folderId === f.id) x.solo = on; }) },
+      { label: 'Mute folder', icon: 'mute', onClick: () => store.transact('Mute folder', (pp) => { const on = !members.every((m) => pp.tracks.find((x) => x.id === m.id)?.mute); for (const x of pp.tracks) if (x.folderId === f.id) x.mute = on; }) },
+      '-',
+      { label: 'Delete folder (keep tracks)', icon: 'trash', onClick: () => tools.cmd.deleteFolder(f.id) },
+    ]));
+    return el;
+  }
+
+  // ---------------------------------------------------------------- VCA strip
+  function vcaStrip(v, p) {
+    const head = h('div.mx-head.vca', { style: { '--strip-color': v.color || 'var(--accent-2)' }, title: `VCA “${v.name}” — scales ${v.members.length} channel${v.members.length === 1 ? '' : 's'} without carrying audio. Right-click for options.` },
+      h('div.mx-color'), h('div.mx-name', v.name), h('div.mx-sub', icon('sliders', 11), h('span', `VCA · ${v.members.length}`)));
+    const menu = (e) => contextMenu(e, [
+      { header: `VCA ${v.name}` },
+      { label: 'Members…', icon: 'layers', onClick: () => tools.cmd.editMembers('vca', v.id) },
+      { label: 'Rename…', icon: 'pencil', onClick: async () => { const n = await promptText('Rename VCA', v.name); if (n) tools.cmd.vcaEdit(v.id, (vv) => { vv.name = n; }, 'Rename VCA'); } },
+      { label: 'Reset to 0 dB', onClick: () => tools.cmd.vcaEdit(v.id, (vv) => { vv.volume = 1; }, 'VCA 0 dB') },
+      { label: 'Clear VCA automation', disabled: !(v.automation || []).length, onClick: () => tools.cmd.vcaEdit(v.id, (vv) => { vv.automation = []; }, 'Clear VCA automation') },
+      '-',
+      { label: 'Delete VCA', icon: 'trash', onClick: () => tools.cmd.deleteVca(v.id) },
+    ]);
+    head.addEventListener('contextmenu', menu);
+    head.addEventListener('click', menu);
+    const mute = h('button.toggle.mute.mx-btn', { type: 'button', title: 'Mute every channel of this VCA' }, 'M');
+    mute.addEventListener('click', () => tools.cmd.vcaEdit(v.id, (vv) => { vv.mute = !vv.mute; }, 'VCA mute'));
+    const members = h('div.mx-vca-members', v.members.map((id) => p.tracks.find((t) => t.id === id) || p.buses.find((b) => b.id === id)).filter(Boolean).map((c) => h('span.mx-vca-dot', { style: { background: c.color || 'var(--accent-2)' }, title: c.name })));
+    const fad = faderSection({ value: Math.min(VCA_MAX_UI, v.volume ?? 1), color: v.color || 'var(--accent-2)', title: `VCA ${v.name}`, auto: { owner: v.id }, noMeter: true, onChange: (nv, { final }) => {
+      const cur = mixerOf(store.get()).vcas.find((x) => x.id === v.id);
+      if (final && same(cur?.volume ?? 1, nv)) return;
+      tools.cmd.vcaEdit(v.id, (vv) => { vv.volume = +nv.toFixed(4); }, `VCA ${v.name}`, { coalesce: !final });
+    } });
+    const el = h('div.mx-strip.mx-vca', { dataset: { id: v.id }, style: { '--strip-color': v.color || 'var(--accent-2)' } },
+      head, members, h('div.mx-btns', mute), fad.area, h('div.mx-foot', fad.readout, fad.peakEl));
+    return { kind: 'vca', id: v.id, el, mute, setVolume: fad.setVolume, meterState: fad.meterState, reset: fad.reset };
   }
 
   // ---------------------------------------------------------------- bus strip
@@ -451,7 +629,7 @@ export function createMixerView(app) {
       if (n) editBus(b.id, 'Rename bus', (bb) => { bb.name = n; });
     };
     const head = h('div.mx-head.bus', { title: `${b.name} (return bus) — double-click to rename, right-click for options` },
-      h('div.mx-color'), h('div.mx-name', b.name), h('div.mx-sub', icon('layers', 11), h('span', 'Return')));
+      h('div.mx-color'), h('div.mx-name', b.name), h('div.mx-sub', icon(b.source ? 'drum' : b.folderId ? 'folder' : 'layers', 11), h('span', b.source ? 'Multi-out' : b.folderId ? 'Folder bus' : 'Return')));
     head.addEventListener('click', () => openChain('bus', b.id));
     head.addEventListener('dblclick', rename);
     const menu = (e) => contextMenu(e, [
@@ -476,7 +654,7 @@ export function createMixerView(app) {
 
     // spacer keeps faders aligned with track strips that have sends
     const el = h('div.mx-strip.mx-bus', { dataset: { id: b.id } },
-      head, inserts, p.buses.length ? h('div.mx-sends.mx-sends-spacer') : null, pan.el, h('div.mx-btns', mute), fad.area, h('div.mx-foot', fad.readout, fad.peakEl));
+      head, inserts, returnBuses(p).length ? h('div.mx-sends.mx-sends-spacer') : null, pan.el, h('div.mx-btns', mute), fad.area, h('div.mx-foot', fad.readout, fad.peakEl));
     return { kind: 'bus', id: b.id, el, pan: pan.knob, panVal: pan.panVal, mute, setVolume: fad.setVolume, meterState: fad.meterState, reset: fad.reset };
   }
 
@@ -529,6 +707,64 @@ export function createMixerView(app) {
   }
 
   function resetAllPeaks() { for (const s of strips.values()) s.reset(); }
+
+  // ---------------------------------------------------------------- structure / snapshot menus
+  function selectedIds() {
+    const sel = ui.get('selectedTrackId');
+    const ids = new Set(mxSel);
+    if (sel) ids.add(sel);
+    return [...ids].filter((id) => store.get().tracks.some((t) => t.id === id));
+  }
+  function structureMenuItems() {
+    const p = store.get();
+    const m = mixerOf(p);
+    const ids = selectedIds();
+    const n = ids.length;
+    const what = n ? `${n} selected track${n === 1 ? '' : 's'}` : 'selection (Ctrl/Shift-click strip names)';
+    const groupItems = m.groups.map((g) => ({ label: `${g.enabled === false ? '○' : '●'} ${g.name} (${g.members.length}, ${g.mode})`, submenu: [
+      { label: g.enabled === false ? 'Enable linking' : 'Suspend linking', onClick: () => tools.cmd.groupEdit(g.id, (gg) => { gg.enabled = gg.enabled === false; }, 'Group on/off') },
+      { label: `Mode: ${g.mode === 'relative' ? 'relative ✓' : 'relative'}`, onClick: () => tools.cmd.groupEdit(g.id, (gg) => { gg.mode = 'relative'; }, 'Group relative') },
+      { label: `Mode: ${g.mode === 'absolute' ? 'absolute ✓' : 'absolute'}`, onClick: () => tools.cmd.groupEdit(g.id, (gg) => { gg.mode = 'absolute'; }, 'Group absolute') },
+      '-',
+      ...['volume', 'pan', 'mute', 'solo', 'arm', 'select'].map((k) => ({ label: `${g.link[k] ? '☑' : '☐'} Link ${k}`, onClick: () => tools.cmd.groupEdit(g.id, (gg) => { gg.link[k] = !gg.link[k]; }, `Group link ${k}`) })),
+      '-',
+      { label: 'Members…', icon: 'layers', onClick: () => tools.cmd.editMembers('group', g.id) },
+      { label: 'Select members', onClick: () => { mxSel.clear(); g.members.forEach((id) => mxSel.add(id)); update(store.get()); } },
+      { label: 'Delete group', icon: 'trash', onClick: () => tools.cmd.deleteGroup(g.id) },
+    ] }));
+    return [
+      { header: 'Folders' },
+      { label: `New folder from ${what}…`, icon: 'folder', disabled: !n, onClick: () => tools.cmd.newFolder(ids) },
+      { label: `New summing folder (bus) from ${what}…`, icon: 'folder', disabled: !n, onClick: () => tools.cmd.newFolder(ids, true) },
+      ...m.folders.map((f) => ({ label: `${f.collapsed ? '▸' : '▾'} ${f.name}`, onClick: () => tools.cmd.toggleFolder(f.id) })),
+      { header: 'Groups' },
+      { label: `New group from ${what}…`, icon: 'layers', disabled: !n, onClick: () => tools.cmd.newGroup(ids) },
+      { label: `Link channels (${n})`, icon: 'layers', disabled: n < 2, onClick: () => tools.cmd.linkChannels(ids) },
+      ...groupItems,
+      { header: 'VCA faders' },
+      { label: `New VCA for ${what}…`, icon: 'sliders', disabled: !n, onClick: () => tools.cmd.newVca(ids) },
+      ...m.vcas.map((v) => ({ label: `${v.name} (${v.members.length})`, onClick: () => tools.cmd.editMembers('vca', v.id) })),
+      { header: 'Solo' },
+      ...SOLO_MODES.map((md) => ({ label: `${m.soloMode === md ? '● ' : ''}${SOLO_LABELS[md]}`, onClick: () => tools.cmd.setSoloMode(md) })),
+      { label: `${prefs.exclusiveSolo ? '☑' : '☐'} Exclusive solo (clicking solo unsolos the others)`, onClick: () => { prefs.exclusiveSolo = !prefs.exclusiveSolo; savePrefs(); } },
+      { label: 'Clear all solos', onClick: () => store.transact('Clear solos', (pp) => { for (const t of pp.tracks) t.solo = false; for (const b of pp.buses) b.solo = false; }) },
+    ];
+  }
+  function snapshotMenuItems() {
+    const m = mixerOf(store.get());
+    return [
+      { header: 'Mixer snapshots' },
+      { label: 'Save snapshot…', icon: 'save', onClick: () => tools.cmd.saveSnapshot() },
+      ...m.snapshots.map((sn) => ({ label: sn.name, icon: 'history', submenu: [
+        { label: 'Recall everything', onClick: () => tools.cmd.recallSnapshot(sn.id) },
+        { label: 'Recall faders only', onClick: () => tools.cmd.recallSnapshot(sn.id, { pans: false, switches: false, sends: false, fx: false }) },
+        { label: 'Recall without inserts', onClick: () => tools.cmd.recallSnapshot(sn.id, { fx: false }) },
+        { label: 'Delete', icon: 'trash', onClick: () => tools.cmd.deleteSnapshot(sn.id) },
+      ] })),
+      '-',
+      { label: 'Reset mixer…', icon: 'refresh', onClick: async () => { if (await confirmDialog('Reset mixer?', 'Faders to 0.8, pans centred, mutes / solos / trims / phase / width cleared, VCAs to 0 dB. Sends and inserts stay. Undo restores everything.')) tools.cmd.resetMixer(); } },
+    ];
+  }
 
   // ---------------------------------------------------------------- auto-mix assist
   const GAIN_DB = { drums: -5, perc: -11, bass: -7, chords: -11, pad: -14, lead: -8, arp: -12, vocal: -6, fx: -16, code: -10, audio: -9, other: -10 };
@@ -666,6 +902,13 @@ export function createMixerView(app) {
         ctx.fillStyle = meterColors.grad(ctx, H);
         ctx.fillRect(x, H - shown * H, bw, shown * H);
       }
+      // RMS (≈ 300 ms) as a brighter inner bar
+      const rms = i ? lv.rmsR : lv.rmsL;
+      if (rms > 0) {
+        const rn = meterPos(rms);
+        ctx.fillStyle = 'rgba(255,255,255,.28)';
+        ctx.fillRect(x + bw * 0.25, H - rn * H, bw * 0.5, rn * H);
+      }
       if (n > st.hold[i] || now - st.holdT[i] > 1500) {
         st.hold[i] = n > st.hold[i] ? n : Math.max(n, st.hold[i] - 0.01);
         if (n >= st.hold[i]) st.holdT[i] = now;
@@ -785,8 +1028,8 @@ export function createMixerView(app) {
 
   return {
     el,
-    show() { visible = true; render(dirty); startLoop(); },
-    hide() { visible = false; stopLoop(); },
+    show() { visible = true; render(dirty); startLoop(); syncLoudness(); },
+    hide() { visible = false; stopLoop(); loudness.hide(); },
     assist, // exposed for automation/tests
   };
 }

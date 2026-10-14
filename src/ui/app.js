@@ -9,6 +9,7 @@ import { createActions } from './actions.js';
 import { createHeader } from './header.js';
 import { installKeyboard } from './keyboard.js';
 import { installAutomationRecorder } from './automation-recorder.js';
+import { installEngineUi } from './engine-ui.js';
 
 export const VIEWS = [
   { id: 'arrange', label: 'Arrange', icon: 'timeline', key: '1', module: './views/arrange.js', factory: 'createArrangeView', help: 'Timeline: place pattern & audio clips into a full song.' },
@@ -65,7 +66,7 @@ export function createCore() {
     store.transact('Update plugboard', (pp) => { for (const t of pp.tracks) reconcilePatch(t); }, { undo: false });
   });
   store.on('change', (_p, label) => schedule('project', label));
-  setTrackOptionsProvider(() => store.get().tracks.map((t) => ({ value: t.id, label: t.name })));
+  setTrackOptionsProvider(() => [...store.get().tracks.map((t) => ({ value: t.id, label: t.name })), ...(store.get().buses || []).map((b) => ({ value: b.id, label: `Bus: ${b.name}` }))]); // sidechain keys: tracks or buses
   ui.on('change', (changed) => schedule('ui', changed));
   app.subscribe = (fn) => { subs.add(fn); return () => subs.delete(fn); };
   app.requestRender = () => schedule('project', 'refresh');
@@ -172,7 +173,7 @@ export async function createApp(rootEl) {
   const updateStatus = () => {
     const p = store.get();
     const pats = Object.keys(p.patterns).length;
-    statusRight.textContent = `${p.tracks.length} tracks · ${pats} patterns · ${p.clips.length} clips · ${engine.ctx ? (engine.ctx.sampleRate / 1000).toFixed(1) + ' kHz' : 'audio idle'} · ${store.canUndo() ? 'Ctrl+Z to undo' : ''}`;
+    statusRight.textContent = `${p.tracks.length} tracks · ${pats} patterns · ${p.clips.length} clips · ${store.canUndo() ? 'Ctrl+Z to undo' : ''}`;
   };
 
   app.subscribe((r) => {
@@ -185,6 +186,7 @@ export async function createApp(rootEl) {
 
   installKeyboard(app);
   installAutomationRecorder(app);
+  const engineUi = installEngineUi(app, status); // health meter, panic, sample rate, freeze, recovery / history
   import('../control/index.js').then((m) => m.installControl(app)).catch((e) => console.warn('[control]', e)); // MIDI, surfaces, sync, palette
 
   await showView(ui.get('view'));
@@ -199,6 +201,7 @@ export async function createApp(rootEl) {
 
   // Restore last session (autosave) or offer the welcome screen.
   await app.actions.boot();
+  await engineUi.afterBoot();
   updateStatus();
   app.setStatus('Ready. Press Space to play, ? for help.');
   return app;

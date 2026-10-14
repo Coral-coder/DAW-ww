@@ -147,6 +147,7 @@ export const EFFECT_DEFS = {
       num('release', 'Release', 0.01, 1, 0.15, { step: 0.005, unit: 's', curve: 'log', section: 'Dynamics' }),
       num('knee', 'Knee', 0, 40, 6, { step: 0.1, unit: 'dB', section: 'Dynamics', advanced: true }),
       num('makeup', 'Makeup', 0, 24, 0, { step: 0.1, unit: 'dB', section: 'Output' }),
+      { key: 'sourceTrackId', label: 'Sidechain', type: 'track', default: '', section: 'Sidechain', description: 'External key: compress this channel by another track / bus (none = its own signal)' },
       mix(1),
     ],
   },
@@ -189,6 +190,7 @@ export const EFFECT_DEFS = {
       num('attack', 'Attack', 0.0005, 0.05, 0.002, { step: 0.0005, unit: 's', curve: 'log', section: 'Gate' }),
       num('release', 'Release', 0.01, 1, 0.08, { step: 0.005, unit: 's', curve: 'log', section: 'Gate' }),
       num('knee', 'Knee', 0, 12, 3, { step: 0.1, unit: 'dB', section: 'Gate', advanced: true }),
+      { key: 'sourceTrackId', label: 'Sidechain', type: 'track', default: '', section: 'Sidechain', description: 'External key: open the gate from another track / bus (none = its own signal)' },
     ],
   },
   ducker: {

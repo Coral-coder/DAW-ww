@@ -10,8 +10,17 @@
 // Plugboard:    when track.patch.enabled, the insert section is built from the patch graph
 //               (src/core/patch.js): effect instances wired by cables (one GainNode per cable),
 //               split/mix junctions as unity GainNodes, 'in' = input, 'out' = post.
+// Pro mixer (core/mixer-model.js): input -> trim/phase -> inserts -> post -> [width M/S] -> preFader -> pan -> volume
+//               -> vca -> mute -> direct -> output (master or a bus: folder sum / custom routing). Pre-fader sends and
+//               PFL tap `preFader` (sends through a mute-following gain); AFL taps after the VCA. Meters tap after the
+//               mute through a PDC delay so they line up with what reaches the master. VCA gain = product of the
+//               member's VCAs (automation lanes become ramps on the vca node: they multiply with fader automation).
 // Bus strip:    input -> fx -> pan -> volume -> mute -> master input
 // Master:       input -> fx -> volume -> analyser -> destination  (metronome joins after master fx)
+// PDC:          (see latency.js) every strip reports its insert (+ instrument) latency; MixGraph.updatePdc()
+//               puts compensation DelayNodes on the track -> master links and on each send link so all routes
+//               reach the master input together. `graph.latency` (seconds) is the resulting overall delay:
+//               the realtime scheduler pre-rolls events by it, the offline renderer trims it off the head.
 import { createEffect } from './effects.js';
 import { createInstrument } from './instruments.js';
 import * as codeInstrumentModule from './code-instrument.js';
@@ -25,6 +34,13 @@ import { INSTRUMENT_DEFS } from './defs.js';
 import { EFFECT_DEFS } from './effect-defs.js';
 import { resolveInstrument } from './instruments.js';
 import { sanitizePatch, patchStructureKey, topoOrder, resolveKeyLinks, PATCH_IN, PATCH_OUT } from '../core/patch.js';
+import { computePdc, faderOffsets } from './latency.js';
+import { needsShapedEnvelope, envelopePoints } from '../record/clips.js';
+import { frozenMode, bypassesInserts, bypassesFader, frozenLaneFilter } from '../core/freeze.js';
+import { spanOf } from '../time/tempo-map.js';
+import { WarpPlayer, needsWarpPlayer, unwarpedInSeconds } from './warp/player.js';
+import { MasterAnalysis } from './meters.js';
+import { inputGain, widthMatrix, vcaGainFor, vcaCombinedLane, soloState, sendTap, outputOf } from '../core/mixer-model.js';
 
 const TC = 0.012;
 
@@ -99,6 +115,44 @@ export function noteExtra(ev, durSec) {
   return out;
 }
 
+/**
+ * A connection src -> dst that can carry a compensation delay. The DelayNode is only created once a delay
+ * is needed (most links never get one) and kept afterwards (set to 0) to avoid rewiring clicks.
+ */
+export class DelayLink {
+  constructor(ctx, src, dst) {
+    this.ctx = ctx;
+    this.src = src;
+    this.dst = dst;
+    this.node = null;
+    this.sec = 0;
+    src.connect(dst);
+  }
+  set(sec) {
+    sec = Math.max(0, Number(sec) || 0);
+    if (sec === this.sec) return;
+    this.sec = sec;
+    if (sec > 0 && (!this.node || sec > this.node._max)) {
+      const max = Math.max(0.5, sec * 2);
+      const n = this.ctx.createDelay(max);
+      n._max = max;
+      n.delayTime.value = sec;
+      n.connect(this.dst);
+      if (this.node) { try { this.src.disconnect(this.node); } catch { /* */ } try { this.node.disconnect(); } catch { /* */ } }
+      else { try { this.src.disconnect(this.dst); } catch { /* */ } }
+      this.src.connect(n);
+      this.node = n;
+    } else if (this.node) {
+      this.node.delayTime.value = sec;
+    }
+  }
+  dispose() {
+    try { this.src.disconnect(this.node || this.dst); } catch { /* */ }
+    try { this.node?.disconnect(); } catch { /* */ }
+    this.node = null;
+  }
+}
+
 export class ChannelStrip {
   /**
    * @param {BaseAudioContext} ctx
@@ -109,16 +163,33 @@ export class ChannelStrip {
     this.env = opts.env;
     this.onError = opts.onError || ((e) => console.error(e));
     this.input = ctx.createGain();
+    this.inStage = ctx.createGain(); // input trim × polarity (head of the insert section)
     this.post = ctx.createGain(); // end of the insert section (sidechain key tap)
+    this.preFader = ctx.createGain(); // after the width stage: pre-fader sends / PFL
     this.panner = ctx.createStereoPanner();
     this.volume = ctx.createGain();
+    this.vcaGain = ctx.createGain(); // VCA faders (no audio passes through a VCA: it scales its members here)
     this.muteGain = ctx.createGain();
+    this.direct = ctx.createGain(); // main out on/off (stems of a bus keep the sends only)
     this.output = this.muteGain;
+    this.preFader.connect(this.panner);
     this.panner.connect(this.volume);
-    this.volume.connect(this.muteGain);
-    if (opts.destination) this.muteGain.connect(opts.destination);
-    this.input.connect(this.post);
-    this.post.connect(this.panner);
+    this.volume.connect(this.vcaGain);
+    this.vcaGain.connect(this.muteGain);
+    this.muteGain.connect(this.direct);
+    this.outDest = opts.destination || null;
+    this.outLink = opts.destination ? new DelayLink(ctx, this.direct, opts.destination) : null; // PDC on the main output
+    this.preMute = null; // pre-fader send tap (created with the first pre-fader send)
+    this.sendTaps = {}; // busId -> 'pre' | 'post'
+    this.width = null; // lazily built M/S stage
+    this.widthVal = 1;
+    this.cueLink = null; // {tap, node, src}
+    this.sendLinks = new Map(); // busId -> DelayLink (send gain -> bus input, PDC per send)
+    this.sendComp = {}; // busId -> compensation (s)
+    this.onLatency = opts.onLatency || null; // called when an effect reports a new latency (plugins, once loaded)
+    this.input.connect(this.inStage);
+    this.inStage.connect(this.post);
+    this.post.connect(this.preFader);
     this.effects = []; // [{ id, type, fx }]
     this.fxKey = '';
     this.patchNodes = []; // split/mix junction GainNodes of the current patch
@@ -128,15 +199,19 @@ export class ChannelStrip {
     this.sendVals = {}; // static send amounts (restored when send automation ends)
     this.fxDefs = new Map(); // fxId -> last static Effect def
     this.fxOv = new Map(); // fxId -> {key: value} automation overrides
-    this.auto = { volume: false, pan: false, mute: false, sends: new Set() }; // AudioParams currently driven by automation
+    this.auto = { volume: false, pan: false, mute: false, vca: false, sends: new Set() }; // AudioParams currently driven by automation
     this.cableOv = new Map(); // cableId -> automated gain (plugboard)
     this.peak = { l: 0, r: 0 };
+    this.rms = { l: 0, r: 0 };
     if (opts.meter !== false) {
       this.splitter = ctx.createChannelSplitter(2);
       this.anL = ctx.createAnalyser();
       this.anR = ctx.createAnalyser();
       this.anL.fftSize = this.anR.fftSize = 1024;
-      this.muteGain.connect(this.splitter);
+      // PDC-aware: the meter hears the strip when its signal reaches the master (same compensation as the out link)
+      this.meterDelay = ctx.createDelay(1);
+      this.muteGain.connect(this.meterDelay);
+      this.meterDelay.connect(this.splitter);
       this.splitter.connect(this.anL, 0);
       this.splitter.connect(this.anR, 1);
       this._buf = new Float32Array(1024);
@@ -169,7 +244,9 @@ export class ChannelStrip {
           old.delete(def.id);
         } else {
           try {
-            e = { id: def.id, type: def.type, fx: createEffect(this.ctx, def, this.env) };
+            e = { id: def.id, type: def.type, fx: (this.env.createEffect || createEffect)(this.ctx, def, this.env) };
+            const fx = e.fx;
+            if (fx.ready && typeof fx.ready.then === 'function') fx.ready.then(() => { if (fx.refreshLatency?.()) this.onLatency?.(); }, () => {});
           } catch (err) {
             this.onError(err);
             continue;
@@ -179,20 +256,21 @@ export class ChannelStrip {
       }
       for (const e of old.values()) e.fx.dispose();
       // tear down the previous wiring (post keeps its own outputs: panner + key taps)
-      try { this.input.disconnect(); } catch { /* */ }
+      try { this.inStage.disconnect(); } catch { /* */ }
       for (const e of next) { try { e.fx.output.disconnect(); } catch { /* */ } }
       for (const g of [...this.patchNodes, ...this.cables.values()]) { try { g.disconnect(); } catch { /* */ } }
       this.patchNodes = [];
       this.cables = new Map();
       this.cableOv.clear(); // fresh cable GainNodes start at their static gain
       if (!sp) {
-        let prev = this.input;
+        let prev = this.inStage;
         for (const e of next) { prev.connect(e.fx.input); prev = e.fx.output; }
         prev.connect(this.post);
       } else {
         this._wirePatch(sp, next);
       }
       this.effects = next;
+      this._sp = sp;
     }
     if (sp) {
       for (const c of sp.cables) {
@@ -210,7 +288,7 @@ export class ChannelStrip {
   /** Build the plugboard graph (sp = sanitizePatch result, effects = instances on the board). */
   _wirePatch(sp, effects) {
     const fxOf = new Map(effects.map((e) => [e.id, e.fx]));
-    const outs = new Map([[PATCH_IN, this.input]]);
+    const outs = new Map([[PATCH_IN, this.inStage]]);
     const ins = new Map([[PATCH_OUT + ':0', this.post]]);
     for (const n of sp.nodes) {
       if (n.kind === 'fx') {
@@ -237,6 +315,49 @@ export class ChannelStrip {
       g.connect(dst);
       this.cables.set(c.id, g);
     }
+  }
+
+  /**
+   * Latency (s) of the insert section, input -> post: the sum of the serial chain, or with a plugboard patch
+   * the longest path from 'in' to 'out' (parallel branches are not aligned against each other).
+   */
+  get insertLatency() {
+    const lat = (fx) => { const l = Number(fx?.latency); return Number.isFinite(l) && l > 0 ? l : 0; };
+    if (!this._sp) return this.effects.reduce((a, e) => a + lat(e.fx), 0);
+    const sp = this._sp;
+    const fxOf = new Map(this.effects.map((e) => [e.id, e.fx]));
+    const nodeLat = new Map(sp.nodes.map((n) => [n.id, n.kind === 'fx' ? lat(fxOf.get(n.fxId)) : 0]));
+    const incoming = new Map();
+    for (const c of sp.cables) {
+      if ((c.to.port || 0) !== 0) continue; // port 1 = sidechain key, not part of the audio path
+      if (!incoming.has(c.to.node)) incoming.set(c.to.node, []);
+      incoming.get(c.to.node).push(c.from.node);
+    }
+    const memo = new Map();
+    const arrive = (id, depth = 0) => { // latency at the node's input; -Infinity = unreachable from 'in'
+      if (id === PATCH_IN) return 0;
+      if (memo.has(id)) return memo.get(id);
+      if (depth > 256) return -Infinity;
+      memo.set(id, -Infinity); // cycle guard
+      let best = -Infinity;
+      for (const from of incoming.get(id) || []) {
+        const a = arrive(from, depth + 1);
+        if (a > -Infinity) best = Math.max(best, a + (from === PATCH_IN ? 0 : nodeLat.get(from) || 0));
+      }
+      memo.set(id, best);
+      return best;
+    };
+    const l = arrive(PATCH_OUT);
+    return l > 0 ? l : 0;
+  }
+
+  /** PDC: compensation delays (s) for the main output and per send ({busId: s}). */
+  setCompensation(outSec = 0, sends = {}) {
+    this.outLink?.set(outSec);
+    this.outComp = outSec;
+    if (this.meterDelay) this.meterDelay.delayTime.value = Math.min(1, Math.max(0, outSec || 0));
+    this.sendComp = { ...sends };
+    for (const [busId, link] of this.sendLinks) link.set(sends[busId] || 0);
   }
 
   /** Automation overrides for insert fx: map {fxId: {key: value}} | null (null = back to static). */
@@ -284,7 +405,7 @@ export class ChannelStrip {
         param.setValueAtTime(v0, t0);
       }
       for (const seg of segmentsInWindow(lane.points, b0, b1)) {
-        param.linearRampToValueAtTime(clampFn(seg.value), t0 + (seg.beat - b0) * spb);
+        param.linearRampToValueAtTime(clampFn(seg.value), t0 + spanOf(spb, b0, seg.beat)); // spb: number | TempoMap
       }
     };
     const vol = (x) => Math.max(0, Math.min(4, x));
@@ -292,6 +413,8 @@ export class ChannelStrip {
     const amt = (x) => Math.max(0, Math.min(1, x));
     if (lanes.volume) { ramp(this.volume.gain, lanes.volume, this.auto.volume, vol); this.auto.volume = true; }
     else if (this.auto.volume) { this.auto.volume = false; release(this.volume.gain, this.vals.volume ?? 0.8, this.ctx); }
+    if (lanes.vca) { ramp(this.vcaGain.gain, lanes.vca, this.auto.vca, (x) => Math.max(0, Math.min(4, x))); this.auto.vca = true; }
+    else if (this.auto.vca) { this.auto.vca = false; release(this.vcaGain.gain, this.vals.vca ?? 1, this.ctx); }
     if (lanes.pan) { ramp(this.panner.pan, lanes.pan, this.auto.pan, pan); this.auto.pan = true; }
     else if (this.auto.pan) { this.auto.pan = false; release(this.panner.pan, pan(this.vals.pan ?? 0), this.ctx); }
     // mute lanes are step lanes (value >= 0.5 = muted) driving the mute gain
@@ -318,7 +441,7 @@ export class ChannelStrip {
 
   /** Stop all automation on this strip: restore the static values. */
   endAutomation(busStrips) {
-    if (this.auto.volume || this.auto.pan || this.auto.mute || this.auto.sends.size) this.automate({}, 0, 0, 0, 0, null, busStrips);
+    if (this.auto.volume || this.auto.pan || this.auto.mute || this.auto.vca || this.auto.sends.size) this.automate({}, 0, 0, 0, 0, null, busStrips);
     if (this.fxOv.size) this.setFxOverrides(null);
     if (this.cableOv.size) this.setCableOverrides(null);
   }
@@ -327,14 +450,39 @@ export class ChannelStrip {
     const bus = busStrips?.get(busId);
     if (!bus) return null;
     let g = this.sends.get(busId);
+    if (g && g._tap !== (this.sendTaps[busId] || 'post')) { this._dropSend(busId); g = null; }
     if (!g) {
       g = this.ctx.createGain();
       g.gain.value = 0;
-      this.muteGain.connect(g);
-      g.connect(bus.input);
+      g._tap = this.sendTaps[busId] || 'post';
+      this._sendSource(g._tap).connect(g);
+      const link = new DelayLink(this.ctx, g, bus.input);
+      link.set(this.sendComp[busId] || 0);
+      this.sendLinks.set(busId, link);
       this.sends.set(busId, g);
+      this.onLatency?.(); // a new route: the compensation plan may change
     }
     return g;
+  }
+
+  /** Node a send taps: post-fader = after the mute; pre-fader = after the inserts / width through a mute-following gain. */
+  _sendSource(tap) {
+    if (tap !== 'pre') return this.muteGain;
+    if (!this.preMute) {
+      this.preMute = this.ctx.createGain();
+      this.preMute.gain.value = this.vals.muted ? 0 : 1;
+      this.preFader.connect(this.preMute);
+    }
+    return this.preMute;
+  }
+
+  _dropSend(busId) {
+    const g = this.sends.get(busId);
+    try { (g?._tap === 'pre' ? this.preMute : this.muteGain)?.disconnect(g); } catch { /* */ }
+    this.sendLinks.get(busId)?.dispose();
+    try { g?.disconnect(); } catch { /* */ }
+    this.sendLinks.delete(busId);
+    this.sends.delete(busId);
   }
 
   /** volume (linear), pan (-1..1), muted (bool). */
@@ -342,29 +490,74 @@ export class ChannelStrip {
     const v = this.vals;
     if (v.volume !== volume) { v.volume = volume; if (!this.auto.volume) smooth(this.volume.gain, volume, this.ctx, immediate); }
     if (v.pan !== pan) { v.pan = pan; if (!this.auto.pan) smooth(this.panner.pan, Math.max(-1, Math.min(1, pan)), this.ctx, immediate); }
-    if (v.muted !== muted) { v.muted = muted; if (!this.auto.mute) smooth(this.muteGain.gain, muted ? 0 : 1, this.ctx, immediate); }
+    if (v.muted !== muted) { v.muted = muted; if (!this.auto.mute) smooth(this.muteGain.gain, muted ? 0 : 1, this.ctx, immediate); if (this.preMute) smooth(this.preMute.gain, muted ? 0 : 1, this.ctx, immediate); }
+  }
+
+  /** Channel extras: input trim (dB) / phase invert, stereo width, VCA gain, main out on/off. */
+  setStrip({ trim = 0, phase = false, width = 1, vca = 1, direct = true } = {}, immediate = false) {
+    const v = this.vals;
+    const ig = inputGain({ trim, phase });
+    if (v.inGain !== ig) { v.inGain = ig; smooth(this.inStage.gain, ig, this.ctx, immediate || Math.sign(ig) !== Math.sign(this.inStage.gain.value)); }
+    if (v.vca !== vca) { v.vca = vca; if (!this.auto.vca) smooth(this.vcaGain.gain, vca, this.ctx, immediate); }
+    const d = direct ? 1 : 0;
+    if (v.direct !== d) { v.direct = d; smooth(this.direct.gain, d, this.ctx, immediate); }
+    this.setWidth(width, immediate);
+  }
+
+  /** Stereo width 0 (mono) … 1 (unchanged) … 2: M/S matrix between `post` and `preFader`, built on first use. */
+  setWidth(w = 1, immediate = false) {
+    w = Number.isFinite(+w) ? +w : 1;
+    if (w === this.widthVal) return;
+    this.widthVal = w;
+    if (!this.width) {
+      if (w === 1) return;
+      const ctx = this.ctx;
+      const split = ctx.createChannelSplitter(2);
+      const merge = ctx.createChannelMerger(2);
+      const g = { ll: ctx.createGain(), rl: ctx.createGain(), lr: ctx.createGain(), rr: ctx.createGain() };
+      split.connect(g.ll, 0); split.connect(g.lr, 0);
+      split.connect(g.rl, 1); split.connect(g.rr, 1);
+      g.ll.connect(merge, 0, 0); g.rl.connect(merge, 0, 0);
+      g.lr.connect(merge, 0, 1); g.rr.connect(merge, 0, 1);
+      try { this.post.disconnect(this.preFader); } catch { /* */ }
+      this.post.connect(split);
+      merge.connect(this.preFader);
+      this.width = { split, merge, g };
+      immediate = true;
+    }
+    const m = widthMatrix(w);
+    for (const k of ['ll', 'rl', 'lr', 'rr']) smooth(this.width.g[k].gain, m[k], this.ctx, immediate);
+  }
+
+  /** Main output destination (master input, or a bus input for folder sums / custom routing). */
+  setOutput(dst) {
+    if (!dst || dst === this.outDest) return;
+    this.outLink?.dispose();
+    this.outDest = dst;
+    this.outLink = new DelayLink(this.ctx, this.direct, dst);
+    this.outLink.set(this.outComp || 0);
+    this.onLatency?.();
+  }
+
+  /** Cue (AFL / PFL monitor) tap: tap 'pre' | 'post' | null into `cueNode`. */
+  setCue(tap, cueNode) {
+    const src = tap === 'pre' ? this.preFader : tap === 'post' ? this.vcaGain : null;
+    if (this.cueLink && this.cueLink.src === src && this.cueLink.node === cueNode) return;
+    if (this.cueLink) { try { this.cueLink.src.disconnect(this.cueLink.node); } catch { /* */ } this.cueLink = null; }
+    if (src && cueNode) { src.connect(cueNode); this.cueLink = { src, node: cueNode }; }
   }
 
   /** sends: {busId: 0..1}; busStrips: Map(busId -> ChannelStrip). Post-fader, post-mute. */
-  setSends(sends = {}, busStrips, immediate = false) {
+  setSends(sends = {}, busStrips, immediate = false, taps = null) {
     this.sendVals = { ...sends };
-    for (const [busId, g] of this.sends) {
-      if (!busStrips.has(busId) || (!(sends[busId] > 0) && !this.auto.sends.has(busId))) {
-        try { g.disconnect(); this.muteGain.disconnect(g); } catch { /* */ }
-        this.sends.delete(busId);
-      }
+    if (taps) this.sendTaps = { ...taps };
+    for (const busId of [...this.sends.keys()]) {
+      if (!busStrips.has(busId) || (!(sends[busId] > 0) && !this.auto.sends.has(busId))) this._dropSend(busId);
     }
     for (const [busId, amt] of Object.entries(sends)) {
       const bus = busStrips.get(busId);
       if (!bus || !(amt > 0)) continue;
-      let g = this.sends.get(busId);
-      if (!g) {
-        g = this.ctx.createGain();
-        g.gain.value = 0;
-        this.muteGain.connect(g);
-        g.connect(bus.input);
-        this.sends.set(busId, g);
-      }
+      const g = this._ensureSend(busId, busStrips);
       if (!this.auto.sends.has(busId)) smooth(g.gain, Math.min(1, amt), this.ctx, immediate);
     }
   }
@@ -376,26 +569,37 @@ export class ChannelStrip {
   /** Peak level per channel since the last call (with decay for smooth meters). */
   getMeter() {
     if (!this.anL) return { l: 0, r: 0 };
+    let sq = 0;
     const peakOf = (an) => {
       an.getFloatTimeDomainData(this._buf);
       let m = 0;
-      for (let i = 0; i < this._buf.length; i++) { const a = Math.abs(this._buf[i]); if (a > m) m = a; }
+      sq = 0;
+      for (let i = 0; i < this._buf.length; i++) { const x = this._buf[i]; const a = Math.abs(x); sq += x * x; if (a > m) m = a; }
       return m;
     };
     const l = peakOf(this.anL);
+    const rl = Math.sqrt(sq / this._buf.length);
     const r = peakOf(this.anR);
+    const rr = Math.sqrt(sq / this._buf.length);
     this.peak.l = Math.max(l, this.peak.l * 0.82);
     this.peak.r = Math.max(r, this.peak.r * 0.82);
-    return { l: this.peak.l, r: this.peak.r };
+    // RMS: ~300 ms integration (one-pole on the power, read at ~30 fps)
+    this.rms.l = Math.sqrt(this.rms.l * this.rms.l * 0.8 + rl * rl * 0.2);
+    this.rms.r = Math.sqrt(this.rms.r * this.rms.r * 0.8 + rr * rr * 0.2);
+    return { l: this.peak.l, r: this.peak.r, rmsL: this.rms.l, rmsR: this.rms.r, hold: Math.max(l, r) };
   }
 
   dispose() {
     for (const e of this.effects) e.fx.dispose();
     this.effects = [];
-    for (const n of [this.input, this.post, this.panner, this.volume, this.muteGain, this.splitter, ...this.sends.values(), ...this.patchNodes, ...this.cables.values()]) {
+    for (const l of this.sendLinks.values()) l.dispose();
+    this.outLink?.dispose();
+    if (this.width) { for (const n of [this.width.split, this.width.merge, ...Object.values(this.width.g)]) { try { n.disconnect(); } catch { /* */ } } }
+    for (const n of [this.input, this.inStage, this.post, this.preFader, this.panner, this.volume, this.vcaGain, this.muteGain, this.direct, this.preMute, this.meterDelay, this.splitter, ...this.sends.values(), ...this.patchNodes, ...this.cables.values()]) {
       try { n?.disconnect(); } catch { /* */ }
     }
     this.sends.clear();
+    this.sendLinks.clear();
   }
 }
 
@@ -408,14 +612,23 @@ export class MixGraph {
     this.ctx = ctx;
     this.o = opts;
     this.onError = opts.onError || ((e) => console.error(e));
-    this.env = { getBpm: opts.getBpm, getBeatAt: opts.getBeatAt };
+    this.env = { getBpm: opts.getBpm, getBeatAt: opts.getBeatAt, ...(opts.createEffect ? { createEffect: opts.createEffect } : {}) };
+    this.pdc = computePdc({ sampleRate: ctx.sampleRate, tracks: [], buses: [], master: 0 });
+    this._onLatency = () => { if (!this._syncing) this.updatePdc(); };
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 2048;
     this.analyser.smoothingTimeConstant = 0.8;
     this.out = ctx.createGain(); // post master volume
     this.out.connect(this.analyser);
-    this.out.connect(opts.destination);
-    this.master = new ChannelStrip(ctx, { destination: this.out, env: this.env, onError: this.onError, meter: opts.meters !== false });
+    // monitor switch: the main mix, or the cue bus while an AFL / PFL solo is active (realtime only)
+    this.monitor = ctx.createGain();
+    this.out.connect(this.monitor);
+    this.monitor.connect(opts.destination);
+    this.cue = ctx.createGain();
+    this.cue.gain.value = 0;
+    this.cue.connect(opts.destination);
+    this.cueActive = false;
+    this.master = new ChannelStrip(ctx, { destination: this.out, env: this.env, onError: this.onError, meter: opts.meters !== false, onLatency: this._onLatency });
     this.clickOut = ctx.createGain();
     this.clickOut.connect(this.out);
     this.buses = new Map(); // id -> ChannelStrip
@@ -426,6 +639,13 @@ export class MixGraph {
   }
 
   sync(project) {
+    this._syncing = true;
+    try { this._sync(project); } finally { this._syncing = false; }
+    this.updatePdc(project);
+  }
+
+  _sync(project) {
+    this._project = project;
     const im = this.firstSync;
     this.firstSync = false;
     if (this.bpm !== project.bpm) {
@@ -442,11 +662,12 @@ export class MixGraph {
       busIds.add(bus.id);
       let s = this.buses.get(bus.id);
       if (!s) {
-        s = new ChannelStrip(this.ctx, { destination: this.master.input, env: this.env, onError: this.onError, meter: this.o.meters !== false });
+        s = new ChannelStrip(this.ctx, { destination: this.master.input, env: this.env, onError: this.onError, meter: this.o.meters !== false, onLatency: this._onLatency });
         this.buses.set(bus.id, s);
       }
       s.setFx(bus.fx || []);
       s.setMix({ volume: bus.volume ?? 0.8, pan: bus.pan || 0, muted: !!bus.mute }, im);
+      s.setStrip({ trim: bus.trim, phase: bus.phase, width: bus.width ?? 1, vca: vcaGainFor(project, bus.id) }, im);
     }
     for (const [id, s] of this.buses) if (!busIds.has(id)) { s.dispose(); this.buses.delete(id); }
     // tracks
@@ -456,21 +677,56 @@ export class MixGraph {
       let e = this.tracks.get(track.id);
       if (!e) {
         e = {
-          strip: new ChannelStrip(this.ctx, { destination: this.master.input, env: this.env, onError: this.onError, meter: this.o.meters !== false }),
+          strip: new ChannelStrip(this.ctx, { destination: this.master.input, env: this.env, onError: this.onError, meter: this.o.meters !== false, onLatency: this._onLatency }),
           type: track.type, instrument: null, instType: null, instJson: null, code: null,
         };
         this.tracks.set(track.id, e);
       }
       if (e.type !== track.type) { this._disposeSources(e); e.type = track.type; }
-      e.strip.setFx(track.fx || [], track.patch);
-      e.strip.setMix({ volume: track.volume ?? 0.8, pan: track.pan || 0, muted: !isTrackAudible(project, track) }, im);
-      e.strip.setSends(track.sends || {}, this.buses, im);
-      this._syncSource(e, track);
+      // frozen tracks (core/freeze.js): no instrument / code source, and no inserts or fader when baked in
+      const fz = frozenMode(project, track);
+      e.frozen = fz;
+      e.strip.setFx(fz && bypassesInserts(fz) ? [] : (track.fx || []), fz && bypassesInserts(fz) ? null : track.patch);
+      const fader = fz && bypassesFader(fz);
+      e.strip.setMix({ volume: fader ? 1 : (track.volume ?? 0.8), pan: fader ? 0 : (track.pan || 0), muted: !isTrackAudible(project, track) }, im);
+      e.strip.setStrip({ trim: track.trim, phase: track.phase, width: fader ? 1 : (track.width ?? 1), vca: vcaGainFor(project, track.id), direct: !track._noDirect }, im);
+      const outId = outputOf(project, track);
+      e.strip.setOutput(outId === 'master' ? this.master.input : this.buses.get(outId)?.input || this.master.input);
+      const taps = {};
+      for (const busId of Object.keys(track.sends || {})) taps[busId] = sendTap(track, busId);
+      e.strip.setSends(track.sends || {}, this.buses, im, taps);
+      if (fz) { if (e.instrument || e.code) this._disposeSources(e); } else this._syncSource(e, track);
+      this._syncPadOutputs(e, track);
     }
     for (const [id, e] of this.tracks) {
       if (!trackIds.has(id)) { this._disposeSources(e); e.strip.dispose(); this.tracks.delete(id); }
     }
     this._syncKeys(project);
+    this._syncCue(project);
+  }
+
+  /** Drum multi-out: pads listed in track.padOutputs play straight into their bus (a separate mixer channel). */
+  _syncPadOutputs(e, track) {
+    const inst = e.instrument;
+    if (!inst || typeof inst.setPadOutputs !== 'function') return;
+    const map = {};
+    for (const [pad, busId] of Object.entries(track.padOutputs || {})) { const b = this.buses.get(busId); if (b) map[pad] = b.input; }
+    inst.setPadOutputs(map);
+  }
+
+  /** AFL / PFL: soloed channels feed the cue bus, which replaces the main mix on the monitor output. */
+  _syncCue(project) {
+    if (this.o.cue === false || this.o.meters === false) return; // offline renders always hear the main mix
+    const st = soloState(project);
+    const want = new Map(st.cue.map((c) => [c.id, c.tap]));
+    for (const [id, e] of this.tracks) e.strip.setCue(want.get(id) || null, this.cue);
+    for (const [id, s] of this.buses) s.setCue(want.get(id) || null, this.cue);
+    const active = want.size > 0;
+    if (active !== this.cueActive) {
+      this.cueActive = active;
+      smooth(this.monitor.gain, active ? 0 : 1, this.ctx, false);
+      smooth(this.cue.gain, active ? 1 : 0, this.ctx, false);
+    }
   }
 
   /**
@@ -486,7 +742,7 @@ export class MixGraph {
           const srcId = links.get(e.id);
           const keyIn = e.fx.keyInput;
           if (!srcId || !keyIn) continue;
-          const src = this.tracks.get(srcId)?.strip;
+          const src = this.tracks.get(srcId)?.strip || this.buses.get(srcId);
           if (src && src !== s) want.set(e.id, { keyIn, src: src.post });
         }
       }
@@ -504,6 +760,47 @@ export class MixGraph {
     }
   }
 
+  // ---------------------------------------------------------------- PDC
+  /**
+   * Recompute plugin delay compensation from the strips' current latencies (see latency.js) and set every
+   * compensation delay. Called after each sync and whenever a plugin reports its latency.
+   */
+  updatePdc(project = this._project) {
+    const tracks = [];
+    for (const [id, e] of this.tracks) {
+      const inst = Number(e.instrument?.latency);
+      const sends = [...e.strip.sends.keys()];
+      const outBus = this._busIdOf(e.strip.outDest);
+      if (outBus && !sends.includes(outBus)) sends.push(outBus);
+      tracks.push({ id, latency: e.strip.insertLatency + (Number.isFinite(inst) && inst > 0 ? inst : 0), sends, outBus });
+    }
+    const buses = [...this.buses].map(([id, s]) => ({ id, latency: s.insertLatency }));
+    const prev = this.pdc?.total;
+    this.pdc = computePdc({ sampleRate: this.ctx.sampleRate, enabled: project?.pdc !== false, tracks, buses, master: this.master.insertLatency });
+    for (const t of tracks) {
+      const e = this.tracks.get(t.id);
+      // a track routed into a bus: its main out is compensated like a send to that bus
+      e.strip.setCompensation(t.outBus ? this.pdc.trackSend[t.id]?.[t.outBus] || 0 : this.pdc.trackOut[t.id], this.pdc.trackSend[t.id]);
+    }
+    if (prev !== this.pdc.total) this.o.onLatency?.(this.pdc);
+    return this.pdc;
+  }
+
+  _busIdOf(node) {
+    if (!node || node === this.master.input) return null;
+    for (const [id, s] of this.buses) if (s.input === node) return id;
+    return null;
+  }
+
+  /** Overall output delay (s) of the compensated graph: events must be dispatched this much early. */
+  get latency() { return this.pdc?.enabled ? this.pdc.total : 0; }
+
+  /** Per-track / bus / master latency report for UIs: {total, tracks:{id: s}, buses:{id: s}, master}. */
+  latencyReport() {
+    const p = this.pdc || {};
+    return { enabled: !!p.enabled, total: this.latency, align: p.align || 0, tracks: { ...(p.trackLatency || {}) }, buses: { ...(p.busLatency || {}) }, master: p.master || 0 };
+  }
+
   _syncSource(e, track) {
     if (track.type === 'instrument' && track.instrument) {
       const def = track.instrument;
@@ -516,6 +813,9 @@ export class MixGraph {
           e.instType = def.type;
           e.instJson = JSON.stringify(def);
           e.instOv = null;
+          const inst = e.instrument;
+          const rd = inst.ready;
+          if (rd && typeof rd.then === 'function') rd.then(() => { if (e.instrument === inst && inst.latency > 0) this._onLatency(); }, () => {});
         } catch (err) {
           e.instrument = null;
           e.instType = null;
@@ -581,18 +881,27 @@ export class MixGraph {
    */
   automateMixer(project, b0, b1, t0, spb, jump) {
     if (!(b1 > b0)) return;
-    try { this.master.automate(MixGraph.mixerLanes(project.master, false, false), b0, b1, t0, spb, jump, this.buses); } catch (err) { this.onError(err); }
+    // t0 = when the events of beat b0 are dispatched; each fader hears them after its route's latency (PDC)
+    const off = this.pdc?.enabled ? faderOffsets(this.pdc) : { tracks: {}, bus: 0, master: 0 };
+    try { this.master.automate(MixGraph.mixerLanes(project.master, false, false), b0, b1, t0 + off.master, spb, jump, this.buses); } catch (err) { this.onError(err); }
     for (const bus of project.buses || []) {
       const s = this.buses.get(bus.id);
       if (!s) continue;
-      try { s.automate(MixGraph.mixerLanes(bus, false), b0, b1, t0, spb, jump, this.buses); } catch (err) { this.onError(err); }
+      const lanes = MixGraph.mixerLanes(bus, false);
+      const vca = vcaCombinedLane(project, bus.id);
+      if (vca) lanes.vca = vca;
+      try { s.automate(lanes, b0, b1, t0 + off.bus, spb, jump, this.buses); } catch (err) { this.onError(err); }
     }
-    const anySolo = project.tracks.some((t) => t.solo);
     for (const track of project.tracks) {
       const e = this.tracks.get(track.id);
       if (!e) continue;
+      // frozen post-fader: volume / pan automation is baked into the audio
+      const owner = e.frozen ? { ...track, automation: (track.automation || []).filter(frozenLaneFilter(e.frozen)) } : track;
       // a track silenced by another track's solo stays silent whatever its mute lane says
-      try { e.strip.automate(MixGraph.mixerLanes(track, true, !(anySolo && !track.solo)), b0, b1, t0, spb, jump, this.buses); } catch (err) { this.onError(err); }
+      const lanes = MixGraph.mixerLanes(owner, true, isTrackAudible(project, { ...track, mute: false }));
+      const vca = vcaCombinedLane(project, track.id);
+      if (vca) lanes.vca = vca;
+      try { e.strip.automate(lanes, b0, b1, t0 + (off.tracks[track.id] || 0), spb, jump, this.buses); } catch (err) { this.onError(err); }
     }
   }
 
@@ -654,31 +963,38 @@ export class MixGraph {
   getInstrument(trackId) { return this.tracks.get(trackId)?.instrument || null; }
 
   /** Play a collected event (see scheduler.collectEvents) at ctx time `time`. */
-  playEvent(ev, time, spb) {
-    if (ev.type === 'click') { scheduleClick(this.ctx, this.clickOut, time, ev.accent); return; }
+  // map: the TempoMap the event was timed with (time/tempo-map.js); events timed through a non-constant map carry
+  // durSec (exact seconds across ramps) and audio clips are played through the warp engine (warp/player.js).
+  playEvent(ev, time, spb, map) {
+    // the click joins after the master section: it skips the compensated mix latency
+    if (ev.type === 'click') { scheduleClick(this.ctx, this.clickOut, time + this.latency, ev.level ?? ev.accent); return; }
     const e = this.tracks.get(ev.trackId);
     if (!e) return;
     if (ev.type === 'note') {
-      const durSec = Math.max(0.005, ev.dur * spb);
+      const durSec = Math.max(0.005, ev.durSec ?? ev.dur * spb);
       e.instrument?.trigger(time, ev.pitch, ev.vel, durSec, ev.x ? noteExtra(ev, durSec) : undefined);
     } else if (ev.type === 'code') {
-      e.code?.trigger(time, ev.value, Math.max(0.005, ev.dur * spb), ev);
+      e.code?.trigger(time, ev.value, Math.max(0.005, ev.durSec ?? ev.dur * spb), ev);
     } else if (ev.type === 'audio') {
+      if (needsWarpPlayer(ev.clip)) { this._warpPlayer().play(e, ev, time, spb, map); return; }
+      if (map && !map.isConstant) { this._playAudioClip(e, unwarpedInSeconds(ev, map), time, 1); return; } // tempo map: in seconds
       this._playAudioClip(e, ev, time, spb);
     }
   }
 
-  _playAudioClip(e, ev, time, spb) {
-    const clip = ev.clip;
-    const buffer = this.o.getSampleBuffer(clip.sampleId);
-    if (!buffer) return;
-    const offSec = Math.max(0, ((clip.offset || 0) + ev.offset) * spb);
-    if (offSec >= buffer.duration) return;
-    const dur = Math.min(ev.dur * spb, buffer.duration - offSec);
-    if (dur <= 0.002) return;
-    const src = this.ctx.createBufferSource();
-    src.buffer = buffer;
-    const g = this.ctx.createGain();
+  /** Warp engine for audio clips (warp modes / tempo maps), created on first use. */
+  _warpPlayer() {
+    return this._warp || (this._warp = new WarpPlayer(this, { getSampleBuffer: (id) => this.o.getSampleBuffer(id), getSampleAnalysis: (id) => this.o.getSampleAnalysis?.(id) || null, worklet: this.o.warpWorklet !== false }));
+  }
+
+  /** Gain envelope of one audio-clip play: 4 ms de-click ramps + the clip's own fades (fadeIn / fadeOut, beats). */
+  _clipEnvelope(g, clip, ev, time, dur, spb) {
+    if (needsShapedEnvelope(clip)) { // curved fades / crossfades / gain envelope (src/record/clips.js)
+      const pts = envelopePoints(clip, ev.offset, dur, spb);
+      g.gain.setValueAtTime(0, time);
+      for (let i = 1; i < pts.length; i++) g.gain.linearRampToValueAtTime(pts[i].v, time + pts[i].t);
+      return;
+    }
     const gain = clip.gain ?? 1;
     const fade = Math.min(0.004, dur / 4);
     if (clip.fadeIn > 0 || clip.fadeOut > 0) {
@@ -702,12 +1018,46 @@ export class MixGraph {
       g.gain.setValueAtTime(gain, time + dur - fade);
       g.gain.linearRampToValueAtTime(0, time + dur);
     }
+  }
+
+  _playAudioClip(e, ev, time, spb) {
+    const clip = ev.clip;
+    // long samples stream from the PCM cache (stream/streamer.js) instead of an AudioBuffer
+    const stream = this.o.getSampleStream?.(clip.sampleId);
+    if (stream) { this._playStream(e, ev, time, spb, stream); return; }
+    if (this.o.isStreamed?.(clip.sampleId)) return; // still being prepared for streaming
+    const buffer = this.o.getSampleBuffer(clip.sampleId);
+    if (!buffer) return;
+    const offSec = Math.max(0, ((clip.offset || 0) + ev.offset) * spb);
+    if (offSec >= buffer.duration) return;
+    const dur = Math.min(ev.dur * spb, buffer.duration - offSec);
+    if (dur <= 0.002) return;
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+    const g = this.ctx.createGain();
+    this._clipEnvelope(g, clip, ev, time, dur, spb);
     src.connect(g);
     g.connect(e.strip.input);
     src.start(time, offSec, dur + 0.001);
     const rec = { src, g };
     this.sources.add(rec);
     src.onended = () => { this.sources.delete(rec); try { g.disconnect(); } catch { /* */ } };
+  }
+
+  _playStream(e, ev, time, spb, stream) {
+    const clip = ev.clip;
+    const offSec = Math.max(0, ((clip.offset || 0) + ev.offset) * spb);
+    if (offSec >= stream.duration) return;
+    const dur = Math.min(ev.dur * spb, stream.duration - offSec);
+    if (dur <= 0.002) return;
+    const g = this.ctx.createGain();
+    this._clipEnvelope(g, clip, ev, time, dur, spb);
+    g.connect(e.strip.input);
+    let voice;
+    try { voice = this.o.playStream(stream, g, time, offSec, dur + 0.001); } catch (err) { this.onError(err); try { g.disconnect(); } catch { /* */ } return; }
+    const rec = { src: voice, g };
+    this.sources.add(rec);
+    voice.onended = () => { this.sources.delete(rec); try { g.disconnect(); } catch { /* */ } };
   }
 
   /** Stop everything that is sounding (transport stop / seek). */
@@ -741,8 +1091,15 @@ export class MixGraph {
 
   getMeter(id) {
     if (id === 'master') return this.master.getMeter();
+    if (id === 'cue') return { l: 0, r: 0 };
     const s = this.tracks.get(id)?.strip || this.buses.get(id);
     return s ? s.getMeter() : { l: 0, r: 0 };
+  }
+
+  /** Loudness / scope / spectrum analysis of the master (created on first use — see meters.js). */
+  masterAnalysis() {
+    if (!this.analysis) this.analysis = new MasterAnalysis(this.ctx, this.master.input, this.out);
+    return this.analysis;
   }
 
   /** Gain reduction (dB, <= 0) of a compressor/limiter effect anywhere in the graph. */
@@ -754,6 +1111,7 @@ export class MixGraph {
   }
 
   dispose() {
+    try { this.analysis?.dispose(); } catch { /* */ }
     for (const e of this.tracks.values()) { this._disposeSources(e); e.strip.dispose(); }
     for (const s of this.buses.values()) s.dispose();
     this.master.dispose();
@@ -761,7 +1119,7 @@ export class MixGraph {
     this.buses.clear();
     for (const rec of this.sources) { try { rec.src.stop(); } catch { /* */ } }
     this.sources.clear();
-    try { this.out.disconnect(); this.clickOut.disconnect(); } catch { /* */ }
+    try { this.out.disconnect(); this.clickOut.disconnect(); this.monitor.disconnect(); this.cue.disconnect(); } catch { /* */ }
   }
 }
 

@@ -34,15 +34,20 @@ tests/               node:test unit tests (*.test.js)
 ```
 Project {
   format, version, name, bpm, timeSig:[num,den], swing, key:{root:0..11, scale:'minor'}, genre,
-  mode: 'pattern' | 'song',
+  mode: 'pattern' | 'song', tempoMap?, meterMap?, grooves?   (see "Tempo map, meters & audio warping")
   loop:{enabled,start,end}, metronome,
+  mode: 'pattern' | 'song',
+  loop:{enabled,start,end}, punch?:{enabled,start,end}, metronome,
   tracks: Track[], patterns: {id: Pattern}, clips: Clip[], scenes: Scene[],
   buses: Bus[], master:{volume, fx: Effect[], automation: AutomationLane[]}, samples:{id: Sample}, markers:[{id,beat,name}]
 }
 Track { id, name, type:'instrument'|'audio'|'code', color, volume, pan, mute, solo, arm,
         fx: Effect[], sends:{busId: 0..1}, instrument: Instrument|null, code?: string,
         codeSound?: 'strudel'|'daw3' (code tracks: sound engine, default 'strudel'),
-        activePatternId, role?, automation: AutomationLane[], patch?: Patch }
+        activePatternId, role?, automation: AutomationLane[], patch?: Patch,
+        recInput?: {source, channels:[n]|[n,n+1]}, monitor?: 'off'|'auto'|'on',
+        takeLanes?: [{id, takes: Take[]}], comp?: [{takeId, start, end}], compXfade?: ms }   (see "Recording")
+Take    { id, name, sampleId | patternId, start, length, offset, gain?, srcLength?, pass? }
 Patch   { enabled, nodes: PatchNode[], cables: Cable[] }            (plugboard — see below)
 PatchNode { id, kind:'fx', fxId, x, y } | { id, kind:'split'|'mix', x, y }
 Cable   { id, from:{node:'in'|nodeId, port:0}, to:{node:'out'|nodeId, port:0|1}, gain: 0..2 }
@@ -50,7 +55,10 @@ AutomationLane { id, target, points:[{beat, value}] (sorted by beat), enabled }
 Instrument { type: 'synth'|'fm'|'organ'|'drums'|'sampler', preset: string|null, params:{} }
 Pattern { id, trackId, name, length(beats), notes: Note[], color }
 Note    { id, pitch, start(beats, relative to pattern), dur(beats), vel }
-Clip    { id, trackId, type:'pattern'|'audio', patternId, sampleId, start, length, offset, gain, name }
+Clip    { id, trackId, type:'pattern'|'audio', patternId, sampleId, start, length, offset, gain, name, warp? }   (warp: see "Tempo map")
+Clip    { id, trackId, type:'pattern'|'audio', patternId, sampleId, start, length, offset, gain, name,
+          fadeIn?, fadeOut? (beats), fadeInShape?, fadeOutShape? ('lin'|'exp'|'log'|'s'|'eqp'), gainEnv?: [{beat, gain}],
+          xfade?: false (no auto crossfade), reversed? }                       (audio-clip editing — see "Recording")
 Scene   { id, name, slots:{ trackId: patternId } }
 Bus     { id, name, volume, pan, mute, fx: Effect[], automation: AutomationLane[] }
 Effect  { id, type, enabled, params:{} }
@@ -156,14 +164,60 @@ Sample  { id, name, mime, data: base64 (original file bytes), duration }
   (the live store value is heard); `getAutomatedValue(ownerId, target)` is the lane value at the audible
   position (null when not automated) — the UI uses it to animate tagged controls (`markAuto`) at ~20 fps.
 
-## Audio recording (`src/audio/recorder.js`, browser-only)
+## Recording, takes + comping, clip editing (`src/record/*`, UI: `src/ui/views/arrange-rec.js`, `src/ui/record-panel.js`)
 
-`AudioRecorder(engine)`: `openInput()` (getUserMedia without echo-cancel/NS/AGC), `getLevel()`,
-`start()` → latency-compensated ctx time of the first sample, `stop()` → `{blob, mime, ctxStart}`.
-`actions.toggleRecord()` records audio when audio tracks are armed (switches to song mode, turns the
-loop off for the take, optional 1-bar count-in via `actions.setCountIn`); when the transport stops the
-take is decoded, encoded to WAV (`encodeWav`) and stored as a project sample + an audio clip on every
-armed audio track. Without armed audio tracks Record keeps recording keyboard/MIDI notes into patterns.
+Pure (Node-tested in `tests/recording.test.js`): `takes.js` (take lanes / comp model, swipe math, comp → virtual clips
+with crossfades, `computePasses`), `clips.js` (fades / gain envelope / auto crossfades, `trackClips`, split / slip /
+ripple / zero crossings / normalize / reverse math, `mixClipsToPcm` = playback-exact PCM render), `timing.js` (latency
+compensation, punch / pre-roll plan, monitoring rule, prefs), `midi.js` (pass recorder, MIDI takes, capture buffer, step
+input). Browser: `inputs.js` (input sources + InputManager), `capture-processor.js` (AudioWorklet), `session.js`
+(`createRecorder(app)` → `app.rec`).
+
+* **Playback of comps / fades** — `scheduler.collectEvents` plays `trackClips(project, track)`: the track's clips (where
+  an audio clip starts inside another and runs past its end, both get an equal-power crossfade over the overlap, unless
+  `xfade === false`) + `compClips()` of its take lanes. Comp segments that touch crossfade over `compXfade` ms (default
+  10, equal power) centred on the boundary, using the takes' handles (audio before / after the segment; `srcLength`). The
+  mixer (`_clipEnvelope`) schedules `envelopePoints()` (curved fades sampled in 24 linear ramps, gain envelope, 4 ms
+  de-click) for clips with curved fades / a gain envelope; other clips keep the old envelope (bit-identical renders).
+  Flatten comp / consolidate render with `mixClipsToPcm`, the same math. `songLengthBeats` / `defaultEndBeat` count comps.
+* **Inputs** — an input source is `{id, label, kind:'browser'|'native', channels}`: getUserMedia device ids ('default'),
+  or `window.daw3Native.audio.listInputs()` / `openInput(ctx, id) -> {node, channels, latency, close}` (ids
+  `native:…`, multi-channel interfaces). `InputManager` opens the sources armed audio tracks (and tracks monitoring 'on')
+  need — one stream + one capture tap per source — and routes each track's channels (`track.recInput.channels`, mono or a
+  stereo pair) to its monitor gain → the track strip input (inserts + PDC), or straight to the output in low-latency
+  mode. Monitoring `off | auto | on` (`monitorActive`: auto = while armed when stopped / recording inside the punch,
+  not during playback). Per-track peak + latched clip meters (`level(id)`, click the header meter to clear).
+  Rebinds on engine `'context'` (sample-rate change).
+* **Capture** — the `daw3-capture` AudioWorklet stamps every block with its context frame (sample-accurate); where
+  AudioWorklet is missing or stalls (2.5 s), a ScriptProcessor tap (input = 2 buffers before `playbackTime`, ±1 quantum).
+* **Alignment / latency** — captured frame F is heard-time beat `anchor.beat + (F/sr − roundTrip − anchor.time)·bpm/60`
+  (anchor = the scheduler's first anchor, heard time; constant tempo during a take). `roundTrip` = the measured loopback
+  latency of the device (Recording settings ▸ Measure: pings out, onset detection in, `detectPing`) or the browser
+  estimate (base + output + track latency), + a manual offset (ms) — stored per device in localStorage
+  `daw3-rec-latency`. The ping goes through the same capture path, so a calibrated device is exact either way.
+* **Session flow** (`rec.start({audio, midi})`, Record / R): song mode; `recordPlan` → transport starts at
+  `recIn − pre-roll` (`engine.play({from, at})` starts exactly after the count-in clicks), records from `recIn` (playhead
+  or punch-in), auto-stops after punch-out + post-roll (not while cycling). Stop commits everything as ONE undo step
+  ("Record"): per armed audio track one WAV sample (24-bit, the whole pass + 1 bar handles); `computePasses` splits it
+  into one take per loop pass (cycle) and/or the punch range. A single linear pass over empty space becomes a plain clip;
+  otherwise `addRecordedTakes`: overlapping clips become "Original" takes, each pass a take in the first free lane, the
+  comp points at the newest pass for its range. MIDI (song mode): `MidiPassRecorder` tags notes with their loop pass;
+  prefs `midiMode` overdub (into the clips under the notes, the rest into a new clip) | replace (clears the recorded range
+  first) | takes (one pattern take per pass, comped like audio) | merge (all passes in one take); `inputQuantize` (also
+  for pattern-mode recording; 0 = off). Pattern-mode MIDI recording is unchanged.
+* **Capture MIDI** (Shift+R): `CaptureBuffer` keeps the last 2 minutes of live notes (song positions when the transport
+  ran, else timing at the current tempo); the last phrase becomes a clip (song) / new pattern. **Step input**: with the
+  transport stopped each note / chord goes in at the step cursor of the selected pattern (Rest / Back).
+* **Arrange UI** — header: input button (device / channels / monitoring), `T<n>` take-lanes toggle, input meter.
+  Take rows under the track: drag across a take = swipe that range into the comp; click = that take for the comp
+  section under the pointer; double-click = promote; Alt-click = audition; menu: delete, crossfade length, flatten.
+  The comp plays (and is drawn) in the track lane with ✕ crossfade marks. Selected audio clips: fade handles (top
+  corners, curve shapes in the menu), clip-gain line (drag), Shift-click = gain-envelope point (drag, Alt-click deletes);
+  Alt-drag in the waveform = slip; S = split at playhead; Shift+Del = ripple delete; toolbar Ripple toggle (delete closes
+  gaps, resizing moves later clips); clip menu: Normalize, Reverse (new reversed audio), Consolidate, split at loop /
+  punch, zero-crossing snap (Rec menu). Punch range: Shift-drag in the loop lane (red), right-click for options.
+  Rec ▾ menu + Recording settings dialog (count-in 0–4 bars, pre / post-roll, punch, inputs, latency, MIDI modes).
+* `src/audio/recorder.js` (MediaRecorder) is the old single-input recorder, kept for compatibility; nothing uses it.
 
 ## Store (`src/core/store.js`)
 
@@ -371,12 +425,179 @@ esbuild (build time only; it applies three small, checked superdough patches —
 * Scheduling: lookahead scheduler (25 ms timer, ~120 ms horizon). Same event-collection code is
   reused for offline rendering via `OfflineAudioContext`.
 
+## Pro engine (PDC, freeze, export quality, streaming, recovery, health) — APIs for other features
+
+**Plugin delay compensation** (`src/audio/latency.js` pure, `mixer.js`, `scheduler.js`, `render.js`)
+* Every insert effect exposes `fx.latency` (s, constant whether bypassed — the bypass path is delayed to match) and
+  `fx.refreshLatency()`; instruments expose `instrument.latency`. Sources: Chromium-measured table
+  (`effectLatencyFrames(def, sr)`: compressor / limiter 6 ms pre-delay, gate 4 ms, tape 12 ms + 2x oversampling,
+  distortion / saturator oversampling, mastering), plugin-reported (WAM `getCompensationDelay()`), or a manual
+  `latency` (samples) on any effect / instrument def (Faust, odd plugins).
+* `computePdc({sampleRate, enabled, tracks:[{id, latency, sends}], buses, master})` → per-route compensation. The
+  `MixGraph` puts `DelayLink`s on each track→master link and each send link (`ChannelStrip.setCompensation`) so
+  every route meets at the master input; `graph.latency` = whole-mix delay, `graph.latencyReport()`,
+  `graph.updatePdc()` (also called when a plugin reports its latency). Plugboard: longest in→out path.
+* Realtime: the scheduler pre-rolls every event by `graph.latency` (`getPreroll`); anchors / `beatAt` /
+  `getPosition` / `engine.beatAtTime(t)` stay in *heard* time, so recording alignment (item 2) needs no change.
+  Fader automation is timed per strip (`faderOffsets`); the metronome joins after the master section.
+  Offline: the render is padded (`PDC_PAD` = 1 s) and the head trimmed → sample-identical to a latency-free graph.
+* `project.pdc === false` turns compensation off (old behaviour). `engine.getLatency()`, `engine.on('latency')`.
+
+**Freeze / bounce** (`src/core/freeze.js` pure, `src/audio/freeze.js`)
+* `track.frozen = {sampleId, mode:'preFx'|'postFx'|'postFader', renderMode:'song'|'pattern', start, length, loop?,
+  gain, bpm, at}`; the original track stays intact. `frozenMode(project, track)` says whether the freeze is in effect
+  (sample present, same transport mode, same tempo — else the track plays live again; `frozenStaleReason`).
+* While frozen the mixer instantiates no instrument / code source and (postFx/postFader) no inserts; the scheduler
+  emits the render as an audio clip (song) or a seamless loop (pattern). postFader bypasses volume / pan.
+* `engine.freezeTrack(id, {mode})`, `engine.unfreezeTrack(id)`, `engine.bounceTrack(id, {mode='postFader',
+  muteSource=true})` → new audio track id, `engine.flattenTrack(id, {mode='postFx'})`, `engine.renderTrack(id, opts)`
+  → `{buffer, info}`. Renders are 24-bit TPDF-dithered WAV samples (`sample.frozen` flag), peak-normalised with the
+  level restored by `frozen.gain` / clip gain.
+* Edits are blocked by a store guard (`createFreezeGuard`, `Store.addGuard`): a transaction changing a frozen
+  track's sound (notes, clips, instrument, inserts, code, fader for postFader) is rolled back for that track and
+  `store.on('blocked', {message})` fires (UI: toast with `FROZEN_HINT`). `store.transact(label, fn, {guard:false})`
+  skips guards (whole-project restores).
+* UI: track menu ▸ Freeze / Freeze… / Bounce / Flatten (`app.freezeMenuItems`), mixer ❄ button, arrange ❄ badge.
+
+**Export quality** (`src/io/wav.js`, re-exported by `src/audio/wav.js`; `src/audio/dsp/truepeak.js`)
+* `encodeWav(buffers, {bitDepth: 16|24|32, dither: 'none'|'tpdf', noiseShaping: 'none'|'first'|'shaped', seed,
+  sampleRate})` — buffers = AudioBuffer | Float32Array[] | {channels, sampleRate}. 32 = bit-exact float (overs kept);
+  integer formats clamp after dither (never wrap). `decodeWav`, `wavInfo`, `readWavFrames` (range decode).
+* `truePeak(channels)`, `truePeakDb`, `limitTruePeak(channels, sr, {ceilingDb=-1, lookahead, release})` — offline
+  look-ahead true-peak limiter (no latency). `renderOffline(..., {truePeakCeiling: -1})` applies it to the master;
+  `applyTruePeakLimit(audioBuffer, opts)`. The render path is float32 end to end. (Export UI: item 4.)
+
+**Long-audio streaming** (`src/audio/stream/*`)
+* Samples ≥ `STREAM_MIN_SECONDS` (30 s) are not decoded into AudioBuffers for clip playback: `SampleStreamer`
+  caches PCM chunks (32768 frames) in IndexedDB `daw3-pcm` via a module Worker (`stream-worker.js`; WAV parsed in
+  the worker, other formats decoded once with decodeAudioData and handed over), and each clip play is an
+  AudioWorkletNode `daw3-stream` (`stream-processor.js`) fed chunk by chunk over a MessagePort (3 chunks ahead,
+  linear resampling when rates differ, silence + underrun count when late). Short samples, offline renders and
+  browsers without AudioWorklet / module workers / IndexedDB use buffers. `engine.decodeSample(id)` returns a light
+  `{duration, streamed: true, peaks}` object for streamed samples (`{full: true}` forces a buffer);
+  `engine.getSamplePeaks(id)` gives the waveform overview.
+
+**Crash-safe autosave / recovery / history** (`src/io/recovery.js`, UI in `src/ui/engine-ui.js`)
+* `createRecovery({backend})`: incremental snapshots to IndexedDB `daw3-recovery` (project JSON without samples;
+  each sample stored once by content key) every 10 s when changed, on tab hide and on pagehide; sessions carry a
+  heartbeat and are marked clean on pagehide. On boot `findUnclean()` → "Recover unsaved session (time)" dialog.
+  `listSnapshots(projectId)` (last 20 per project), `loadSnapshot(id)`; main menu ▸ Version history… restores as
+  one undoable step (`restoreProject`). The older whole-project autosave (`autosave.js`) is unchanged.
+
+**Engine health** (`src/audio/monitor.js`, `engine.js`)
+* `engine.getMetrics()` → `{load, peakLoad, xruns, late, lateEvents, lateMs, latencyMs, pdcMs, sampleRate, state}`
+  (load from `AudioContext.renderCapacity` where available; xruns from `playoutStats` or audio-clock drift;
+  scheduler lateness / skipped windows). Status bar: DSP / dropouts / latency + PDC, sample-rate select, Panic.
+* `engine.panic()` (all notes off + 0.6 s master mute to kill tails; Shift+Esc), `engine.setSampleRate(rate|null)`
+  (rebuilds the context, resumes playback; `SAMPLE_RATES`; preference in localStorage `daw3-sample-rate`; emits
+  `'samplerate'` and `'context'` — anything holding nodes of the old context, e.g. the recorder, must rebind).
+
+## Pro mixer, metering & export (`src/core/mixer-model.js`, `src/audio/{mixer,meters,export}.js`, `src/io/export-plan.js`)
+
+**Data** (all optional; absent = old behaviour, bit-identical renders): `project.mixer = { soloMode: 'sip'|'afl'|'pfl',
+groups[], vcas[], folders[], snapshots[] }`; track extras `folderId, trim (dB), phase, width (0..2), soloSafe, notes,
+sendModes:{busId:'pre'|'post'}, output (busId), padOutputs:{padKey: busId}`; bus extras `folderId` (folder summing bus),
+`source:{trackId,pad}` (drum multi-out channel). `mixerOf(project)` reads with defaults, `ensureMixer` creates.
+* **Groups** `{id,name,color,members,mode:'relative'|'absolute',enabled,link:{volume,pan,mute,solo,arm,select}}`:
+  `applyLinkedEdit(p, id, key, value, {bypass})` — relative volume = same dB delta for every member (members at −∞ stay),
+  relative pan = same offset, switches absolute; transitive across groups (`linkedIds`). Mixer: Ctrl/Cmd while editing
+  = this channel only. `linkChannels` = absolute "stereo link" group. `groupSelection` for linked selection.
+* **VCA** `{id,name,volume (linear),mute,members:[track|bus id],automation:[lane 'volume']}`: no audio passes through;
+  member gain = fader × Π VCA gains (dB sum). VCAs are automation owners (`automationOwner`, recorder snapshot); the engine
+  turns `vcaCombinedLane` (product of every VCA lane over the member) into ramps on the strip's `vcaGain` node, so VCA
+  automation multiplies with the member's own fader automation.
+* **Solo** (`soloState`, `isAudible` — used by `scheduler.isTrackAudible`): SIP mutes non-soloed tracks except
+  `soloSafe`; AFL / PFL never touch the main mix or exports — soloed channels feed `graph.cue` (post-VCA / pre-fader) and
+  the monitor output switches to the cue bus (realtime only). `toggleSolo(p, id, {exclusive})`.
+* **Folders** `{id,name,collapsed,busId}`: `createFolder` (members kept contiguous), `setFolderSum` (a bus + every
+  member's `output`), `trackRows`/`collapsedHidden`/`folderHeadOf` for Arrange (collapsed members are zero-height rows,
+  their clips draw on the folder's first row) and Mixer (folder tabs). Snapshots: `captureMixerState`/`saveSnapshot`/
+  `recallMixerState(p, state, {faders,pans,switches,sends,fx})`; `resetMixer`.
+* **Strip graph** (`ChannelStrip`): input → `inStage` (trim × polarity) → inserts → post (key tap) → [lazy M/S width] →
+  `preFader` (pre-fader sends through a mute-following gain, PFL) → pan → volume → `vcaGain` (AFL) → mute → `direct` →
+  output (`setOutput`: master or a bus; PDC treats a bus-routed main out like a send). Meters tap after the mute through a
+  DelayNode with the strip's PDC compensation (PDC-aware); `getMeter` → `{l, r, rmsL, rmsR}`.
+* **Sidechain**: `compressor`, `gate`, `ducker` take `params.sourceTrackId` = any track **or bus** (`KEYED_FX`). The
+  compressor switches to a keyed gain computer (peak follower → static curve → VCA, same look-ahead / latency); the gate's
+  detector listens to the key. `resolveKeyLinks` checks loops over the whole routing graph (sends, outputs, multi-outs
+  and other keys). Drum multi-out: `DrumInstrument.setPadOutputs({pad: node})` (mixer-tools "Multi-out").
+* **Metering** (`src/audio/dsp/loudness.js`, pure): `kWeighting(sr)`, `measureLoudness(channels, sr)` → integrated /
+  momentary / short-term max / LRA / true peak (BS.1770-4 gating, EBU 3342 LRA), streaming `LoudnessMeter`,
+  `correlation`, `normalizeLoudness(channels, sr, {mode:'peak'|'lufs', target, ceiling})` (true-peak limited, refined to
+  ±0.05 LU), `LOUDNESS_PRESETS`. Realtime: `engine.getMasterAnalysis()` (`meters.js`: AudioWorklet
+  `loudness-worklet.js`, analyser fallback; vector scope, pre / post master spectrum) → Mixer ▸ Loudness panel.
+* **Export** (File ▸ Export ▸ Export audio…, Ctrl+E, `ui/export-dialog.js`): `io/export-plan.js` (pure: `resolveRange`
+  song / loop / selection / custom bars, `formatFileName` tokens, `detectTail`, `stemTargets` all / selected / buses /
+  groups, `stemProject` pre / post fader, with / without master), `io/wav-meta.js` (LIST/INFO + iXML: title, artist,
+  ISRC…), `audio/export.js` `runExport` (renders at 44.1–96 kHz, tail detection, normalisation, WAV 16/24/32f + dither /
+  noise shaping, AAC / MP3 via WebCodecs when `lossyFormats()` says so, consistent stem start / length, report). Several
+  files download as one ZIP with `export-report.txt`.
+
+## Tempo map, meters & audio warping (`src/time/*`, `src/audio/warp/*`)
+
+* **Data** (all optional — a project without them plays exactly as before):
+  `project.bpm` = tempo at beat 0 (authoritative: BPM field, setcpm, Link / MIDI-clock-in write it);
+  `project.tempoMap = [{beat, bpm, curve:'jump'|'linear'}]` (point 0 mirrors `bpm`; `curve` shapes the segment *after* the
+  point: hold, or a linear ramp in beats to the next point); `project.timeSig` = meter of bar 0;
+  `project.meterMap = [{bar (0-based), num, den, groups?}]` (changes only). Legacy `tempoAutomation` / `timeSigAutomation`
+  (older DAWproject imports) migrate in `normalizeProject`.
+* **`src/time/tempo-map.js` is the only beat↔seconds code**: `TempoMap` (`secAt`, `beatAt`, `bpmAt`, `span`, `breaks`,
+  `barAt`, `barStart`, `position` / `formatBBT`, `clicks` (one per meter unit; level 2 downbeat / 1 accent group, e.g.
+  7/8 = 2+2+3), `gridLines`), `tempoMapFor(project, mode)` (cached by content; **pattern mode = constant `project.bpm`**,
+  tempo changes are an arrangement feature; meters apply in both), `songTempoMap`, `spanOf(spbOrMap, b0, b1)`.
+  Ramps integrate exactly: `sec = 60/k·ln(bpm(b)/bpm0)`, `beat = b0 + bpm0·(e^{k·s/60} − 1)/k`.
+  Editing: `tempo-edit.js` (`setTempoPoint`, `moveTempoPoint`, `addTempoRamp`, `setMeter`, `TapTempo` / `tapTempoToMap`,
+  `tempoFromSelection` = "set tempo from selection length"); interchange: `convert.js`.
+* **Who follows it**: the scheduler (window ends, event times `t0 + secAt(ev.beat) − secAt(b0)`, anchors carry the map so
+  `beatAt(t)` / the playhead are exact through ramps; `annotateTimes` adds `durSec` so notes / code events last their
+  real length), offline render (same math, chunking in seconds), mixer automation ramps (`spanOf`), the metronome (accent per
+  meter), engine `'tempo'` events + `getCurrentTempo()` (tempo-synced effects follow the tempo at the playhead), MIDI clock out
+  (`tickTime(k)` through the map — tick spacing glides on ramps), MTC (`map.secAt`), Link (sends the tempo at the playhead
+  while a map plays), setlist (phrase bars via `barAt`, safety lead at the fastest tempo), DAWproject (Tempo /
+  TimeSignature automation round-trip incl. ramps), MIDI export (Set Tempo per change, ramps stepped every 16th), stems
+  "Tempo map.txt", LCD (`formatBBT`, time through the map), Arrange ruler / grid / bar snap. Constant maps keep the old
+  arithmetic bit-for-bit.
+* **Code tracks** are beat-locked: one cycle = one bar of the *first* meter, so they follow tempo changes (events land on
+  the same beats; the map turns beats into seconds); the `cps` handed to superdough is the tempo at the event. `setcpm`
+  sets `project.bpm` (the starting tempo).
+* **Freeze**: `track.frozen.tempo` = `tempoSignature(project)`; editing the tempo / meter map makes song-mode freezes play
+  live until refrozen (like a bpm change).
+* **Audio warping** — `clip.warp = { mode: 'off'|'repitch'|'beats'|'tones'|'complex', markers: [{beat, sec}], bpm,
+  transpose, formants, quality }`; markers map *content beats* (the unit of `clip.offset`) to sample seconds, linear between
+  markers, extrapolated outside. Warped clips follow the tempo map; `off` plays at the sample's own speed (old behaviour).
+  `sample.analysis = {bpm, confidence, downbeat, transients}` (`warp/analyze.js`, onset / tempo code ported from the Mac
+  branch). Imports (`actions.placeSample`) auto-warp: markers on each detected bar, `beats` for percussive loops, `tones`
+  otherwise, `off` for files > 60 s.
+  - `markers.js` (pure): `secAtBeat` / `beatAtSec`, `clipCurve(clip, map, b0, b1)` → piecewise-linear output-time →
+    sample-time curve (breakpoints at markers, tempo breaks and every 1/16 beat inside ramps), `curveRates`, `autoWarp`,
+    marker editing, `sourceTimeFn` (waveform drawing).
+  - `core.js` (pure, streaming `WarpRenderer`): repitch (resample along the curve), beats (slice at transients, each slice
+    starts exactly on its curve time at its own speed, faded before the next source slice / cross-faded when cut), tones
+    (WSOLA, ~50 ms grains, 2× overlap, ±12 ms search), complex (WSOLA ~90 ms grains, 4× overlap); transpose = grains read
+    resampled; `formants` = per-grain LPC envelope removed → residual resampled → envelope re-applied.
+  - `player.js` (browser): off / repitch use AudioBufferSourceNodes (repitch: piecewise-constant `playbackRate`, exact at
+    every breakpoint); pitch-preserving modes stream through the `daw3-warp` **AudioWorklet** (`worklet.js`, sample PCM
+    posted once per context) and fall back to a main-thread render of the same `WarpRenderer` (LRU cache) when the worklet
+    is unavailable / still loading (addModule gives up after 8 s). Offline renders / export always use the precomputed path.
+  - Warped clips are scheduled once per play (like any audio clip): editing the tempo while a long clip plays takes
+    effect at the next start / seek.
+* **Quantize / groove** (`src/time/groove.js`): `quantizeWarp(clip, transients, {grid, strength, swing, groove})` puts warp
+  markers on the transients pulled toward the timeline grid (two hits in one slot: only the closer moves);
+  `extractGroove` / `grooveFromNotes` / `grooveFromAudio` → `GrooveTemplate {grid, length, offsets, velocities}` (stored in
+  `project.grooves`); `applyGrooveToNotes`, `quantizeNotes`.
+* **UI**: Arrange **Tempo** lane (`src/ui/tempo-lane.js`: double-click adds a point, drag moves, right-click: ramp / jump,
+  set BPM, delete, tempo / meter change at a bar, tempo from loop length, clear; Tap = tap tempo to map), meter labels on
+  the ruler, meter-aware bar snap; clip **Warp editor** (`src/ui/warp-editor.js`, double-click an audio clip or clip menu ▸
+  Warp: mode, transpose, formants, quality, clip BPM, detect tempo, set project tempo from clip, auto-warp, markers, audio
+  quantize, extract groove).
+
 ## IO (`src/io/*.js`)
 
 * `project-file.js`: `serializeProject(project) -> string`, `parseProjectFile(text) -> project` (validates, normalizes),
   `downloadProject(project)`, `readFileAsProject(file)`.
 * `midi.js`: `exportMidi(project, {mode}) -> Uint8Array`, `importMidi(arrayBuffer) -> {bpm, tracks:[{name, notes, isDrums}]}`.
-* `wav.js`: `encodeWav(audioBuffer, {bitDepth:16|24|32}) -> ArrayBuffer`.
+* `wav.js`: `encodeWav(buffers, {bitDepth:16|24|32, dither, noiseShaping}) -> ArrayBuffer`, `decodeWav` (see Pro engine).
+* `recovery.js`: crash-safe incremental snapshots, recovery and version history (see Pro engine).
 * `autosave.js`: IndexedDB autosave + list/restore of local projects.
 * `samples.js`: `fileToSample(file) -> Sample` (base64), `sampleToArrayBuffer(sample)`.
 * `interchange/*`: other-DAW formats — see "Interchange" below.

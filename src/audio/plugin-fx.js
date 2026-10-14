@@ -35,6 +35,8 @@ export function pluginEffectBuilder(type) {
       detach() { try { sh.fxIn.disconnect(inNode); } catch { /* */ } try { outNode.disconnect(); } catch { /* */ } },
       get error() { return loadError || impl?.error || null; },
       get plugin() { return impl; },
+      /** Latency the plugin reports (seconds; WAM getCompensationDelay, Faust metadata), 0 until loaded. */
+      get latency() { return Number(impl?.latency) || 0; },
       dispose() {
         disposed = true;
         try { impl?.dispose(); } catch { /* */ }

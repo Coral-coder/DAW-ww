@@ -3,6 +3,7 @@
 //   exportMidi(project, {mode:'song'|'pattern', ppq=480}) -> Uint8Array   (SMF format 1)
 //   importMidi(arrayBuffer) -> { format, ppq, bpm, timeSig, tracks:[{name, channel, isDrums, program, notes}] }
 //   addMidiToProject(project, parsed) -> { trackIds } (mutates project; call inside store.transact)
+import { songTempoMap } from '../time/tempo-map.js';
 import {
   beatsPerBar, songLengthBeats, patternsForTrack, createTrack, createPattern, createNote, createClip, TRACK_COLORS,
 } from '../core/model.js';
@@ -94,6 +95,15 @@ export function exportMidi(project, { mode = project.mode === 'song' ? 'song' : 
   conductor.push({ tick: 0, order: 2, bytes: [0xff, 0x58, 0x04, num & 0xff, Math.round(Math.log2(den)) & 0xff, 24, 8] });
   if (mode === 'song') {
     for (const m of project.markers || []) conductor.push({ tick: m.beat * ppq, order: 3, bytes: metaText(0x06, m.name || 'Marker') });
+    // tempo map (src/time): jumps as Set Tempo events, ramps stepped every 16th (SMF has no ramps)
+    const map = songTempoMap(project);
+    const setTempo = (beat, bpm) => { const us = Math.round(60000000 / bpm); conductor.push({ tick: Math.round(beat * ppq), order: 1, bytes: [0xff, 0x51, 0x03, (us >> 16) & 0xff, (us >> 8) & 0xff, us & 0xff] }); };
+    map.segs.forEach((g, i) => {
+      if (!(g.k && g.end < Infinity)) { if (i > 0) setTempo(g.beat, g.bpm); return; }
+      // each 16th gets the tempo that makes it last exactly as long as on the ramp
+      for (let b = g.beat; b < g.end - 1e-9; b += 0.25) if (b > 0) setTempo(b, (60 * Math.min(0.25, g.end - b)) / map.span(b, Math.min(g.end, b + 0.25)));
+    });
+    for (const m of map.meters.slice(1)) conductor.push({ tick: Math.round(m.beat * ppq), order: 2, bytes: [0xff, 0x58, 0x04, m.num & 0xff, Math.round(Math.log2(m.den)) & 0xff, 24, 8] });
   }
   tracks.push(trackChunk(conductor));
 
