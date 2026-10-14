@@ -11,7 +11,7 @@ import { uid, createRng, deepClone } from '../core/util.js';
 import { PRESETS, DRUM_KITS } from '../audio/index.js';
 import * as gen from '../gen/index.js';
 import { GENRES } from '../gen/genres.js';
-import { SCALES, pitchClassName } from '../theory/index.js';
+import { SCALES, pitchClassName, keyName } from '../theory/index.js';
 import { serializeProject, parseProjectFile, downloadBlob } from '../io/project-file.js';
 import { exportMidi, importMidi } from '../io/midi.js';
 import { encodeWav } from '../io/wav.js';
@@ -753,7 +753,7 @@ export function createActions(app) {
       pt.notes = replace ? fresh : [...pt.notes, ...fresh];
     });
     ui.set({ selectedTrackId: track.id, selectedPatternId: pat.id });
-    app.setStatus?.(`Generated ${role} for ${track.name} in ${pitchClassName(root)} ${SCALES[scale]?.name || scale} (${GENRES[genreId]?.name || genreId}).`);
+    app.setStatus?.(`Generated ${role} for ${track.name} in ${keyName(root, scale)} (${GENRES[genreId]?.name || genreId}).`);
     return track;
   }
 
@@ -815,7 +815,7 @@ export function createActions(app) {
     store.load(project);
     const first = get().tracks[0];
     ui.set({ selectedTrackId: first?.id || null, selectedPatternId: first?.activePatternId || null, view: 'arrange' });
-    toast(`Generated a ${GENRES[genre]?.name || genre} song in ${pitchClassName(get().key.root)} ${SCALES[get().key.scale]?.name || ''} at ${get().bpm} BPM. Press Space!`, { level: 'success', timeout: 6000 });
+    toast(`Generated a ${GENRES[genre]?.name || genre} song in ${keyName(get().key.root, get().key.scale)} at ${get().bpm} BPM. Press Space!`, { level: 'success', timeout: 6000 });
   }
 
   // ---------------------------------------------------------------- assistant
@@ -940,7 +940,7 @@ export function createActions(app) {
     const search = h('input', { type: 'search', placeholder: 'Search genres…', style: { width: '100%' } });
     search.addEventListener('input', () => { filter = search.value.toLowerCase(); renderGrid(); });
     search.addEventListener('keydown', (e) => e.stopPropagation());
-    const rootSel = select({ options: Array.from({ length: 12 }, (_, i) => ({ value: i, label: pitchClassName(i) })), value: root, onChange: (v) => { root = Number(v); } });
+    const rootSel = select({ options: Array.from({ length: 12 }, (_, i) => ({ value: i, label: pitchClassName(i, 'common') })), value: root, onChange: (v) => { root = Number(v); } });
     const scaleSel = select({ options: [{ value: '', label: 'Genre default' }, ...Object.entries(SCALES).map(([id, s]) => ({ value: id, label: s.name }))], value: '', onChange: (v) => { scale = v || null; } });
     const bpmInput = h('input', { type: 'text', placeholder: 'auto', style: { width: '70px' } });
     bpmInput.addEventListener('keydown', (e) => e.stopPropagation());
@@ -1196,6 +1196,9 @@ export function createActions(app) {
       h('p', 'Code tracks run ', link('https://strudel.cc', 'Strudel'), ' — the JavaScript port of TidalCycles by Felix Roos, Alex McLean and the Strudel contributors (',
         link('https://codeberg.org/uzu/strudel', 'codeberg.org/uzu/strudel'), ', AGPL-3.0-or-later). daW³ ships Strudel’s pattern engine, mini-notation, tonal functions, transpiler and its sound engine superdough unmodified (one documented node-pool patch), see ',
         h('code', 'vendor/strudel/VERSION'), ' for the exact versions and licenses.'),
+      h('h4', 'MP3 encoder'),
+      h('p', 'MP3 export uses ', link('https://github.com/zhuker/lamejs', 'lamejs'), ' (a JavaScript port of ', link('https://lame.sourceforge.io', 'LAME'), ', LGPL-3.0), loaded only when you export MP3; see ',
+        h('code', 'vendor/lamejs/README.txt'), ' for its license and daW³’s small changes.'),
       h('h4', 'Sounds'),
       h('p', 'Samples are loaded at runtime from their public homes: Dirt-Samples (TidalCycles), tidal-drum-machines, VCSL (CC0), Salamander Grand Piano by Alexander Holm (CC-BY 3.0), dough-samples, the webaudiofont General MIDI soundfonts. See docs/SAMPLES.md.'));
     modal({ title: 'About daW³', body, width: 640, actions: [{ label: 'Close', primary: true }] });

@@ -17,6 +17,7 @@ import { collapsedHidden, folderHeadOf } from '../../core/mixer-model.js';
 import { createTempoLane, drawRulerBars, drawMeterGrid } from '../tempo-lane.js';
 import { songTempoMap } from '../../time/tempo-map.js';
 import { openWarpEditor } from '../warp-editor.js';
+import { openGrooveDialog } from '../groove-dialog.js';
 import { sourceTimeFn } from '../../audio/warp/markers.js';
 import { createArrangeRec } from './arrange-rec.js';
 import { splitClipAt } from '../../record/clips.js';
@@ -434,7 +435,8 @@ export function createArrangeView(app) {
     const tracksEnd = y;
     y += ADD_ROW_H;
     const extra = [];
-    for (const id of [...(p.buses || []).map((b) => b.id), 'master']) {
+    // VCA faders (core/mixer-model.js): their level lanes multiply with every member's own automation
+    for (const id of [...(p.mixer?.vcas || []).map((v) => v.id), ...(p.buses || []).map((b) => b.id), 'master']) {
       const o = ownerView(p, id);
       if (!o) continue;
       const r = { t: o, i: -1, y, auto: [], extra: true };
@@ -663,7 +665,7 @@ export function createArrangeView(app) {
       ctx.fillStyle = theme.text3;
       ctx.font = `10.5px ${theme.font}`;
       ctx.textBaseline = 'middle';
-      if (!r.auto.length) ctx.fillText(`${r.t.kind === 'master' ? 'Master' : 'Return bus'} ${r.t.name} — click “A” on the left to show its automation lanes`, 10, y0 + OWNER_H / 2);
+      if (!r.auto.length) ctx.fillText(r.t.kind === 'vca' ? `VCA ${r.t.name} (${(r.t.members || []).length} member${(r.t.members || []).length === 1 ? '' : 's'}) — click “A” on the left to draw its level automation` : `${r.t.kind === 'master' ? 'Master' : 'Return bus'} ${r.t.name} — click “A” on the left to show its automation lanes`, 10, y0 + OWNER_H / 2);
       if (r.auto.length) { ctx.fillStyle = theme.autoBg; ctx.fillRect(0, y0 + OWNER_H, W, r.h - OWNER_H); }
       ctx.fillStyle = theme.line;
       ctx.fillRect(0, y0 + r.h - 1, W, 1);
@@ -1093,6 +1095,7 @@ export function createArrangeView(app) {
     if (!t) return [];
     const have = new Set((t.automation || []).map((l) => l.target));
     const item = (it) => ({ label: `${have.has(it.target) ? '● ' : ''}${it.label}`, onClick: () => addLane(trackId, it.target) });
+    if (t.kind === 'vca') return targetGroups(t).flatMap((g) => g.items.map(item)); // VCAs: their level only
     const out = [];
     const fxGroups = [];
     for (const g of targetGroups(t)) {
@@ -1316,7 +1319,8 @@ export function createArrangeView(app) {
         el.style.height = OWNER_H + 'px';
         el.style.setProperty('--tc', r.t.color);
         if (name.textContent !== r.t.name) name.textContent = r.t.name;
-        kind.textContent = r.t.kind === 'master' ? 'MASTER' : 'BUS';
+        kind.textContent = r.t.kind === 'master' ? 'MASTER' : r.t.kind === 'vca' ? 'VCA' : 'BUS';
+        el.title = r.t.kind === 'vca' ? 'VCA: its level lane scales every member (adds in dB to their own fader / automation)' : '';
         autoBtn.setValue(autoOpen.has(id));
         autoBtn.classList.toggle('has', (r.t.automation || []).some((l) => l.points?.length));
       },
@@ -2017,6 +2021,7 @@ export function createArrangeView(app) {
       { label: n > 1 ? `Duplicate ${n} clips` : 'Duplicate', icon: 'copy', shortcut: 'Ctrl+D', onClick: duplicateSelection },
       { label: 'Split at playhead', icon: 'scissors', shortcut: 'S', disabled: !(ph > clip.start + EPS && ph < clip.start + clip.length - EPS), onClick: () => splitSelectionAt(ph, [clip.id]) },
       { label: 'Split at loop / punch range', icon: 'scissors', onClick: () => { const lp = get().punch?.enabled ? get().punch : get().loop; const ids = n > 1 ? selIds() : [clip.id]; splitSelectionAt(lp.end, ids); splitSelectionAt(lp.start, ids); } },
+      pat ? { label: 'Apply groove…', icon: 'magnet', title: `Swing / groove the notes of “${pat.name}”${clip.type === 'pattern' ? ' (every clip that uses this pattern)' : ''}`, onClick: () => openGrooveDialog(app, { patternId: pat.id, where: 'shared by every clip that uses it' }) } : null,
       pat ? { label: 'Make unique (own copy of the pattern)', icon: 'layers', onClick: () => makeUnique(clip.id) } : null,
       pat || clip.type === 'pattern' ? { label: 'Choose pattern', icon: 'music', submenu: [
         ...pats.map((pt) => ({ label: `${pt.id === clip.patternId ? '● ' : ''}${pt.name}`, onClick: () => setClipPattern(clip.id, pt.id) })),
@@ -2540,30 +2545,33 @@ export function createArrangeView(app) {
   // ------------------------------------------------------------------ keyboard
   function onKey(e) {
     if (!visible || isTyping(e) || document.querySelector('.modal-backdrop')) return;
-    const modk = e.ctrlKey || e.metaKey;
-    const k = e.key.toLowerCase();
-    const n = selIds().length;
-    let handled = true;
-    if ((k === 'delete' || k === 'backspace') && !modk && e.shiftKey) { if (!n) return; recUi.rippleDeleteClips(selIds()); setSel([]); }
-    else if ((k === 'delete' || k === 'backspace') && !modk) { if (!n) return; deleteSelection(); }
-    else if (k === 's' && !modk && !e.shiftKey && !e.altKey) { if (!splitSelectionAt(pos())) return; }
-    else if (modk && k === 'd') { if (!n) return; duplicateSelection(); }
-    else if (modk && k === 'c') { if (!copySelection()) return; }
-    else if (modk && k === 'x') { if (!copySelection()) return; deleteSelection(); }
-    else if (modk && k === 'v') { if (!clipboard) return; pasteAt(snapB(pos(), null, Math.floor)); }
-    else if (modk && k === 'a') setSel(get().clips.map((c) => c.id));
-    else if (!modk && (k === 'arrowleft' || k === 'arrowright')) {
-      if (!n) return;
-      const step = e.shiftKey ? bpbNow() : (snapStep() || 0.25);
-      nudge(k === 'arrowleft' ? -step : step, 0);
-    } else if (!modk && (k === 'arrowup' || k === 'arrowdown')) {
-      if (!n) return;
-      nudge(0, k === 'arrowup' ? -1 : 1);
-    } else if (k === 'escape' && !modk) { if (!n) return; setSel([]); }
-    else handled = false;
-    if (handled) { e.preventDefault(); e.stopImmediatePropagation(); }
+    // rebindable view-scoped commands (src/control/view-commands.js — Preferences → Shortcuts)
+    const cmd = app.shortcuts?.matchScope(e, 'arrange');
+    if (!cmd) return;
+    if (e.repeat && !cmd.repeat) { e.preventDefault(); return; }
+    if (arrangeActions[cmd.action]?.(e) === false) return;
+    e.preventDefault(); e.stopImmediatePropagation();
   }
   window.addEventListener('keydown', onKey, true);
+  const withSel = (fn) => () => { if (!selIds().length) return false; fn(); return true; };
+  const arrangeActions = {
+    delete: withSel(() => deleteSelection()),
+    rippleDelete: withSel(() => { recUi.rippleDeleteClips(selIds()); setSel([]); }),
+    split: () => !!splitSelectionAt(pos()),
+    duplicate: withSel(() => duplicateSelection()),
+    copy: () => !!copySelection(),
+    cut: () => { if (!copySelection()) return false; deleteSelection(); return true; },
+    paste: () => { if (!clipboard) return false; pasteAt(snapB(pos(), null, Math.floor)); return true; },
+    selectAll: () => { setSel(get().clips.map((c) => c.id)); return true; },
+    deselect: withSel(() => setSel([])),
+    nudgeLeft: withSel(() => nudge(-(snapStep() || 0.25), 0)),
+    nudgeRight: withSel(() => nudge(snapStep() || 0.25, 0)),
+    nudgeBarLeft: withSel(() => nudge(-bpbNow(), 0)),
+    nudgeBarRight: withSel(() => nudge(bpbNow(), 0)),
+    laneUp: withSel(() => nudge(0, -1)),
+    laneDown: withSel(() => nudge(0, 1)),
+  };
+  app.viewActions = { ...(app.viewActions || {}), arrange: arrangeActions };
 
   // ------------------------------------------------------------------ sync
   function syncToolbar() {

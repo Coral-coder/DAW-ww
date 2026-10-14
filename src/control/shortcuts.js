@@ -137,6 +137,12 @@ export class ShortcutMap {
     const scoped = cands.find((c) => c.scope !== 'global' && (!c.when || c.when(ctx)));
     return scoped || cands.find((c) => !c.when || c.when(ctx)) || null;
   }
+  /** Only the commands scoped to `scope` (a view) — used by the views' own capture-phase key handlers. */
+  matchScope(e, scope, ctx = {}) {
+    const chord = typeof e === 'string' ? e : eventToChord(e, { isMac: this.isMac });
+    if (!chord) return null;
+    return this.registry.list().find((c) => c.scope === scope && this.keysFor(c.id).includes(chord) && (!c.when || c.when(ctx))) || null;
+  }
   label(id) { return this.keysFor(id).map((k) => formatChord(k, { isMac: this.isMac })).join(' / '); }
   export() { return JSON.stringify({ format: SHORTCUTS_FORMAT, version: 1, overrides: this.overrides }, null, 2); }
   import(text) {

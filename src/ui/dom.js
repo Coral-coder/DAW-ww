@@ -85,6 +85,7 @@ const ICONS = {
   chevronDown: '<path d="M6 9l6 6 6-6"/>',
   chevronRight: '<path d="M9 6l6 6-6 6"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  more: '<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-5-5"/>',
   power: '<path d="M12 2v10"/><path d="M5.6 6.6a9 9 0 1 0 12.8 0"/>',
   headphones: '<path d="M3 18v-6a9 9 0 0 1 18 0v6"/><rect x="2" y="15" width="5" height="6" rx="1"/><rect x="17" y="15" width="5" height="6" rx="1"/>',

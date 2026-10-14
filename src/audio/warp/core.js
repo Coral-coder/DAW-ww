@@ -129,7 +129,8 @@ export class WarpRenderer {
       lo = this.s(Math.min(t0, tA)) * sr - span; hi = this.s(tB) * sr + span;
       if (this.prevA != null) lo = Math.min(lo, this.prevA - 8);
     } else {
-      lo = this.s(t0) * sr - 4; hi = this.s(t1) * sr + 4;
+      const P = this.mode === 'repitch' ? this.P : 1, s0 = this.curve[0].s; // (Re-Pitch transpose, see _repitch)
+      lo = (s0 + (this.s(t0) - s0) * P) * sr - 4; hi = (s0 + (this.s(t1) - s0) * P) * sr + 4;
     }
     return [Math.max(0, Math.floor(lo)), Math.min(this.srcLen, Math.ceil(hi))];
   }
@@ -165,8 +166,10 @@ export class WarpRenderer {
   // ---------------------------------------------------------------- repitch
   _repitch(outs, n) {
     const ratio = this.srcRate;
+    // Re-Pitch transpose: rate × 2^(st/12) on top of the tempo ratio (tape); 'off' ignores transpose
+    const P = this.mode === 'repitch' ? this.P : 1, s0 = this.curve[0].s;
     for (let i = 0; i < n; i++) {
-      const p = this.s((this.n + i) / this.outRate) * ratio - this.base;
+      const p = (s0 + (this.s((this.n + i) / this.outRate) - s0) * P) * ratio - this.base;
       for (let c = 0; c < outs.length; c++) outs[c][i] = readCubic(this.ch[Math.min(c, this.nch - 1)], p);
     }
   }

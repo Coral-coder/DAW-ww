@@ -156,6 +156,20 @@ export function countInPlan(map, playFrom, bars) {
 }
 
 /**
+ * What to do for a count-in: where the transport starts, how long after t0 it starts, and which clicks the recorder
+ * must schedule itself (t = seconds after t0). With the metronome on the transport rolls through the count-in bars and
+ * clicks beats ≥ 0 itself (TempoMap.clicks yields nothing before beat 0), so the recorder clicks only the negative ones;
+ * with it off the transport waits and the recorder clicks every count-in unit.
+ */
+export function countInSchedule(map, playFrom, bars, metronome) {
+  const n = Math.max(0, Math.round(bars || 0));
+  if (!n) return { from: playFrom, startDelay: 0, clicks: [] };
+  const ci = countInPlan(map, playFrom, n);
+  if (metronome) return { from: ci.from, startDelay: 0, clicks: ci.clicks.filter((c) => c.beat < -1e-9) };
+  return { from: playFrom, startDelay: ci.sec, clicks: ci.clicks };
+}
+
+/**
  * Where a recorded audio buffer goes: passes (takes), the frames to keep (+ one bar of handle on each side) and each
  * take's offset into the kept audio.
  *   anchor (see beatAtTime), frame: context frame of the first captured sample, frames: captured length,
