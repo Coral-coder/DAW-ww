@@ -8,7 +8,13 @@
 //              PCM is posted once per context into the worklet scope;
 //              fallback (no AudioWorklet, worklet still loading, offline renders / export): the same WarpRenderer
 //              runs once on the main thread and the result is cached (LRU) and played as a plain buffer.
-import { clipCurve, repitchRates, repitchFactor, curveTimeAt, isWarped, secAtBeat } from './markers.js';
+// Long streamed samples (stream/streamer.js; no AudioBuffer): every warp mode — repitch too — streams through the
+// same worklet with a sliding source window fed by the stream worker (o.getSampleStream / o.openStreamPort), so a
+// warped 10-minute stem plays warped right away and is never decoded whole.
+// Live tempo edits: retime(map, time, beat) re-curves every voice that spans `beat` from ctx `time` on (worklet
+// voices get the spliced curve and carry on seamlessly; repitch re-schedules playbackRate; cached voices restart).
+import { clipCurve, repitchRates, repitchFactor, curveTimeAt, isWarped, secAtBeat, spliceCurve } from './markers.js';
+import { envelopePoints } from '../../record/clips.js';
 import { renderWarp } from './core.js';
 import { TempoMap } from '../../time/tempo-map.js';
 
@@ -57,7 +63,7 @@ export function beatSlices(clip, analysis, duration) {
   if (analysis?.transients?.length) return analysis.transients;
   const out = [];
   const w = clip.warp;
-  for (let k = 0; k < 4096; k++) {
+  for (let k = 0; k < 1 << 20; k++) { // (long streamed clips: thousands of 16ths)
     const s = secAtBeat(w, (w.markers?.[0]?.beat || 0) + k / 4);
     if (s > duration) break;
     if (s >= 0) out.push(s);
@@ -74,13 +80,17 @@ export class WarpPlayer {
     this.cacheFrames = 0;
     this.useWorklet = o.worklet !== false && typeof OfflineAudioContext !== 'undefined' && !(this.ctx instanceof OfflineAudioContext);
     if (this.useWorklet) loadWarpWorklet(this.ctx);
-    this.stats = { worklet: 0, cached: 0, rendered: 0, native: 0 };
+    this.stats = { worklet: 0, cached: 0, rendered: 0, native: 0, retimed: 0 };
+    this.voices = new Set(); // { e, ev, clip, time, points, mode, kind: 'worklet'|'native'|'cached', src, g, dest }
   }
 
   play(e, ev, time, spb, map) {
     const clip = ev.clip;
-    const buffer = this.o.getSampleBuffer(clip.sampleId);
-    if (!buffer) return;
+    // streamed sample: never decode it whole (getSampleBuffer would) — still preparing: skip this play
+    const stream = this.o.getSampleStream?.(clip.sampleId) || null;
+    if (!stream && this.o.isStreamed?.(clip.sampleId)) return;
+    const buffer = stream ? null : this.o.getSampleBuffer(clip.sampleId);
+    if (!buffer && !stream) return;
     if (!map) map = new TempoMap({ bpm: 60 / (spb || 0.5) });
     const b0 = ev.beat, b1 = ev.beat + ev.dur;
     const { points, duration } = clipCurve(clip, map, b0, b1);
@@ -91,13 +101,89 @@ export class WarpPlayer {
     this.g._clipEnvelope(g, clip, ev, time, duration, map.spbAt(b0));
     g.connect(e.strip.input);
     let src = null;
-    if (mode === 'off' || mode === 'repitch') src = this._native(buffer, points, duration, time, g, mode, clip.warp?.transpose || 0);
+    if (stream) src = this._streamed(clip, stream, points, time, g, mode);
+    else if (mode === 'off' || mode === 'repitch') src = this._native(buffer, points, duration, time, g, mode, clip.warp?.transpose || 0);
     else src = this._stretched(clip, buffer, points, duration, time, g, mode);
     if (!src) { try { g.disconnect(); } catch { /* */ } return; }
     const rec = { src, g };
     this.g.sources.add(rec);
-    src.onended = () => { this.g.sources.delete(rec); try { g.disconnect(); } catch { /* */ } };
+    const voice = { e, ev, clip, time, points, mode, kind: src.node ? 'worklet' : (mode === 'off' || mode === 'repitch') ? 'native' : 'cached', src, g, rec };
+    this.voices.add(voice);
+    this._onEnded(voice, src);
   }
+
+  _onEnded(voice, src) {
+    src.onended = () => {
+      if (voice.src !== src) return; // replaced by a retimed source
+      this.voices.delete(voice);
+      this.g.sources.delete(voice.rec);
+      try { voice.g.disconnect(); } catch { /* */ }
+    };
+  }
+
+  /**
+   * Live tempo edit: from ctx `time` (dispatch time of transport `beat` — the scheduler's next window boundary,
+   * where the new map takes over) every voice that spans `beat` follows `map`. Returns the number of voices retimed.
+   */
+  retime(map, time, beat) {
+    let n = 0;
+    for (const v of [...this.voices]) {
+      const { ev, clip } = v;
+      const end = ev.beat + ev.dur;
+      if (!(beat > ev.beat + 1e-9 && beat < end - 1e-9)) continue;
+      const tc = time - v.time;
+      if (!(tc > 0) || tc >= v.points[v.points.length - 1].t) continue;
+      const tail = clipCurve(clip, map, beat, end).points;
+      const points = spliceCurve(v.points, tc, tail);
+      const duration = points[points.length - 1].t;
+      try {
+        if (v.kind === 'worklet') v.src.node.port.postMessage({ type: 'curve', curve: points });
+        else if (v.kind === 'native') this._retimeNative(v, points, tc, duration);
+        else this._retimeCached(v, tail, time);
+      } catch (err) { console.warn('[warp] retime failed', err); continue; }
+      v.points = points;
+      this._retimeEnvelope(v, map, beat, end, time, duration - tc);
+      n++;
+    }
+    this.stats.retimed += n;
+    return n;
+  }
+
+  _retimeNative(v, points, tc, duration) {
+    const src = v.src, t = v.time + tc;
+    if (v.mode === 'repitch') {
+      src.playbackRate.cancelScheduledValues(t);
+      for (const r of repitchRates(points, v.clip.warp?.transpose || 0)) if (r.t >= tc - 1e-9) src.playbackRate.setValueAtTime(Math.max(0.01, r.rate), v.time + r.t);
+    }
+    src.stop(v.time + duration + 0.001); // a later stop() replaces the earlier stop time
+  }
+
+  _retimeCached(v, tail, time) {
+    const buffer = this.o.getSampleBuffer(v.clip.sampleId);
+    if (!buffer) return;
+    const out = this._cached(v.clip.sampleId, buffer, this._opts(v.clip, buffer, tail, v.mode));
+    if (!out) return;
+    const src = this.ctx.createBufferSource();
+    src.buffer = out;
+    src.connect(v.g);
+    src.start(time, 0, tail[tail.length - 1].t + 0.001);
+    try { v.src.stop(time); } catch { /* */ }
+    v.src = src; v.rec.src = src;
+    this._onEnded(v, src);
+  }
+
+  /** Clip gain envelope from `time` on, under the new map (no de-click dip at the splice). */
+  _retimeEnvelope(v, map, beat, end, time, dur) {
+    const p = v.g.gain;
+    const pts = envelopePoints(v.clip, beat - v.clip.start, dur, map);
+    if (pts.length > 1) pts[0] = { t: 0, v: pts[1].v };
+    if (p.cancelAndHoldAtTime) p.cancelAndHoldAtTime(time); else p.cancelScheduledValues(time);
+    p.setValueAtTime(pts[0].v, time);
+    for (let i = 1; i < pts.length; i++) p.linearRampToValueAtTime(pts[i].v, time + pts[i].t);
+  }
+
+  /** Forget every voice (transport stop / seek: the mixer stops the sources). */
+  clear() { this.voices.clear(); }
 
   _native(buffer, points, duration, time, dest, mode, transpose = 0) {
     const ctx = this.ctx;
@@ -120,6 +206,25 @@ export class WarpPlayer {
     if (mode === 'off') src.start(time + t0, off, Math.min(duration - t0, buffer.duration - off) + 0.001);
     else { src.start(time + t0, off); src.stop(time + duration + 0.001); }
     return src;
+  }
+
+  /** Streamed sample through the warp worklet (any mode); null while the worklet is not loaded yet. */
+  _streamed(clip, meta, points, time, dest, mode) {
+    const st = workletState.get(this.ctx);
+    if (!this.useWorklet || st?.status !== 'ready' || !this.o.openStreamPort) {
+      if (this.useWorklet && !st) loadWarpWorklet(this.ctx);
+      return null;
+    }
+    const info = { duration: meta.frames / meta.sampleRate, sampleRate: meta.sampleRate };
+    const o = this._opts(clip, info, points, mode);
+    const node = new AudioWorkletNode(this.ctx, 'daw3-warp', {
+      numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
+      processorOptions: { sampleId: clip.sampleId, when: time, mode, curve: o.curve, transpose: o.transpose, formants: o.formants, quality: o.quality, slices: o.slices, srcRate: o.srcRate,
+        stream: { frames: meta.frames, channels: meta.channels, chunkFrames: meta.chunkFrames } },
+    });
+    const port = this.o.openStreamPort(meta);
+    node.port.postMessage({ port }, [port]);
+    return this._workletVoice(node, dest);
   }
 
   _opts(clip, buffer, points, mode) {
@@ -186,6 +291,10 @@ export class WarpPlayer {
       node.port.postMessage({ type: 'sample', id: sampleId, sr: buffer.sampleRate, channels: chs }, chs.map((c) => c.buffer));
       st.samples.add(sampleId);
     }
+    return this._workletVoice(node, dest);
+  }
+
+  _workletVoice(node, dest) {
     node.connect(dest);
     const voice = {
       node,
@@ -193,7 +302,7 @@ export class WarpPlayer {
       stop: (t) => { try { node.port.postMessage({ type: 'stop', at: t ?? 0 }); } catch { /* */ } },
     };
     node.port.onmessage = (m) => {
-      if (m.data?.type === 'ended') { try { node.disconnect(); } catch { /* */ } voice.onended?.(); }
+      if (m.data?.type === 'ended') { this.stats.underruns = (this.stats.underruns || 0) + (m.data.underruns || 0); try { node.disconnect(); } catch { /* */ } voice.onended?.(); }
     };
     this.stats.worklet++;
     return voice;

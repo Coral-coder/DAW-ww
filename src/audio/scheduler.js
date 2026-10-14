@@ -312,6 +312,15 @@ export class Scheduler {
     this.anchors = [anchor(time, beat, map)];
   }
 
+  /**
+   * Where the next window starts: { time (heard ctx time), beat, dispatch (= time − preroll) } — already dispatched
+   * events end here; a tempo-map edit takes over from this point (null when stopped).
+   */
+  boundary() {
+    if (!this.playing) return null;
+    return { time: this.nextTime, beat: this.nextBeat, dispatch: this.nextTime - this.preroll };
+  }
+
   /** Tempo map the transport follows (song mode: the project's map; pattern mode: constant project.bpm). */
   _map(project) { return tempoMapFor(project, project.mode); }
 

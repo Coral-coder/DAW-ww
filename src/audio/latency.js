@@ -112,3 +112,53 @@ export function faderOffsets(pdc) {
   for (const [id, lt] of Object.entries(pdc.trackLatency || {})) tracks[id] = lt;
   return { tracks, bus: pdc.align, master: pdc.total };
 }
+
+/**
+ * Alignment inside one strip's insert section — a plugboard graph, or the serial chain written as one
+ * (in → fx1 → fx2 → … → out). Parallel branches that meet at a node (or at 'out') are delayed to the slowest one, and
+ * a keyed effect's key input (port 1: a cable from inside the board, or an external sidechain arriving at
+ * `keys[nodeId]` seconds after the strip input) is aligned with the audio it ducks — whichever is earlier waits.
+ *
+ * @param {{ nodes: {id:string, latency:number}[], cables: {id:string, from:string, to:string, port?:number}[],
+ *           keys?: Object<string, number>, sampleRate?: number }} g   node ids 'in' / 'out' are implicit
+ * @returns {{ latency:number, arrive:Object<string,number>, cable:Object<string,number>, key:Object<string,number> }}
+ *   arrive[id]: when the node's (aligned) inputs arrive; cable[id]: delay to put on that cable; key[id]: delay for
+ *   the external key of node id; latency = arrive.out (0 when 'out' is unreachable). Unreachable nodes are left out.
+ */
+export function alignInserts(g) {
+  const sr = g.sampleRate || 44100;
+  const q = (x) => Math.round((Number(x) || 0) * sr) / sr; // (may be negative before max())
+  const lat = new Map((g.nodes || []).map((n) => [n.id, Math.max(0, q(n.latency))]));
+  const keys = g.keys || {};
+  const incoming = new Map();
+  for (const c of g.cables || []) {
+    if (!incoming.has(c.to)) incoming.set(c.to, []);
+    incoming.get(c.to).push(c);
+  }
+  const arrive = {}, cable = {}, key = {};
+  const memo = new Map();
+  const depart = (id, depth) => (id === 'in' ? 0 : q(arr(id, depth + 1) + (lat.get(id) || 0)));
+  function arr(id, depth = 0) {
+    if (memo.has(id)) return memo.get(id);
+    if (depth > 512) return -Infinity;
+    memo.set(id, -Infinity); // cycle guard (sanitized patches have none)
+    let a = -Infinity;
+    for (const c of incoming.get(id) || []) a = Math.max(a, depart(c.from, depth));
+    if (a > -Infinity && Number.isFinite(keys[id])) a = Math.max(a, q(keys[id])); // (no audio in: nothing to align)
+    if (a > -Infinity) a = q(a);
+    memo.set(id, a);
+    return a;
+  }
+  const ids = new Set(['out', ...lat.keys()]);
+  for (const id of ids) {
+    const a = arr(id);
+    if (a === -Infinity) continue;
+    arrive[id] = a;
+    for (const c of incoming.get(id) || []) {
+      const d = depart(c.from, 0);
+      if (d > -Infinity) cable[c.id] = q(a - d);
+    }
+    if (Number.isFinite(keys[id])) key[id] = q(a - q(keys[id]));
+  }
+  return { latency: arrive.out > 0 ? arrive.out : 0, arrive, cable, key };
+}
