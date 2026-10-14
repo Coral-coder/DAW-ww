@@ -170,7 +170,8 @@ export const secondsPerBeat = (project) => 60 / project.bpm;
 /** Song length in beats: end of last clip, rounded up to a whole bar (min 1 bar). */
 export function songLengthBeats(project) {
   const bpb = beatsPerBar(project);
-  const end = project.clips.reduce((m, c) => Math.max(m, c.start + c.length), 0);
+  let end = project.clips.reduce((m, c) => Math.max(m, c.start + c.length), 0);
+  for (const t of project.tracks) for (const sg of t.comp || []) end = Math.max(end, sg.end); // take-lane comps (src/record)
   return Math.max(bpb, Math.ceil(end / bpb) * bpb);
 }
 

@@ -30,6 +30,7 @@ import { EFFECT_DEFS } from './effect-defs.js';
 import { resolveInstrument } from './instruments.js';
 import { sanitizePatch, patchStructureKey, topoOrder, resolveKeyLinks, PATCH_IN, PATCH_OUT } from '../core/patch.js';
 import { computePdc, faderOffsets } from './latency.js';
+import { needsShapedEnvelope, envelopePoints } from '../record/clips.js';
 import { frozenMode, bypassesInserts, bypassesFader, frozenLaneFilter } from '../core/freeze.js';
 import { spanOf } from '../time/tempo-map.js';
 import { WarpPlayer, needsWarpPlayer, unwarpedInSeconds } from './warp/player.js';
@@ -826,6 +827,12 @@ export class MixGraph {
 
   /** Gain envelope of one audio-clip play: 4 ms de-click ramps + the clip's own fades (fadeIn / fadeOut, beats). */
   _clipEnvelope(g, clip, ev, time, dur, spb) {
+    if (needsShapedEnvelope(clip)) { // curved fades / crossfades / gain envelope (src/record/clips.js)
+      const pts = envelopePoints(clip, ev.offset, dur, spb);
+      g.gain.setValueAtTime(0, time);
+      for (let i = 1; i < pts.length; i++) g.gain.linearRampToValueAtTime(pts[i].v, time + pts[i].t);
+      return;
+    }
     const gain = clip.gain ?? 1;
     const fade = Math.min(0.004, dur / 4);
     if (clip.fadeIn > 0 || clip.fadeOut > 0) {

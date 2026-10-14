@@ -36,13 +36,18 @@ Project {
   format, version, name, bpm, timeSig:[num,den], swing, key:{root:0..11, scale:'minor'}, genre,
   mode: 'pattern' | 'song', tempoMap?, meterMap?, grooves?   (see "Tempo map, meters & audio warping")
   loop:{enabled,start,end}, metronome,
+  mode: 'pattern' | 'song',
+  loop:{enabled,start,end}, punch?:{enabled,start,end}, metronome,
   tracks: Track[], patterns: {id: Pattern}, clips: Clip[], scenes: Scene[],
   buses: Bus[], master:{volume, fx: Effect[], automation: AutomationLane[]}, samples:{id: Sample}, markers:[{id,beat,name}]
 }
 Track { id, name, type:'instrument'|'audio'|'code', color, volume, pan, mute, solo, arm,
         fx: Effect[], sends:{busId: 0..1}, instrument: Instrument|null, code?: string,
         codeSound?: 'strudel'|'daw3' (code tracks: sound engine, default 'strudel'),
-        activePatternId, role?, automation: AutomationLane[], patch?: Patch }
+        activePatternId, role?, automation: AutomationLane[], patch?: Patch,
+        recInput?: {source, channels:[n]|[n,n+1]}, monitor?: 'off'|'auto'|'on',
+        takeLanes?: [{id, takes: Take[]}], comp?: [{takeId, start, end}], compXfade?: ms }   (see "Recording")
+Take    { id, name, sampleId | patternId, start, length, offset, gain?, srcLength?, pass? }
 Patch   { enabled, nodes: PatchNode[], cables: Cable[] }            (plugboard — see below)
 PatchNode { id, kind:'fx', fxId, x, y } | { id, kind:'split'|'mix', x, y }
 Cable   { id, from:{node:'in'|nodeId, port:0}, to:{node:'out'|nodeId, port:0|1}, gain: 0..2 }
@@ -51,6 +56,9 @@ Instrument { type: 'synth'|'fm'|'organ'|'drums'|'sampler', preset: string|null, 
 Pattern { id, trackId, name, length(beats), notes: Note[], color }
 Note    { id, pitch, start(beats, relative to pattern), dur(beats), vel }
 Clip    { id, trackId, type:'pattern'|'audio', patternId, sampleId, start, length, offset, gain, name, warp? }   (warp: see "Tempo map")
+Clip    { id, trackId, type:'pattern'|'audio', patternId, sampleId, start, length, offset, gain, name,
+          fadeIn?, fadeOut? (beats), fadeInShape?, fadeOutShape? ('lin'|'exp'|'log'|'s'|'eqp'), gainEnv?: [{beat, gain}],
+          xfade?: false (no auto crossfade), reversed? }                       (audio-clip editing — see "Recording")
 Scene   { id, name, slots:{ trackId: patternId } }
 Bus     { id, name, volume, pan, mute, fx: Effect[], automation: AutomationLane[] }
 Effect  { id, type, enabled, params:{} }
@@ -156,14 +164,60 @@ Sample  { id, name, mime, data: base64 (original file bytes), duration }
   (the live store value is heard); `getAutomatedValue(ownerId, target)` is the lane value at the audible
   position (null when not automated) — the UI uses it to animate tagged controls (`markAuto`) at ~20 fps.
 
-## Audio recording (`src/audio/recorder.js`, browser-only)
+## Recording, takes + comping, clip editing (`src/record/*`, UI: `src/ui/views/arrange-rec.js`, `src/ui/record-panel.js`)
 
-`AudioRecorder(engine)`: `openInput()` (getUserMedia without echo-cancel/NS/AGC), `getLevel()`,
-`start()` → latency-compensated ctx time of the first sample, `stop()` → `{blob, mime, ctxStart}`.
-`actions.toggleRecord()` records audio when audio tracks are armed (switches to song mode, turns the
-loop off for the take, optional 1-bar count-in via `actions.setCountIn`); when the transport stops the
-take is decoded, encoded to WAV (`encodeWav`) and stored as a project sample + an audio clip on every
-armed audio track. Without armed audio tracks Record keeps recording keyboard/MIDI notes into patterns.
+Pure (Node-tested in `tests/recording.test.js`): `takes.js` (take lanes / comp model, swipe math, comp → virtual clips
+with crossfades, `computePasses`), `clips.js` (fades / gain envelope / auto crossfades, `trackClips`, split / slip /
+ripple / zero crossings / normalize / reverse math, `mixClipsToPcm` = playback-exact PCM render), `timing.js` (latency
+compensation, punch / pre-roll plan, monitoring rule, prefs), `midi.js` (pass recorder, MIDI takes, capture buffer, step
+input). Browser: `inputs.js` (input sources + InputManager), `capture-processor.js` (AudioWorklet), `session.js`
+(`createRecorder(app)` → `app.rec`).
+
+* **Playback of comps / fades** — `scheduler.collectEvents` plays `trackClips(project, track)`: the track's clips (where
+  an audio clip starts inside another and runs past its end, both get an equal-power crossfade over the overlap, unless
+  `xfade === false`) + `compClips()` of its take lanes. Comp segments that touch crossfade over `compXfade` ms (default
+  10, equal power) centred on the boundary, using the takes' handles (audio before / after the segment; `srcLength`). The
+  mixer (`_clipEnvelope`) schedules `envelopePoints()` (curved fades sampled in 24 linear ramps, gain envelope, 4 ms
+  de-click) for clips with curved fades / a gain envelope; other clips keep the old envelope (bit-identical renders).
+  Flatten comp / consolidate render with `mixClipsToPcm`, the same math. `songLengthBeats` / `defaultEndBeat` count comps.
+* **Inputs** — an input source is `{id, label, kind:'browser'|'native', channels}`: getUserMedia device ids ('default'),
+  or `window.daw3Native.audio.listInputs()` / `openInput(ctx, id) -> {node, channels, latency, close}` (ids
+  `native:…`, multi-channel interfaces). `InputManager` opens the sources armed audio tracks (and tracks monitoring 'on')
+  need — one stream + one capture tap per source — and routes each track's channels (`track.recInput.channels`, mono or a
+  stereo pair) to its monitor gain → the track strip input (inserts + PDC), or straight to the output in low-latency
+  mode. Monitoring `off | auto | on` (`monitorActive`: auto = while armed when stopped / recording inside the punch,
+  not during playback). Per-track peak + latched clip meters (`level(id)`, click the header meter to clear).
+  Rebinds on engine `'context'` (sample-rate change).
+* **Capture** — the `daw3-capture` AudioWorklet stamps every block with its context frame (sample-accurate); where
+  AudioWorklet is missing or stalls (2.5 s), a ScriptProcessor tap (input = 2 buffers before `playbackTime`, ±1 quantum).
+* **Alignment / latency** — captured frame F is heard-time beat `anchor.beat + (F/sr − roundTrip − anchor.time)·bpm/60`
+  (anchor = the scheduler's first anchor, heard time; constant tempo during a take). `roundTrip` = the measured loopback
+  latency of the device (Recording settings ▸ Measure: pings out, onset detection in, `detectPing`) or the browser
+  estimate (base + output + track latency), + a manual offset (ms) — stored per device in localStorage
+  `daw3-rec-latency`. The ping goes through the same capture path, so a calibrated device is exact either way.
+* **Session flow** (`rec.start({audio, midi})`, Record / R): song mode; `recordPlan` → transport starts at
+  `recIn − pre-roll` (`engine.play({from, at})` starts exactly after the count-in clicks), records from `recIn` (playhead
+  or punch-in), auto-stops after punch-out + post-roll (not while cycling). Stop commits everything as ONE undo step
+  ("Record"): per armed audio track one WAV sample (24-bit, the whole pass + 1 bar handles); `computePasses` splits it
+  into one take per loop pass (cycle) and/or the punch range. A single linear pass over empty space becomes a plain clip;
+  otherwise `addRecordedTakes`: overlapping clips become "Original" takes, each pass a take in the first free lane, the
+  comp points at the newest pass for its range. MIDI (song mode): `MidiPassRecorder` tags notes with their loop pass;
+  prefs `midiMode` overdub (into the clips under the notes, the rest into a new clip) | replace (clears the recorded range
+  first) | takes (one pattern take per pass, comped like audio) | merge (all passes in one take); `inputQuantize` (also
+  for pattern-mode recording; 0 = off). Pattern-mode MIDI recording is unchanged.
+* **Capture MIDI** (Shift+R): `CaptureBuffer` keeps the last 2 minutes of live notes (song positions when the transport
+  ran, else timing at the current tempo); the last phrase becomes a clip (song) / new pattern. **Step input**: with the
+  transport stopped each note / chord goes in at the step cursor of the selected pattern (Rest / Back).
+* **Arrange UI** — header: input button (device / channels / monitoring), `T<n>` take-lanes toggle, input meter.
+  Take rows under the track: drag across a take = swipe that range into the comp; click = that take for the comp
+  section under the pointer; double-click = promote; Alt-click = audition; menu: delete, crossfade length, flatten.
+  The comp plays (and is drawn) in the track lane with ✕ crossfade marks. Selected audio clips: fade handles (top
+  corners, curve shapes in the menu), clip-gain line (drag), Shift-click = gain-envelope point (drag, Alt-click deletes);
+  Alt-drag in the waveform = slip; S = split at playhead; Shift+Del = ripple delete; toolbar Ripple toggle (delete closes
+  gaps, resizing moves later clips); clip menu: Normalize, Reverse (new reversed audio), Consolidate, split at loop /
+  punch, zero-crossing snap (Rec menu). Punch range: Shift-drag in the loop lane (red), right-click for options.
+  Rec ▾ menu + Recording settings dialog (count-in 0–4 bars, pre / post-roll, punch, inputs, latency, MIDI modes).
+* `src/audio/recorder.js` (MediaRecorder) is the old single-input recorder, kept for compatibility; nothing uses it.
 
 ## Store (`src/core/store.js`)
 

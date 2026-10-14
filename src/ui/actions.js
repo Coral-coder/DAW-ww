@@ -16,8 +16,7 @@ import { serializeProject, parseProjectFile, downloadBlob } from '../io/project-
 import { exportMidi, importMidi } from '../io/midi.js';
 import { encodeWav } from '../io/wav.js';
 import { fileToSample, arrayBufferToBase64 } from '../io/samples.js';
-import { AudioRecorder, isRecordingSupported } from '../audio/recorder.js';
-import { scheduleClick } from '../audio/metronome.js';
+import { createRecorder } from '../record/session.js';
 import { readStrudelFile } from '../io/strudel-file.js';
 import { saveLocal, listLocal, loadLocal, deleteLocal, createAutosaver } from '../io/autosave.js';
 import { codeToPatterns, patternsToCode } from '../code/convert.js';
@@ -288,12 +287,12 @@ export function createActions(app) {
     const rec = !ui.get('recording');
     if (!rec) {
       ui.set({ recording: false });
-      if (audioTake) await finishAudioRecording();
+      if (recorder.active) await recorder.finish();
       return;
     }
     const armedAudio = get().tracks.filter((t) => t.type === 'audio' && t.arm);
-    ui.set({ recording: true });
     if (armedAudio.length) { await startAudioRecording(); return; }
+    ui.set({ recording: true });
     if (ui.get('autoArm')) {
       // Automation armed: Record starts a recording pass (song mode) — move any control to write it
       if (get().mode !== 'song') setMode('song');
@@ -302,124 +301,33 @@ export function createActions(app) {
       return;
     }
     if (!app.keyboardPiano?.enabled) { app.keyboardPiano.enabled = true; }
+    if (get().mode === 'song') {
+      // song mode: a recording session (count-in, pre-roll, punch, cycle takes, overdub / replace — src/record)
+      try { await ensureAudio(); } catch { ui.set({ recording: false }); return; }
+      if (!(await recorder.start({ audio: false, midi: true }))) ui.set({ recording: false });
+      return;
+    }
     toast('Recording: play notes with your computer keyboard (Z–M, Q–P) or a MIDI keyboard. Notes go into the selected track\'s active pattern. Arm an audio track (●) to record from your microphone instead.');
     await play();
   }
 
-  // ---------------------------------------------------------------- audio recording (armed audio tracks)
-  // Record ▸ with armed audio tracks: switches to SONG mode, (optional 1-bar count-in), starts the
-  // transport and captures the input with MediaRecorder. When the transport stops (or Record is
-  // toggled off) the take is decoded, stored as a WAV project sample and placed as an audio clip on
-  // every armed audio track at the beat where it was heard.
-  const recorder = new AudioRecorder(engine);
-  let audioTake = null; // { trackIds, loop, ctxStart, finishing }
-  const prefKey = 'daw3-countin';
-  const getCountIn = () => { try { return localStorage.getItem(prefKey) === '1'; } catch { return false; } };
-  const setCountIn = (v) => { try { localStorage.setItem(prefKey, v ? '1' : '0'); } catch { /* */ } ui.set({ countIn: !!v }); };
+  // ---------------------------------------------------------------- recording sessions (src/record)
+  // Record ▸ with armed audio tracks (or MIDI in song mode): count-in / pre-roll, punch, cycle takes, latency-
+  // compensated multi-track capture, input monitoring — see src/record/session.js. When the transport stops the
+  // takes are committed as one undo step.
+  const recorder = createRecorder(app, { toast });
+  app.rec = recorder;
+  const getCountIn = () => (recorder.prefs().countInBars || 0) > 0;
+  const setCountIn = (v) => { recorder.setPrefs({ countInBars: typeof v === 'number' ? v : (v ? 1 : 0) }); ui.set({ countIn: !!v }); };
   ui.set({ countIn: getCountIn(), audioRecording: false });
 
-  /** Open the input while an audio track is armed (level meters), close it otherwise. */
-  async function syncRecordInput() {
-    const armed = get().tracks.some((t) => t.type === 'audio' && t.arm);
-    if (armed && !recorder.inputOpen && !syncRecordInput.failed) {
-      if (!isRecordingSupported()) { syncRecordInput.failed = true; toast('Audio recording is not supported in this browser.', { level: 'warn' }); return; }
-      try { await recorder.openInput(); } catch (e) { syncRecordInput.failed = true; toast(e.message, { level: 'error', timeout: 6000 }); }
-    } else if (!armed && recorder.inputOpen && !audioTake) {
-      recorder.closeInput();
-    }
-    if (!armed) syncRecordInput.failed = false;
-  }
-  store.on('change', () => { syncRecordInput(); });
-
   async function startAudioRecording() {
-    const p = get();
-    const trackIds = p.tracks.filter((t) => t.type === 'audio' && t.arm).map((t) => t.id);
-    if (!trackIds.length) return false;
-    try {
-      await ensureAudio();
-      await recorder.openInput();
-    } catch (e) {
-      ui.set({ recording: false });
-      toast(e.message, { level: 'error', timeout: 6000 });
-      return false;
-    }
-    if (get().mode !== 'song') setMode('song');
-    const loop = get().loop?.enabled;
-    if (loop) store.transact('Loop off while recording', (pp) => { pp.loop.enabled = false; }, { undo: false });
-    audioTake = { trackIds, loop, ctxStart: null };
-    const wasPlaying = engine.isPlaying;
-    if (!wasPlaying && ui.get('countIn')) {
-      // one bar of clicks, then roll
-      const ctx = engine.ctx;
-      const bpb = beatsPerBar(get());
-      const spb = 60 / get().bpm;
-      const t0 = ctx.currentTime + 0.05;
-      for (let i = 0; i < bpb; i++) scheduleClick(ctx, engine.graph.clickOut, t0 + i * spb, i === 0);
-      app.setStatus?.('Count-in…');
-      await new Promise((r) => setTimeout(r, Math.max(0, (t0 + bpb * spb - ctx.currentTime - 0.12) * 1000)));
-      if (!audioTake || !ui.get('recording')) { audioTake = null; return false; }
-    }
-    try {
-      audioTake.ctxStart = await recorder.start();
-    } catch (e) {
-      audioTake = null;
-      ui.set({ recording: false });
-      toast('Could not start recording: ' + (e?.message || e), { level: 'error' });
-      return false;
-    }
-    if (!engine.isPlaying) await play();
-    audioTake.startBeat = engine.beatAtTime(audioTake.ctxStart);
-    ui.set({ audioRecording: true });
-    app.setStatus?.(`Recording audio into ${trackIds.length} armed track${trackIds.length > 1 ? 's' : ''} — press Stop (or Space) to finish the take.`);
-    return true;
+    try { await ensureAudio(); } catch { return false; }
+    const ok = await recorder.start({ audio: true, midi: true });
+    if (!ok) ui.set({ recording: false });
+    return ok;
   }
-
-  async function finishAudioRecording() {
-    const take = audioTake;
-    if (!take || take.finishing) return null;
-    take.finishing = true;
-    const res = await recorder.stop();
-    audioTake = null;
-    ui.set({ audioRecording: false, recording: false });
-    if (take.loop) store.transact('Restore loop', (pp) => { pp.loop.enabled = true; }, { undo: false });
-    syncRecordInput();
-    if (!res) { toast('Nothing was recorded.', { level: 'warn' }); return null; }
-    let buffer;
-    try {
-      const ab = await res.blob.arrayBuffer();
-      buffer = await new Promise((resolve, reject) => {
-        const pr = engine.ctx.decodeAudioData(ab, resolve, reject);
-        if (pr?.then) pr.then(resolve, reject);
-      });
-    } catch (e) {
-      toast('Could not decode the recording: ' + (e?.message || e), { level: 'error' });
-      return null;
-    }
-    const p = get();
-    const n = Object.values(p.samples || {}).filter((x) => /^Take \d+/.test(x.name)).length + 1;
-    const sample = { id: uid('smp'), name: `Take ${n}`, mime: 'audio/wav', data: arrayBufferToBase64(encodeWav(buffer, { bitDepth: 16 })), duration: buffer.duration };
-    const bpm = p.bpm;
-    const startBeat = Number.isFinite(take.startBeat) ? take.startBeat : 0;
-    const lenBeats = (buffer.duration * bpm) / 60;
-    const offset = startBeat < 0 ? -startBeat : 0;
-    const clipLen = +(lenBeats - offset).toFixed(6);
-    if (!(clipLen > 0.01)) { toast('The take was too short.', { level: 'warn' }); return null; }
-    const clips = [];
-    store.transact('Record audio', (pp) => {
-      pp.samples[sample.id] = sample;
-      for (const tid of take.trackIds) {
-        if (!pp.tracks.some((t) => t.id === tid)) continue;
-        const c = createClip(tid, { type: 'audio', sampleId: sample.id, start: +Math.max(0, startBeat).toFixed(6), length: clipLen, offset: +offset.toFixed(6), name: sample.name });
-        pp.clips.push(c);
-        clips.push(c);
-      }
-    });
-    toast(`Recorded "${sample.name}" (${buffer.duration.toFixed(1)} s) onto ${clips.length} track${clips.length === 1 ? '' : 's'}.`, { level: 'success' });
-    return { sample, clips };
-  }
-
-  // the take ends whenever the transport stops
-  engine.on?.('state', ({ playing }) => { if (!playing && audioTake && audioTake.ctxStart != null) finishAudioRecording(); });
+  const finishAudioRecording = () => recorder.finish();
 
   // live notes + recording
   const liveHeld = new Map(); // `${trackId}|${pitch}` -> {trackId, startBeat, vel}
@@ -438,6 +346,7 @@ export function createActions(app) {
     held.ready = ensureAudio().then(() => {
       held.startBeat = engine.getPosition();
       engine.noteOn(trackId, pitch, vel);
+      recorder.noteOn(trackId, pitch, vel, held.startBeat); // capture buffer / step input / song-mode sessions
     }).catch(() => {});
   }
   /** trackId: which track's note (default: the first held one of that pitch); expr: note expression to record
@@ -450,18 +359,20 @@ export function createActions(app) {
     await held.ready;
     engine.noteOff(held.trackId, pitch);
     app.emitLiveNote?.(pitch, false);
+    if (recorder.noteOff(held.trackId, pitch, engine.getPosition(), expr)) return;
     if (ui.get('recording') && engine.isPlaying) {
       const p = get();
-      const snap = 0.25;
+      const snap = recorder.prefs().inputQuantize || 0;
       // In song mode, record into the pattern of the clip under the playhead (respecting clip start/offset).
       const clip = p.mode === 'song' ? p.clips.find((cl) => cl.trackId === held.trackId && cl.type !== 'audio' && p.patterns[cl.patternId] && held.startBeat >= cl.start && held.startBeat < cl.start + cl.length) : null;
       const pat = clip ? p.patterns[clip.patternId] : ensurePattern(held.trackId);
       if (!pat) return;
       const rel = clip ? held.startBeat - clip.start + (clip.offset || 0) : held.startBeat;
       const localStart = ((rel % pat.length) + pat.length) % pat.length;
-      let start = Math.round(localStart / snap) * snap;
+      let start = snap ? Math.round(localStart / snap) * snap : localStart;
       if (start >= pat.length) start -= pat.length;
-      const dur = Math.max(snap, Math.round((engine.getPosition() - held.startBeat) / snap) * snap);
+      const raw = engine.getPosition() - held.startBeat;
+      const dur = snap ? Math.max(snap, Math.round(raw / snap) * snap) : Math.max(0.01, +raw.toFixed(5));
       store.transact('Record note', (pp) => {
         pp.patterns[pat.id]?.notes.push(expr ? { ...createNote(pitch, start, dur, held.vel), ...expr } : createNote(pitch, start, dur, held.vel));
       });
@@ -1228,7 +1139,7 @@ export function createActions(app) {
   function showHelp() {
     const sc = [
       ['Space', 'Play / pause'], ['Enter', 'Stop (twice: return to start)'], ['1 – 7', 'Arrange, Scenes, Step Rack, Piano Roll, Mixer, Code, Plugboard'],
-      ['P', 'Toggle Pattern / Song mode'], ['L', 'Toggle loop'], ['M', 'Metronome'], ['R', 'Record'], ['Shift+A', 'Arm automation recording (move any control while playing)'], ['`', 'Computer keyboard piano'],
+      ['P', 'Toggle Pattern / Song mode'], ['L', 'Toggle loop'], ['M', 'Metronome'], ['R', 'Record'], ['Shift+R', 'Capture MIDI (what you just played)'], ['S', 'Split selected clips at the playhead (Arrange)'], ['Shift+Del', 'Ripple delete (Arrange)'], ['Shift+A', 'Arm automation recording (move any control while playing)'], ['`', 'Computer keyboard piano'],
       ['Z…M / Q…P', 'Play notes (keyboard piano on)'], ['- / =', 'Octave down / up'], ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'],
       ['Ctrl/Cmd+K', 'Command palette — search every action'], ['Ctrl+Shift+M', 'MIDI learn mode (map hardware knobs to any control)'],
       ['Ctrl+S / Ctrl+O', 'Save / open project'], ['Ctrl+E', 'Export WAV'], ['B / D / A', 'Toggle browser / device / assistant panels'],
@@ -1306,7 +1217,9 @@ export function createActions(app) {
     boot, selectTrack, selectedTrack, selectPattern, addTrack, deleteTrack, duplicateTrack, updateTrack, moveTrack, renameTrack, trackMenuItems, addTrackMenuItems,
     newPattern, duplicatePattern, deletePattern, ensurePattern, setPatternNotes,
     togglePlay, play, stop, setPosition, setMode, toggleRecord, liveNoteOn,
-    recorder, startAudioRecording, finishAudioRecording, getCountIn, setCountIn, liveNoteOff, enableMidiInput, ensureAudio,
+    recorder, startAudioRecording, finishAudioRecording, getCountIn, setCountIn,
+    showRecordSettings: () => import('./record-panel.js').then((m) => m.showRecordSettings(app)).catch((e) => toast('Recording settings: ' + e.message, { level: 'error' })),
+    captureMidi: (trackId) => recorder.captureMidi(trackId), liveNoteOff, enableMidiInput, ensureAudio,
     setGenre, applyGenreDefaults, newProject, openProject, saveProject, renameProject, loadProjectObject,
     exportWav, exportMidiFile, exportCode, importMidiFile, interchange, importStrudel, renderCodeToTracks, importSamples, placeSample, sampleToSampler,
     generatePart, generateSong, newProgression, currentProgression, applyAssistantAction, showExtendDialog, extendSongBy, removeSectionAt,
