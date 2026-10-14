@@ -392,3 +392,47 @@ test('named controller-template banks', () => {
   const round = new TemplateBanks(JSON.parse(JSON.stringify(b)));
   assert.deepEqual(round.names(), ['Default']);
 });
+
+import { decodeMidi, MpeTracker, surfaceReply, mcuConnectionReply, faderSweepFrames, ledTestFrames, scribbleTestFrames, buildReport, sectionStatus, latencyVerdict } from '../src/control/hwcheck.js';
+import { McuProtocol, HuiProtocol } from '../src/control/surface-protocol.js';
+
+test('hardware check: decoding, MPE view, surface handshake, test patterns, report', () => {
+  assert.equal(decodeMidi([0x90, 60, 100]).text, 'ch 1 · C4 (60) vel 100');
+  assert.equal(decodeMidi([0x91, 60, 0]).type, 'Note off');
+  assert.match(decodeMidi([0xb0, 74, 64]).text, /CC 74 Brightness/);
+  assert.match(decodeMidi([0xe1, 0, 0x40]).text, /8192 \(\+0\.000\)/);
+  assert.equal(decodeMidi([0xf8]).quiet, true);
+  assert.match(decodeMidi([0xf0, 0, 0, 0x66, 0x14, 0x01, 1, 2, 3, 4, 5, 6, 7, 0, 0, 0, 0, 0xf7]).text, /Mackie Control host-connection query/);
+  const mpe = new MpeTracker();
+  mpe.feed([0x91, 60, 90]); mpe.feed([0x92, 64, 80]);
+  mpe.feed([0xe1, 0x7f, 0x7f]); mpe.feed([0xd1, 127]); mpe.feed([0xb2, 74, 0]);
+  const ns = mpe.notes();
+  assert.equal(ns.length, 2);
+  assert.ok(mpe.isMpe);
+  assert.equal(ns[0].bend, 48); assert.equal(ns[0].pressure, 1); assert.equal(ns[1].timbre, 0);
+  mpe.feed([0x81, 60, 0]);
+  assert.equal(mpe.notes().length, 1);
+  assert.equal(surfaceReply([0x90, 0, 0x7f]).kind, 'hui');
+  assert.equal(surfaceReply([0xf0, 0, 0, 0x66, 0x15, 0x01, 1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 0xf7]).kind, 'mcu-xt');
+  assert.equal(surfaceReply([0x90, 60, 100]), null);
+  const rep = mcuConnectionReply([0xf0, 0, 0, 0x66, 0x14, 0x01, 1, 2, 3, 4, 5, 6, 7, 10, 20, 30, 40, 0xf7]);
+  assert.deepEqual(rep.slice(0, 13), [0xf0, 0, 0, 0x66, 0x14, 0x02, 1, 2, 3, 4, 5, 6, 7]);
+  assert.equal(rep.length, 18); assert.ok(rep.slice(13, 17).every((b) => b >= 0 && b < 128));
+  const sw = faderSweepFrames(new McuProtocol(), { steps: 4 });
+  assert.equal(sw.length, 9);
+  assert.deepEqual(sw[4][0], [0xe0, 0x7f, 0x7f]); // strip 1 at the top
+  assert.ok(faderSweepFrames(new HuiProtocol(), { steps: 2 }).length === 5);
+  const [on, off] = ledTestFrames(new McuProtocol());
+  assert.ok(on.some((m) => m[0] === 0x90 && m[1] === 0x10 && m[2] === 127)); // mute 1 lit
+  assert.ok(off.every((m) => m[0] !== 0x90 || m[2] === 0));
+  assert.ok(scribbleTestFrames(new McuProtocol()).some((m) => m[0] === 0xf0 && m[5] === 0x12));
+  assert.equal(sectionStatus([{ status: 'pass' }, { status: 'skip' }]), 'pass');
+  assert.equal(sectionStatus([{ status: 'pass' }, { status: 'fail' }]), 'fail');
+  assert.equal(sectionStatus([]), 'pending');
+  assert.equal(latencyVerdict(12.3, 10).status, 'pass');
+  assert.equal(latencyVerdict(NaN).status, 'skip');
+  const txt = buildReport([{ title: 'MIDI monitor', checks: [{ name: 'Messages received', status: 'pass', text: 'Keystep: 3' }] }, { title: 'Audio I/O', checks: [{ name: 'Dropouts', status: 'fail', text: '2' }] }], { date: 'D', ua: 'UA' });
+  assert.match(txt, /\[PASS\] MIDI monitor\n  PASS  Messages received — Keystep: 3/);
+  assert.match(txt, /\[FAIL\] Audio I\/O/);
+  assert.match(txt, /^daW³ hardware check — D\nBrowser: UA/);
+});
