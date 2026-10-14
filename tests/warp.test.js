@@ -182,3 +182,15 @@ test('AudioWorklet processor (stubbed scope): streams the warp in 128-frame bloc
   on.forEach((t, k) => close(t, when + k * 0.3125, 0.004, `hit ${k}`));
   delete globalThis.AudioWorkletProcessor; delete globalThis.registerProcessor; delete globalThis.sampleRate; delete globalThis.currentTime;
 });
+
+test('unwarped clip under a tempo map: seconds view matches the source curve', async () => {
+  const { unwarpedInSeconds } = await import('../src/audio/warp/player.js');
+  const map = new TempoMap({ bpm: 100, points: [{ beat: 0, bpm: 100, curve: 'linear' }, { beat: 16, bpm: 160 }] });
+  const clip = { start: 4, length: 8, offset: 1, fadeIn: 1, sampleId: 's' };
+  const ev = { type: 'audio', beat: 6, clip, offset: 2, dur: 6 };
+  const s = unwarpedInSeconds(ev, map);
+  const { points, duration } = clipCurve(clip, map, 6, 12);
+  close((s.clip.offset + s.offset), points[0].s, 1e-12, 'start offset (s)');
+  close(s.dur, duration, 1e-12, 'duration (s)');
+  close(s.clip.fadeIn, map.span(4, 5), 1e-12);
+});

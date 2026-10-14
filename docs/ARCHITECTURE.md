@@ -34,7 +34,7 @@ tests/               node:test unit tests (*.test.js)
 ```
 Project {
   format, version, name, bpm, timeSig:[num,den], swing, key:{root:0..11, scale:'minor'}, genre,
-  mode: 'pattern' | 'song',
+  mode: 'pattern' | 'song', tempoMap?, meterMap?, grooves?   (see "Tempo map, meters & audio warping")
   loop:{enabled,start,end}, metronome,
   tracks: Track[], patterns: {id: Pattern}, clips: Clip[], scenes: Scene[],
   buses: Bus[], master:{volume, fx: Effect[], automation: AutomationLane[]}, samples:{id: Sample}, markers:[{id,beat,name}]
@@ -50,7 +50,7 @@ AutomationLane { id, target, points:[{beat, value}] (sorted by beat), enabled }
 Instrument { type: 'synth'|'fm'|'organ'|'drums'|'sampler', preset: string|null, params:{} }
 Pattern { id, trackId, name, length(beats), notes: Note[], color }
 Note    { id, pitch, start(beats, relative to pattern), dur(beats), vel }
-Clip    { id, trackId, type:'pattern'|'audio', patternId, sampleId, start, length, offset, gain, name }
+Clip    { id, trackId, type:'pattern'|'audio', patternId, sampleId, start, length, offset, gain, name, warp? }   (warp: see "Tempo map")
 Scene   { id, name, slots:{ trackId: patternId } }
 Bus     { id, name, volume, pan, mute, fx: Effect[], automation: AutomationLane[] }
 Effect  { id, type, enabled, params:{} }
@@ -437,6 +437,64 @@ esbuild (build time only; it applies three small, checked superdough patches —
 * `engine.panic()` (all notes off + 0.6 s master mute to kill tails; Shift+Esc), `engine.setSampleRate(rate|null)`
   (rebuilds the context, resumes playback; `SAMPLE_RATES`; preference in localStorage `daw3-sample-rate`; emits
   `'samplerate'` and `'context'` — anything holding nodes of the old context, e.g. the recorder, must rebind).
+
+## Tempo map, meters & audio warping (`src/time/*`, `src/audio/warp/*`)
+
+* **Data** (all optional — a project without them plays exactly as before):
+  `project.bpm` = tempo at beat 0 (authoritative: BPM field, setcpm, Link / MIDI-clock-in write it);
+  `project.tempoMap = [{beat, bpm, curve:'jump'|'linear'}]` (point 0 mirrors `bpm`; `curve` shapes the segment *after* the
+  point: hold, or a linear ramp in beats to the next point); `project.timeSig` = meter of bar 0;
+  `project.meterMap = [{bar (0-based), num, den, groups?}]` (changes only). Legacy `tempoAutomation` / `timeSigAutomation`
+  (older DAWproject imports) migrate in `normalizeProject`.
+* **`src/time/tempo-map.js` is the only beat↔seconds code**: `TempoMap` (`secAt`, `beatAt`, `bpmAt`, `span`, `breaks`,
+  `barAt`, `barStart`, `position` / `formatBBT`, `clicks` (one per meter unit; level 2 downbeat / 1 accent group, e.g.
+  7/8 = 2+2+3), `gridLines`), `tempoMapFor(project, mode)` (cached by content; **pattern mode = constant `project.bpm`**,
+  tempo changes are an arrangement feature; meters apply in both), `songTempoMap`, `spanOf(spbOrMap, b0, b1)`.
+  Ramps integrate exactly: `sec = 60/k·ln(bpm(b)/bpm0)`, `beat = b0 + bpm0·(e^{k·s/60} − 1)/k`.
+  Editing: `tempo-edit.js` (`setTempoPoint`, `moveTempoPoint`, `addTempoRamp`, `setMeter`, `TapTempo` / `tapTempoToMap`,
+  `tempoFromSelection` = "set tempo from selection length"); interchange: `convert.js`.
+* **Who follows it**: the scheduler (window ends, event times `t0 + secAt(ev.beat) − secAt(b0)`, anchors carry the map so
+  `beatAt(t)` / the playhead are exact through ramps; `annotateTimes` adds `durSec` so notes / code events last their
+  real length), offline render (same math, chunking in seconds), mixer automation ramps (`spanOf`), the metronome (accent per
+  meter), engine `'tempo'` events + `getCurrentTempo()` (tempo-synced effects follow the tempo at the playhead), MIDI clock out
+  (`tickTime(k)` through the map — tick spacing glides on ramps), MTC (`map.secAt`), Link (sends the tempo at the playhead
+  while a map plays), setlist (phrase bars via `barAt`, safety lead at the fastest tempo), DAWproject (Tempo /
+  TimeSignature automation round-trip incl. ramps), MIDI export (Set Tempo per change, ramps stepped every 16th), stems
+  "Tempo map.txt", LCD (`formatBBT`, time through the map), Arrange ruler / grid / bar snap. Constant maps keep the old
+  arithmetic bit-for-bit.
+* **Code tracks** are beat-locked: one cycle = one bar of the *first* meter, so they follow tempo changes (events land on
+  the same beats; the map turns beats into seconds); the `cps` handed to superdough is the tempo at the event. `setcpm`
+  sets `project.bpm` (the starting tempo).
+* **Freeze**: `track.frozen.tempo` = `tempoSignature(project)`; editing the tempo / meter map makes song-mode freezes play
+  live until refrozen (like a bpm change).
+* **Audio warping** — `clip.warp = { mode: 'off'|'repitch'|'beats'|'tones'|'complex', markers: [{beat, sec}], bpm,
+  transpose, formants, quality }`; markers map *content beats* (the unit of `clip.offset`) to sample seconds, linear between
+  markers, extrapolated outside. Warped clips follow the tempo map; `off` plays at the sample's own speed (old behaviour).
+  `sample.analysis = {bpm, confidence, downbeat, transients}` (`warp/analyze.js`, onset / tempo code ported from the Mac
+  branch). Imports (`actions.placeSample`) auto-warp: markers on each detected bar, `beats` for percussive loops, `tones`
+  otherwise, `off` for files > 60 s.
+  - `markers.js` (pure): `secAtBeat` / `beatAtSec`, `clipCurve(clip, map, b0, b1)` → piecewise-linear output-time →
+    sample-time curve (breakpoints at markers, tempo breaks and every 1/16 beat inside ramps), `curveRates`, `autoWarp`,
+    marker editing, `sourceTimeFn` (waveform drawing).
+  - `core.js` (pure, streaming `WarpRenderer`): repitch (resample along the curve), beats (slice at transients, each slice
+    starts exactly on its curve time at its own speed, faded before the next source slice / cross-faded when cut), tones
+    (WSOLA, ~50 ms grains, 2× overlap, ±12 ms search), complex (WSOLA ~90 ms grains, 4× overlap); transpose = grains read
+    resampled; `formants` = per-grain LPC envelope removed → residual resampled → envelope re-applied.
+  - `player.js` (browser): off / repitch use AudioBufferSourceNodes (repitch: piecewise-constant `playbackRate`, exact at
+    every breakpoint); pitch-preserving modes stream through the `daw3-warp` **AudioWorklet** (`worklet.js`, sample PCM
+    posted once per context) and fall back to a main-thread render of the same `WarpRenderer` (LRU cache) when the worklet
+    is unavailable / still loading (addModule gives up after 8 s). Offline renders / export always use the precomputed path.
+  - Warped clips are scheduled once per play (like any audio clip): editing the tempo while a long clip plays takes
+    effect at the next start / seek.
+* **Quantize / groove** (`src/time/groove.js`): `quantizeWarp(clip, transients, {grid, strength, swing, groove})` puts warp
+  markers on the transients pulled toward the timeline grid (two hits in one slot: only the closer moves);
+  `extractGroove` / `grooveFromNotes` / `grooveFromAudio` → `GrooveTemplate {grid, length, offsets, velocities}` (stored in
+  `project.grooves`); `applyGrooveToNotes`, `quantizeNotes`.
+* **UI**: Arrange **Tempo** lane (`src/ui/tempo-lane.js`: double-click adds a point, drag moves, right-click: ramp / jump,
+  set BPM, delete, tempo / meter change at a bar, tempo from loop length, clear; Tap = tap tempo to map), meter labels on
+  the ruler, meter-aware bar snap; clip **Warp editor** (`src/ui/warp-editor.js`, double-click an audio clip or clip menu ▸
+  Warp: mode, transpose, formants, quality, clip BPM, detect tempo, set project tempo from clip, auto-warp, markers, audio
+  quantize, extract groove).
 
 ## IO (`src/io/*.js`)
 

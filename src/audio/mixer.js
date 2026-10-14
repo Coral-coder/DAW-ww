@@ -32,7 +32,7 @@ import { sanitizePatch, patchStructureKey, topoOrder, resolveKeyLinks, PATCH_IN,
 import { computePdc, faderOffsets } from './latency.js';
 import { frozenMode, bypassesInserts, bypassesFader, frozenLaneFilter } from '../core/freeze.js';
 import { spanOf } from '../time/tempo-map.js';
-import { WarpPlayer, needsWarpPlayer } from './warp/player.js';
+import { WarpPlayer, needsWarpPlayer, unwarpedInSeconds } from './warp/player.js';
 
 const TC = 0.012;
 
@@ -813,7 +813,8 @@ export class MixGraph {
     } else if (ev.type === 'code') {
       e.code?.trigger(time, ev.value, Math.max(0.005, ev.durSec ?? ev.dur * spb), ev);
     } else if (ev.type === 'audio') {
-      if (needsWarpPlayer(ev.clip, map)) { this._warpPlayer().play(e, ev, time, spb, map); return; }
+      if (needsWarpPlayer(ev.clip)) { this._warpPlayer().play(e, ev, time, spb, map); return; }
+      if (map && !map.isConstant) { this._playAudioClip(e, unwarpedInSeconds(ev, map), time, 1); return; } // tempo map: in seconds
       this._playAudioClip(e, ev, time, spb);
     }
   }

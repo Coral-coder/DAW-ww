@@ -12,7 +12,19 @@ import { clipCurve, curveRates, curveTimeAt, isWarped, secAtBeat } from './marke
 import { renderWarp } from './core.js';
 import { TempoMap } from '../../time/tempo-map.js';
 
-export const needsWarpPlayer = (clip, map) => isWarped(clip) || !!(map && !map.isConstant);
+export const needsWarpPlayer = (clip) => isWarped(clip);
+
+/**
+ * Unwarped clip under a non-constant tempo map, re-expressed in seconds (spb = 1) so the regular buffer / streaming
+ * clip player plays it: the audio runs at its own speed from clip.offset·60/bpm(clip.start).
+ */
+export function unwarpedInSeconds(ev, map) {
+  const c = ev.clip, cs = c.start, ce = c.start + c.length;
+  const clip = { ...c, offset: (c.offset || 0) * map.spbAt(cs), length: map.span(cs, ce) };
+  if (c.fadeIn > 0) clip.fadeIn = map.span(cs, cs + c.fadeIn);
+  if (c.fadeOut > 0) clip.fadeOut = map.span(ce - c.fadeOut, ce);
+  return { ...ev, clip, offset: map.span(cs, ev.beat), dur: map.span(ev.beat, ev.beat + ev.dur) };
+}
 
 const workletState = new WeakMap(); // ctx -> { status: 'loading'|'ready'|'failed', promise, samples: Set }
 
