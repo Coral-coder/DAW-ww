@@ -165,7 +165,14 @@ export function installControl(app) {
       if (label !== 'Tempo (Link)' && label !== 'Tempo (MIDI clock)') link.sendTempo(p.bpm);
     }
   });
-  setInterval(() => { clockOut.pump(now()); mtcOut.pump(now()); }, 25);
+  setInterval(() => {
+    // the playhead jumped (seek, loop wrap in song mode): Stop + SPP + Continue so slaves follow
+    if (clockOut.running && engine.isPlaying) {
+      const t = now() + (+settings.sync.offsetMs || 0);
+      if (Math.abs(clockOut.beatAt(t) - pos()) > 0.25) { clockOut.stop(t); clockOut.start(Math.max(0, pos()), store.get().bpm, t); }
+    }
+    clockOut.pump(now()); mtcOut.pump(now());
+  }, 25);
   clockIn.on('tempo', (bpm) => {
     if (!settings.sync.follow) return;
     const v = Math.round(bpm * 10) / 10;
@@ -442,7 +449,6 @@ export function installControl(app) {
 
   /** Mark controls that have a mapping (title gets the source). */
   function markMapped() {
-    const p = store.get();
     const bySrc = new Map();
     for (const m of mappings.mappings) {
       if (m.target.command) continue;
@@ -457,7 +463,6 @@ export function installControl(app) {
       el.classList.toggle('ctl-mapped', !!list);
       if (list) el.dataset.midi = list.join(', '); else delete el.dataset.midi;
     }
-    void p;
   }
   setInterval(markMapped, 700);
   ui.on('change', (c) => { if ('selectedTrackId' in c) markMapped(); });
@@ -466,13 +471,11 @@ export function installControl(app) {
   app.automationContextExtras = (owner, target, el) => {
     const items = ['-', { label: 'MIDI learn…', icon: 'piano', onClick: () => learn(owner, target, el) }];
     if (store.get().tracks.some((t) => t.id === owner)) items.push({ label: 'MIDI learn for the selected track (all projects)', icon: 'piano', onClick: () => learn(owner, target, el, 'template') });
-    const p = store.get();
     for (const m of mappings.mappings) {
       if (m.target.command) continue;
       const r = resolve(m.target);
       if (r.owner === owner && r.target === target) items.push({ label: `Remove MIDI mapping (${sourceLabel(m.source)}${m.scope === 'template' ? ', template' : ''})`, icon: 'x', onClick: () => mappings.remove(m.id) });
     }
-    void p;
     return items;
   };
 
