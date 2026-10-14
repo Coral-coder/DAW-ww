@@ -173,7 +173,8 @@ export function createSetlistView(app) {
   function makeColumn(l) {
     const t0 = get().tracks.find((t) => t.id === l.id);
     const color = t0?.color || '#7aa2ff';
-    const name = h('div.sl-col-name', { title: `${l.name} (${l.category})` }, l.name);
+    const name = h('div.sl-col-name', { title: `${l.name} (${l.category}) — click to edit its sound in the device panel` }, l.name);
+    name.addEventListener('click', () => { actions.selectTrack(l.id); ui.set({ deviceOpen: true }); });
     const state = h('div.sl-col-state');
     const modeBtn = h('button.sl-mode', { type: 'button', title: 'AUTO: the energy arc decides when this layer plays · ON: always in · OFF: always out (from the next phrase)' });
     modeBtn.addEventListener('click', () => runner.setLayer(l.id, { mode: MODE_NEXT[runner.layer(l.id)?.mode || 'auto'] }));
@@ -203,8 +204,10 @@ export function createSetlistView(app) {
     // sound freshness: rotate / keep, drift amount, what's queued next
     const rotBtn = h('button.sl-rot', { type: 'button', title: 'Rotate: every few phrases this layer swaps to another sound that fits the genre (at a phrase boundary, level-matched) · Keep: stay on this sound' });
     rotBtn.addEventListener('click', () => { const L = runner.layer(l.id); if (L?.sound) runner.setSound(l.id, { rotate: !L.sound.rotate }); });
-    const driftKnob = knob({ def: { key: 'drift', label: 'Drift', min: 0, max: 1, default: 0.5, step: 0.01 }, value: l.sound?.drift ?? 0.5, size: 24, label: 'Drift', onChange: (v) => runner.setSound(l.id, { drift: v }) });
-    driftKnob.title = 'Drift: how far filter / envelope / space / width settings wander across phrases (0 = static). A knob you move yourself stops drifting.';
+    const driftKnob = knob({ def: { key: 'drift', label: 'Drift', min: 0, max: 1, default: 0.5, step: 0.01 }, value: l.sound?.drift ?? 0.5, size: 24, label: false, showValue: false, onChange: (v) => { runner.setSound(l.id, { drift: v }); driftKnob.title = driftTitle(v); } });
+    driftKnob.classList.add('sl-drift');
+    const driftTitle = (v) => `Drift ${Math.round(v * 100)} %: how far filter / envelope / space / width settings wander across phrases (0 = static). A knob you move yourself stops drifting.`;
+    driftKnob.title = driftTitle(l.sound?.drift ?? 0.5);
     const nowBtn = h('button.sl-regen', { type: 'button', title: 'Next sound now: swap to the queued sound at the next phrase' }, icon('refresh', 13));
     nowBtn.addEventListener('click', () => { runner.nextSoundNow(l.id); nowBtn.classList.add('on'); });
     const nextEl = h('div.sl-next.muted');
@@ -263,6 +266,7 @@ export function createSetlistView(app) {
           nowBtn.disabled = !si.canRotate;
           nowBtn.classList.toggle('on', !!L.sound.now);
           driftKnob.setValue?.(si.drift);
+          driftKnob.title = driftTitle(si.drift ?? 0.5);
           driftKnob.style.opacity = si.canDrift ? '' : '0.4';
           nextEl.textContent = si.next ? `next: ${si.next.name} in ${si.next.in} phrase${si.next.in === 1 ? '' : 's'}` : (L.lock ? 'locked' : si.rotate ? '' : 'sound kept');
           nextEl.title = nextEl.textContent;

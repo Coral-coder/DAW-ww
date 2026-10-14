@@ -148,6 +148,10 @@ export async function createApp(rootEl) {
     const narrow = window.matchMedia('(max-width: 1024px)');
     if (narrow.matches && ui.get('assistantOpen')) ui.set({ assistantOpen: false });
     narrow.addEventListener?.('change', (e) => { if (e.matches && ui.get('assistantOpen')) ui.set({ assistantOpen: false }); });
+    // phone width: the browser is an overlay drawer too (styles/main.css ≤ 820px)
+    const phone = window.matchMedia('(max-width: 820px)');
+    if (phone.matches && ui.get('browserOpen')) ui.set({ browserOpen: false });
+    phone.addEventListener?.('change', (e) => { if (e.matches && ui.get('browserOpen')) ui.set({ browserOpen: false }); });
   } catch { /* matchMedia unavailable */ }
 
   // ---- status bar ----

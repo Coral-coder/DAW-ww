@@ -1188,7 +1188,7 @@ export function createActions(app) {
         card('folder', 'Open project', 'Continue a saved .daW3 file', () => openProject()),
         card('layers', 'Recent in browser', 'Restore an autosaved session', () => showLocalProjects()),
       ),
-      h('p.muted', { style: { textAlign: 'center', fontSize: '12px' } }, 'Tip: press ? any time for shortcuts. Space plays, 1–7 switch views, ` toggles the keyboard piano.'));
+      h('p.muted', { style: { textAlign: 'center', fontSize: '12px' } }, 'Tip: press ? any time for shortcuts. Space plays, 1–8 switch views, ` toggles the keyboard piano.'));
     const m = modal({ title: '', body, width: 820, cls: 'welcome' });
   }
 
