@@ -38,7 +38,12 @@ export async function openMic(ctx, onBlock) {
   let node;
   try {
     if (!ctx.audioWorklet) throw new Error('no worklet');
-    if (!workletCtx.has(ctx)) { await ctx.audioWorklet.addModule(new URL('./capture-worklet.js', import.meta.url)); workletCtx.add(ctx); }
+    if (!workletCtx.has(ctx)) {
+      // addModule can stall behind another worklet that is still loading (e.g. Strudel's from a CDN on a bad
+      // network): don't wait forever — fall back to a ScriptProcessor after 2.5 s
+      await Promise.race([ctx.audioWorklet.addModule(new URL('./capture-worklet.js', import.meta.url)), new Promise((_, rej) => setTimeout(() => rej(new Error('worklet timeout')), 2500))]);
+      workletCtx.add(ctx);
+    }
     node = new AudioWorkletNode(ctx, 'daw3-capture', { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1 });
     node.port.onmessage = (e) => onBlock(e.data);
   } catch {

@@ -1,6 +1,7 @@
 /* daW³ Pocket — phone-first layout (src/mobile). Loaded only by the Pocket shell. Uses the theme tokens of main.css. */
 html.pocket, html.pocket body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior: none; -webkit-text-size-adjust: 100%; touch-action: manipulation; }
 html.pocket body { font-size: 15px; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; }
+html.pocket [hidden] { display: none !important; } /* author display rules (.pk-page { display: flex }) must not beat [hidden] */
 html.pocket { --pk-gap: 12px; --pk-r: 14px; --pk-touch: 48px; --ctl: var(--accent); }
 
 #app.pk { display: flex; flex-direction: column; height: 100vh; height: 100dvh; width: 100vw; background: var(--bg); }

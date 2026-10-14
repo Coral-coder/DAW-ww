@@ -139,7 +139,7 @@ export async function createPocketApp(rootEl) {
 
   async function mount(id) {
     if (pages[id]) return pages[id];
-    const host = h('section.pk-page', { dataset: { page: id } });
+    const host = h('section.pk-page', { dataset: { page: id }, hidden: true }); // shown by show() (a late mount must not cover the current page)
     pagesEl.appendChild(host);
     pages[id] = { host, view: null };
     try {
@@ -186,35 +186,43 @@ export async function createPocketApp(rootEl) {
   window.addEventListener('popstate', () => { closeTopSheet(); show(parseRoute(location.hash), -1); });
 
   // ------------------------------------------------------------------ swipe between pages
+  // Touch: touch events (they keep coming after the browser claims the gesture and sends pointercancel);
+  // mouse / pen: pointer events.
   let sw = null;
-  pagesEl.addEventListener('pointerdown', (e) => {
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    if (isSwipeBlocked(e.target)) return;
-    sw = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId, horiz: null };
-  });
-  pagesEl.addEventListener('pointermove', (e) => {
-    if (!sw || e.pointerId !== sw.id) return;
-    const dx = e.clientX - sw.x, dy = e.clientY - sw.y;
+  const swStart = (x, y, target, id) => {
+    if (isSwipeBlocked(target)) return;
+    sw = { x, y, t: performance.now(), id, horiz: null, lx: x, ly: y };
+  };
+  const swMove = (x, y, id) => {
+    if (!sw || id !== sw.id) return;
+    sw.lx = x; sw.ly = y;
+    const dx = x - sw.x, dy = y - sw.y;
     if (sw.horiz === null && (Math.abs(dx) > 12 || Math.abs(dy) > 12)) sw.horiz = Math.abs(dx) > Math.abs(dy) * 1.6;
     if (sw.horiz) {
       const host = pages[route?.page]?.host;
       const edge = !neighbour(route.page, dx < 0 ? 1 : -1);
       if (host) host.style.transform = `translateX(${edge ? dx * 0.2 : dx * 0.6}px)`;
     }
-  });
-  const swipeEnd = (e) => {
-    if (!sw || e.pointerId !== sw.id) return;
+  };
+  const swEnd = (x, y, id, cancelled = false) => {
+    if (!sw || id !== sw.id) return;
     const s = sw;
     sw = null;
     const host = pages[route?.page]?.host;
     if (host) host.style.transform = '';
-    if (!s.horiz || e.type === 'pointercancel') return;
-    const dir = swipeDecision({ dx: e.clientX - s.x, dy: e.clientY - s.y, dt: performance.now() - s.t, width: pagesEl.clientWidth });
+    if (!s.horiz || cancelled) return;
+    const dir = swipeDecision({ dx: (x ?? s.lx) - s.x, dy: (y ?? s.ly) - s.y, dt: performance.now() - s.t, width: pagesEl.clientWidth });
     const to = dir && neighbour(route.page, dir);
     if (to) { haptic(6); go({ page: to }); }
   };
-  pagesEl.addEventListener('pointerup', swipeEnd);
-  pagesEl.addEventListener('pointercancel', swipeEnd);
+  pagesEl.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch' || (e.pointerType === 'mouse' && e.button !== 0)) return; swStart(e.clientX, e.clientY, e.target, `p${e.pointerId}`); });
+  pagesEl.addEventListener('pointermove', (e) => { if (e.pointerType !== 'touch') swMove(e.clientX, e.clientY, `p${e.pointerId}`); });
+  pagesEl.addEventListener('pointerup', (e) => { if (e.pointerType !== 'touch') swEnd(e.clientX, e.clientY, `p${e.pointerId}`); });
+  pagesEl.addEventListener('pointercancel', (e) => { if (e.pointerType !== 'touch') swEnd(null, null, `p${e.pointerId}`, true); });
+  pagesEl.addEventListener('touchstart', (e) => { if (e.touches.length !== 1) { sw = null; return; } const t = e.changedTouches[0]; swStart(t.clientX, t.clientY, e.target, `t${t.identifier}`); }, { passive: true });
+  pagesEl.addEventListener('touchmove', (e) => { for (const t of e.changedTouches) swMove(t.clientX, t.clientY, `t${t.identifier}`); }, { passive: true });
+  pagesEl.addEventListener('touchend', (e) => { for (const t of e.changedTouches) swEnd(t.clientX, t.clientY, `t${t.identifier}`); });
+  pagesEl.addEventListener('touchcancel', (e) => { for (const t of e.changedTouches) swEnd(null, null, `t${t.identifier}`, true); });
 
   // ------------------------------------------------------------------ transport updates
   const bpb = () => beatsPerBar(store.get());

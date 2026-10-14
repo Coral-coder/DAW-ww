@@ -240,6 +240,12 @@ test('code: apply path shared with the desktop (unchanged / foreign / error / ed
   assert.ok(rep.changed);
   assert.equal(store.undoStack.length, undo0 + 1, 'one undo step');
   assert.ok(songApplySummary(rep).length >= 1);
+  // an effect chained onto arrange() must not wipe the parts (the form can't be read any more)
+  const chained = planSongApply(store.get(), store.get() && song.code + '.room(0.4)', { ...o, songDraft: 'x' });
+  if (chained.kind === 'apply') {
+    assert.equal(chained.dry.changes.length, 0, chained.dry.changes.join('; '));
+    assert.ok(chained.dry.warnings.some((w) => /arrange\(\)/.test(w)));
+  }
   const bad = song.code.replace(/^(const bass\s+= )n\(/m, '$1n(((');
   assert.equal(planSongApply(store.get(), bad, { ...o, songDraft: bad }).kind, 'error');
   // foreign song: code tracks per block, buses kept
