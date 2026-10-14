@@ -233,8 +233,8 @@ export class MappingEngine extends Emitter {
           st.history.push(ev.value);
           if (st.history.length > 24) st.history.shift();
           const det = detectCcMode(st.history);
-          if (RELATIVE_MODES.includes(det.mode) && det.mode !== m.mode) { m.mode = det.mode; this.emit('change', { scope: m.scope || 'project', mapping: m }); }
-          if (det.sure && RELATIVE_MODES.includes(det.mode)) { delete m.detect; this.emit('change', { scope: m.scope || 'project', mapping: m }); }
+          if (RELATIVE_MODES.includes(det.mode) && det.mode !== m.mode) { m.mode = det.mode; this.emit('change', { scope: m.scope || 'project', mapping: m, auto: true }); }
+          if (det.sure && RELATIVE_MODES.includes(det.mode)) { delete m.detect; this.emit('change', { scope: m.scope || 'project', mapping: m, auto: true }); }
         }
         delta = relativeDelta(m.mode, ev.value);
       }

@@ -649,3 +649,25 @@ test('targets: normalized read / write of mixer, instrument, fx and enum targets
   assert.equal(templateOwner(p, t.id), '@t1');
   assert.equal(applyNorm(p, 'nope', 'volume', 1), false);
 });
+
+// ------------------------------------------------------------------------------------------- Link
+test('Link client: phase error wrap, tempo follow, start on the next bar, stop sync, phase nudge', async () => {
+  const { linkPhaseError, LinkClient } = await import('../src/control/link-client.js');
+  near(linkPhaseError(4.1, 0.0, 4), -0.1, 1e-9);
+  near(linkPhaseError(3.9, 0.0, 4), 0.1, 1e-9);
+  near(linkPhaseError(0, 3, 4), -1, 1e-9);
+  let bpm = 120, playing = false, beat = 1.3, t = 0;
+  const log = [];
+  const host = { bpm: () => bpm, setBpm: (b) => { bpm = b; log.push(['bpm', b]); }, playing: () => playing, beat: () => beat, play: () => { playing = true; log.push(['play', beat]); }, stop: () => { playing = false; log.push(['stop']); }, setBeat: (b) => { beat = b; log.push(['seek', +b.toFixed(3)]); }, now: () => t };
+  const lc = new LinkClient(host, { WebSocketImpl: null });
+  lc.receive({ type: 'state', tempo: 140, phase: 3.9, quantum: 4, playing: true, beat: 11.9 });
+  assert.equal(bpm, 140);
+  await new Promise((r) => setTimeout(r, 120)); // 0.1 beat at 140 bpm ≈ 43 ms
+  assert.deepEqual(log.slice(1), [['seek', 4], ['play', 4]]);
+  // drift: link phase 1.0, local beat 4.5 -> nudged by +0.5 beat
+  beat = 4.5;
+  lc.receive({ type: 'state', tempo: 140, phase: 1.0, quantum: 4, playing: true, beat: 13 });
+  assert.deepEqual(log.at(-1), ['seek', 5]);
+  lc.receive({ type: 'state', tempo: 140, phase: 1.1, quantum: 4, playing: false, beat: 13.1 });
+  assert.deepEqual(log.at(-1), ['stop']);
+});

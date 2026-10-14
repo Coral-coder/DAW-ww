@@ -404,6 +404,7 @@ export function installAutomationRecorder(app) {
       { label: 'Clear automation', icon: 'x', disabled: !lane?.points?.length, onClick: () => editLane('Clear automation', (l) => { l.points = []; }) },
       lane?.overridden ? { label: 'Re-enable automation', icon: 'refresh', onClick: () => reenable(owner, target) } : null,
       lane ? { label: lane.enabled === false ? 'Enable lane' : 'Disable lane (bypass)', icon: 'power', onClick: () => editLane('Toggle automation lane', (l) => { l.enabled = l.enabled === false; }) } : null,
+      ...(app.automationContextExtras?.(owner, target, el) || []), // MIDI learn (src/control)
       '-',
       { label: armed() ? 'Disarm automation recording' : 'Arm automation recording (Shift+A)', icon: 'record', onClick: () => ui.set({ autoArm: !armed() }) },
     ].filter(Boolean));

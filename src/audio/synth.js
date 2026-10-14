@@ -445,6 +445,7 @@ export class Voice {
     if (this.done) return;
     this.done = true;
     for (const s of this.sources) { try { s.stop(); } catch { /* ok */ } s.onended = null; }
+    for (const s of this.lazy || []) { try { s.stop(); } catch { /* ok */ } } // MPE expression sources (noteExpression)
     for (const [src, dest] of this.extConns) { try { src.disconnect(dest); } catch { /* ok */ } }
     for (const n of this.nodes) { try { n.disconnect(); } catch { /* ok */ } }
     this.nodes.length = 0; this.sources.length = 0; this.extConns.length = 0;
@@ -704,6 +705,30 @@ export class SynthInstrument extends BaseInstrument {
     const t = this._t(time);
     const cents = clamp(num(value, 0), -1, 1) * num(this.params.bendRange, 2, 0, 24) * 100;
     this.bend.offset.setTargetAtTime(cents, t, 0.01);
+  }
+
+  /** Per-note expression of a held note (MPE): bend (semitones) on that voice only; timbre (CC74) and pressure
+   * open / close its filter. Created lazily so voices without expression cost nothing. */
+  noteExpression(pitch, x = {}, time) {
+    const v = this._isMono() ? (this.monoStack.at(-1)?.pitch === pitch ? this.mono : null) : this.held.get(pitch);
+    if (!v || v.done) return;
+    const t = this._t(time);
+    const lazy = () => {
+      const s = v.node(this.ctx.createConstantSource());
+      s.offset.value = 0;
+      s.start(t);
+      (v.lazy || (v.lazy = [])).push(s);
+      return s;
+    };
+    if (Number.isFinite(x.bend) && v.detuneTargets?.length) {
+      if (!v.mpeBend) { v.mpeBend = lazy(); for (const [d] of v.detuneTargets) v.mpeBend.connect(d); }
+      v.mpeBend.offset.setTargetAtTime(clamp(x.bend, -96, 96) * 100, t, 0.006);
+    }
+    if ((Number.isFinite(x.timbre) || Number.isFinite(x.pressure)) && v.filters?.length) {
+      if (!v.mpeTone) { v.mpeTone = lazy(); for (const f of v.filters) v.mpeTone.connect(f.detune); }
+      const cents = (Number.isFinite(x.timbre) ? (x.timbre - 0.5) * 2400 : 0) + (Number.isFinite(x.pressure) ? x.pressure * 1200 : 0);
+      v.mpeTone.offset.setTargetAtTime(cents, t, 0.02);
+    }
   }
 
   onParams() {
@@ -1066,6 +1091,7 @@ export class SynthInstrument extends BaseInstrument {
 
     // pitch: bend + pitch envelope + slow analog drift
     for (const [d] of detuneTargets) v.ext(this.bend, d);
+    v.detuneTargets = detuneTargets; // per-note (MPE) bend: noteExpression()
     const pe = num(p.pitchEnvAmt, 0, -48, 48);
     if (Math.abs(pe) > 0.01) {
       const ped = Math.max(0.002, num(p.pitchEnvDecay, 0.05, 0, 5));
