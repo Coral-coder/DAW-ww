@@ -1,4 +1,4 @@
-// a live coder–style acid sketch
+// Live-coder acid sketch: setcpm, register(), slider(), duck
 setcpm(140/4)
 
 register('acidenv', (x, pat) => pat.lpf(100).lpenv(x * 9).lps(.2).lpd(.12).lpq(12))

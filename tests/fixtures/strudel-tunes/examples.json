@@ -723,16 +723,6 @@
    "code": "s(\"bd sd [~ bd] sd\").room(.8).ir(\"<shaker_large:0 shaker_large:2>\")"
   },
   {
-   "name": "irspeed",
-   "source": "strudel-core-1.2.6/controls.mjs",
-   "code": "samples('github:example/pad')\n$: s(\"brk/2\").fit().scrub(irand(16).div(16).seg(8)).ir(\"swpad:4\").room(.2).irspeed(\"<2 1 .5>/2\").irbegin(.5).roomsize(.5)"
-  },
-  {
-   "name": "irbegin",
-   "source": "strudel-core-1.2.6/controls.mjs",
-   "code": "samples('github:example/pad')\n$: s(\"brk/2\").fit().scrub(irand(16).div(16).seg(8)).ir(\"swpad:4\").room(.65).irspeed(\"-2\").irbegin(\"<0 .5 .75>/2\").roomsize(.6)"
-  },
-  {
    "name": "roomsize",
    "source": "strudel-core-1.2.6/controls.mjs",
    "code": "s(\"bd sd [~ bd] sd\").room(.8).rsize(1)"
@@ -911,11 +901,6 @@
    "name": "as",
    "source": "strudel-core-1.2.6/controls.mjs",
    "code": "\"{0@2 0.25 0 0.5 .3 .5}%8\".as(\"begin\").s(\"sax_vib\").clip(1)"
-  },
-  {
-   "name": "scrub",
-   "source": "strudel-core-1.2.6/controls.mjs",
-   "code": "samples('github:example/pad')\ns(\"swpad:0\").scrub(\"{0.1!2 .25@3 0.7!2 <0.8:1.5>}%8\")"
   },
   {
    "name": "scrub",

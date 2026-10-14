@@ -1,6 +1,6 @@
 // Curated Strudel patches (pure data, Node-safe): superdough "patches" — the sound + controls a strudel.cc tune
 // writes after .s() — played by the 'strudel' instrument type (src/audio/strudel-voice.js) through Strudel's own
-// audio engine (superdough). Modeled on the strudel.cc example tunes / a live coder–style sound design:
+// audio engine (superdough). Modeled on the strudel.cc example tunes and common live-coding sound design:
 // subtractive synths with filter envelopes, supersaws, FM keys, the Salamander piano ('piano'), VCSL samples
 // (vibraphone, marimba, kalimba, harp…) and the General MIDI soundfonts (gm_*).
 //
