@@ -10,6 +10,8 @@ import { keySourcesFor } from '../core/patch.js';
 import { awaitPluginsReady, flushPlugins } from './plugin-instrument.js';
 import { prepareCodeSamples } from './code-instrument.js';
 import { limitTruePeak } from './dsp/truepeak.js';
+import { tempoMapFor } from '../time/tempo-map.js';
+import { annotateTimes } from './scheduler.js';
 
 function fallbackBase64ToArrayBuffer(b64) {
   const bin = atob(b64);
@@ -94,6 +96,7 @@ export async function renderOffline(source, opts = {}) {
     // code tracks: 'strudel' / 'daw3' forces one sound engine for this render (default: each track's own)
     codeSound: opts.codeSound || null,
     onNotice: opts.onNotice || null,
+    metronome: !!opts.metronome, // include the metronome click (checks / click-track export)
   };
   await decodeAllSamples(project, cfg.cache, cfg.sampleRate);
 
@@ -143,8 +146,14 @@ const flushAll = (graph) => Promise.all([flushPlugins(graph), flushCode(graph)])
 
 async function renderOnceWith(project, cfg) {
   const { mode, startBeat, endBeat, sampleRate, tail, cache, onError } = cfg;
-  const spb = 60 / project.bpm;
-  const dur = (endBeat - startBeat) * spb;
+  // tempo map (time/tempo-map.js): song mode follows tempo / meter changes; a constant map keeps the exact old math
+  const map = tempoMapFor(project, mode);
+  const constant = map.isConstant;
+  const spb = 60 / map.bpm;
+  const sec0 = map.secAt(startBeat);
+  const timeOf = (b) => (constant ? (b - startBeat) * spb : map.secAt(b) - sec0); // render time of a beat
+  const beatOf = (t) => (constant ? startBeat + t / spb : map.beatAt(sec0 + t));
+  const dur = timeOf(endBeat);
   const length = Math.max(1, Math.ceil((dur + tail) * sampleRate));
   // PDC: the compensated graph is late by graph.latency; render that much longer and trim it off the head,
   // so the result is identical to a latency-free graph (see latency.js)
@@ -156,7 +165,7 @@ async function renderOnceWith(project, cfg) {
     destination: ctx.destination,
     getBpm: () => project.bpm,
     // heard beat at ctx time t (the compensated mix is late by graph.latency, trimmed after rendering) — as realtime
-    getBeatAt: (t) => startBeat + (t - (graph?.latency || 0)) / spb,
+    getBeatAt: (t) => beatOf(t - (graph?.latency || 0)),
     getSampleBuffer: (id) => cache.get(id) || null,
     getSampleByName: (name) => {
       const id = findSampleIdByName(project, name);
@@ -165,6 +174,7 @@ async function renderOnceWith(project, cfg) {
     onError,
     meters: false,
     codeSound: cfg.codeSound,
+    warpWorklet: false, // warped audio clips: precomputed (cached) stretch, deterministic
   });
   graph.sync(project);
   // code tracks with the Strudel sound engine: superdough renders into this context (see strudel-instrument.js)
@@ -193,11 +203,12 @@ async function renderOnceWith(project, cfg) {
     if (!(b1 > b0)) return;
     let events = [];
     try {
-      events = collectEvents(project, b0, b1, { mode, jump, codeCache, metronome: false, onError });
+      events = collectEvents(project, b0, b1, { mode, jump, codeCache, metronome: cfg.metronome, onError, map });
     } catch (e) { onError(e); }
+    if (!constant) annotateTimes(events, map);
     for (const ev of events) {
-      const time = Math.max(0, (ev.beat - startBeat) * spb);
-      try { graph.playEvent(ev, time, spb); } catch (e) { onError(e); }
+      const time = Math.max(0, constant ? (ev.beat - startBeat) * spb : ev.sec - sec0);
+      try { graph.playEvent(ev, time, constant ? spb : map.spbAt(ev.beat), map); } catch (e) { onError(e); }
     }
   };
 
@@ -205,11 +216,10 @@ async function renderOnceWith(project, cfg) {
   // ramps over the whole render; instrument/effect params are applied at control rate
   // (every 1/16 note) while the render is suspended, right before that step's events.
   const automate = mode === 'song' && hasAutomation(project);
-  if (automate) graph.automateMixer(project, startBeat, endBeat, 0, spb, 'seek');
+  if (automate) graph.automateMixer(project, startBeat, endBeat, 0, constant ? spb : map, 'seek');
   const control = automate && hasControlAutomation(project) && typeof ctx.suspend === 'function';
 
   const chunkSec = 2;
-  const chunkBeats = chunkSec / spb;
   if (control) {
     const stepBeats = 0.25;
     const q = 128 / sampleRate; // suspend() works on render-quantum boundaries
@@ -223,7 +233,7 @@ async function renderOnceWith(project, cfg) {
     let lastT = 0;
     const plan = (k) => {
       if (k >= steps) return;
-      const t = Math.floor((k * stepBeats * spb) / q) * q;
+      const t = Math.floor(timeOf(startBeat + k * stepBeats) / q) * q;
       if (!(t > lastT)) { runStep(k, false); plan(k + 1); return; } // sub-quantum step (extreme tempo)
       lastT = t;
       ctx.suspend(t).then(() => {
@@ -236,12 +246,12 @@ async function renderOnceWith(project, cfg) {
   } else if (typeof ctx.suspend === 'function' && dur > chunkSec * 3) {
     // Schedule incrementally (keeps memory flat on long songs): events for chunk k+1 are
     // scheduled while the renderer is suspended at the start of chunk k.
-    schedule(startBeat, Math.min(endBeat, startBeat + 2 * chunkBeats), true);
+    schedule(startBeat, Math.min(endBeat, beatOf(2 * chunkSec)), true);
     const plan = (k) => {
-      const from = startBeat + (k + 1) * chunkBeats;
+      const from = beatOf((k + 1) * chunkSec);
       if (from >= endBeat) return;
       ctx.suspend(k * chunkSec).then(() => {
-        schedule(from, Math.min(endBeat, from + chunkBeats), false);
+        schedule(from, Math.min(endBeat, beatOf((k + 2) * chunkSec)), false);
         plan(k + 1);
         flushAll(graph).then(() => ctx.resume()); // worklet plugins / superdough must receive their notes first
       }, (e) => { onError(e); });

@@ -15,6 +15,8 @@
 //     loop,                          // pattern: loop period in beats (the render is one seamless cycle)
 //     gain,                          // playback gain (renders are peak-normalised before 24-bit encoding)
 //     bpm, at                        // tempo at freeze time (a tempo change makes the track play live again), ISO time
+//     tempo?                         // song mode: tempo-map signature (tempoSignature) — editing the tempo map / meters
+//                                    //   also makes it play live until refrozen
 //   }
 //
 // The original track (instrument, fx, patterns, clips, code) is kept untouched for unfreeze. Editing a frozen
@@ -24,6 +26,13 @@ import { keySourcesFor } from './patch.js';
 
 export const FREEZE_MODES = ['preFx', 'postFx', 'postFader'];
 export const FROZEN_HINT = 'This track is frozen — unfreeze it (track menu ▸ Unfreeze) to edit its sound.';
+
+/** Tempo-map signature of a project's arrangement ('' without tempo / meter changes) — see time/tempo-map.js. */
+export function tempoSignature(project) {
+  const t = project?.tempoMap?.length > 1 || project?.tempoMap?.[0]?.curve === 'linear' ? JSON.stringify(project.tempoMap.slice(1).map((p) => [p.beat, p.bpm, p.curve]).concat([[project.tempoMap[0].curve]])) : '';
+  const m = project?.meterMap?.length ? JSON.stringify(project.meterMap.map((x) => [x.bar, x.num, x.den])) : '';
+  return t || m ? `${t}|${m}` : '';
+}
 
 export const isFrozen = (track) => !!(track && track.frozen && track.frozen.sampleId);
 
@@ -37,6 +46,7 @@ export function frozenMode(project, track, mode = project?.mode) {
   if (project?.samples && !project.samples[f.sampleId]) return null;
   if ((f.renderMode || 'song') !== (mode || 'song')) return null;
   if (f.bpm && project?.bpm && Math.abs(f.bpm - project.bpm) > 1e-6) return null;
+  if ((f.renderMode || 'song') === 'song' && (f.tempo ?? '') !== tempoSignature(project)) return null;
   return FREEZE_MODES.includes(f.mode) ? f.mode : 'postFx';
 }
 
@@ -47,6 +57,7 @@ export function frozenStaleReason(project, track) {
   if (project?.samples && !project.samples[f.sampleId]) return 'The frozen audio is missing — unfreeze and freeze again.';
   if ((f.renderMode || 'song') !== (project.mode || 'song')) return `Frozen in ${f.renderMode} mode — plays live in ${project.mode} mode.`;
   if (f.bpm && Math.abs(f.bpm - project.bpm) > 1e-6) return `Frozen at ${f.bpm} BPM — the tempo changed, so it plays live. Freeze again to update.`;
+  if ((f.renderMode || 'song') === 'song' && (f.tempo ?? '') !== tempoSignature(project)) return 'The tempo map changed since this track was frozen, so it plays live. Freeze again to update.';
   return null;
 }
 

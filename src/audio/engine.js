@@ -19,6 +19,7 @@ import { createFreezeGuard } from '../core/freeze.js';
 import * as freeze from './freeze.js';
 import { EngineMonitor } from './monitor.js';
 import { SampleStreamer } from './stream/streamer.js';
+import { tempoMapFor } from '../time/tempo-map.js';
 
 /** Sample rates offered in the UI (the device / browser decides what actually works). */
 export const SAMPLE_RATES = [44100, 48000, 88200, 96000];
@@ -94,6 +95,7 @@ export class AudioEngine extends Emitter {
         getSampleBuffer: (id) => this.getSampleBuffer(id),
         getSampleByName: (name) => this.getSampleByName(name),
         getSampleStream: (id) => this.streamer?.handle(id) || null,
+        getSampleAnalysis: (id) => this.project.samples?.[id]?.analysis || null, // warp: transients (beats mode)
         isStreamed: (id) => this._streams(id),
         playStream: (meta, dest, when, off, dur) => this.streamer.play(meta, dest, when, off, dur),
         onError: (e) => this._error(e),
@@ -103,11 +105,11 @@ export class AudioEngine extends Emitter {
         ctx,
         getProject: () => this.project,
         codeCache: this.codeCache,
-        dispatch: (ev, time, spb) => this.graph.playEvent(ev, time, spb),
+        dispatch: (ev, time, spb, map) => this.graph.playEvent(ev, time, spb, map),
         onError: (e) => this._error(e),
         onWrap: (time) => this.graph.syncLfos(time),
         onWindow: (project, b0, b1, t0, spb, jump, pre) => this._automateWindow(project, b0, b1, t0 - (pre || 0), spb, jump),
-        onTick: (project) => this._automateTick(project),
+        onTick: (project) => { this._automateTick(project); this._tempoTick(project); },
         getPreroll: () => this.graph?.latency || 0, // plugin delay compensation (see latency.js)
       });
       try { this.graph.sync(this.project); } catch (e) { this._error(e); }
@@ -271,6 +273,24 @@ export class AudioEngine extends Emitter {
     // after play/seek effect params jump straight to the automated value (no glide from static)
     this.graph.applyControl(project, b0, { inst: true, fx: jump === 'seek', immediate: jump === 'seek' });
   }
+
+  // Tempo map: tempo-synced effects (delays, LFOs) follow the current tempo while the transport runs; 'tempo'
+  // events (bpm at the audible position) drive the LCD. Constant maps keep the old project.bpm behaviour.
+  _tempoTick(project) {
+    const map = tempoMapFor(project, project.mode);
+    if (map.isConstant) {
+      if (this._mapTempo != null) { this._mapTempo = null; this.graph.setTempo(project.bpm); this.emit('tempo', project.bpm); }
+      return;
+    }
+    const b = this.getAudiblePosition();
+    const bpm = Math.round(map.bpmAt(b) * 10) / 10;
+    if (bpm !== this._mapTempo) { this._mapTempo = bpm; this.graph.setTempo(bpm); this.emit('tempo', bpm); }
+  }
+
+  /** The tempo map the transport follows now (song mode: tempo changes; pattern mode: constant). */
+  getTempoMap() { return tempoMapFor(this.project, this.project.mode); }
+  /** Tempo (bpm) at the audible position (or the playhead when stopped). */
+  getCurrentTempo() { return this.getTempoMap().bpmAt(Math.max(0, this.getAudiblePosition())); }
 
   _automateTick(project) {
     if (project.mode !== 'song' || !this._autoActive) return;

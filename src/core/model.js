@@ -3,6 +3,7 @@
 import { uid } from './util.js';
 import { normalizeLane } from './automation.js';
 import { normalizePatch } from './patch.js';
+import { migrateLegacyTempo } from '../time/convert.js';
 
 export const PROJECT_FORMAT = 'daw3-project';
 export const PROJECT_VERSION = 1;
@@ -157,9 +158,12 @@ export function normalizeProject(p) {
   out.buses = (p.buses || base.buses).map((b) => ({ ...b, fx: b.fx || [], automation: Array.isArray(b.automation) ? b.automation.map(normalizeLane) : [] }));
   out.samples = p.samples || {};
   out.markers = p.markers || [];
+  // tempo map / meter changes (src/time): optional; legacy DAWproject fields migrate into them
+  migrateLegacyTempo(out);
   return out;
 }
 
+/** Beats per bar of the FIRST meter (bar 0). Meter changes: src/time/tempo-map.js (tempoMapFor(project).barAt(beat)). */
 export const beatsPerBar = (project) => project.timeSig[0] * (4 / project.timeSig[1]);
 export const secondsPerBeat = (project) => 60 / project.bpm;
 

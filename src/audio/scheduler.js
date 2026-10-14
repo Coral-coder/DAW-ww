@@ -7,11 +7,14 @@
 //   { type:'note',  trackId, beat, pitch, vel, dur, x? }        dur in beats; x = note expression {glide, gt, bend, bendAt, vib, flam}
 //   { type:'audio', trackId, beat, clip, offset, dur }          offset: beats into the clip (added to clip.offset)
 //   { type:'code',  trackId, beat, dur, value }                 dur in beats (legato applied)
-//   { type:'click', beat, accent }
+//   { type:'click', beat, accent, level }                       level 2 = downbeat, 1 = accent group (meter), 0 = other
+// Times: the tempo map (src/time/tempo-map.js) converts beats to seconds; `annotateTimes(events, map)` adds
+// sec (seconds from beat 0) and durSec (exact duration across tempo ramps) used by the mixer.
 import * as strudel from '../code/strudel.js';
 import { beatsPerBar } from '../core/model.js';
 import { hasMuteLane } from '../core/automation.js';
 import { frozenMode, frozenClip } from '../core/freeze.js';
+import { tempoMapFor } from '../time/tempo-map.js';
 
 export const EPS = 1e-7;
 const inWin = (x, b0, b1) => x >= b0 - EPS && x < b1 - EPS;
@@ -126,13 +129,14 @@ export function collectEvents(project, b0, b1, opts = {}) {
   const mode = opts.mode || project.mode;
   const swing = project.swing || 0;
   const bpb = beatsPerBar(project);
+  const map = opts.map || tempoMapFor(project, mode);
   for (const track of project.tracks) {
     if (!isTrackPlayable(project, track, mode)) continue;
     try {
       if (track.frozen && frozenMode(project, track, mode)) {
         collectFrozen(out, track, mode, b0, b1, opts);
       } else if (track.type === 'code') {
-        collectCode(out, project, track, b0, b1, bpb, opts);
+        collectCode(out, project, track, b0, b1, bpb, opts, map);
       } else if (mode === 'pattern') {
         if (track.type !== 'instrument') continue;
         const pat = track.activePatternId && project.patterns[track.activePatternId];
@@ -161,12 +165,22 @@ export function collectEvents(project, b0, b1, opts = {}) {
     }
   }
   if (opts.metronome ?? project.metronome) {
-    for (let b = Math.ceil(b0 - EPS); b < b1 - EPS; b++) {
-      if (!inWin(b, b0, b1)) continue;
-      out.push({ type: 'click', beat: b, accent: Math.abs(b / bpb - Math.round(b / bpb)) < 1e-6 });
-    }
+    // one click per meter unit (quarters in x/4, eighths in x/8), accents per bar / accent group (tempo-map.js)
+    for (const c of map.clicks(b0, b1)) if (inWin(c.beat, b0, b1)) out.push({ type: 'click', beat: c.beat, accent: c.accent, level: c.level });
   }
   return out;
+}
+
+/**
+ * Add exact timing to collected events: sec = seconds from beat 0 at the event's beat, durSec = its duration in
+ * seconds through the tempo map (ramps integrated exactly). Mutates and returns `events`.
+ */
+export function annotateTimes(events, map) {
+  for (const ev of events) {
+    ev.sec = map.secAt(ev.beat);
+    if (ev.dur > 0) ev.durSec = map.secAt(ev.beat + ev.dur) - ev.sec;
+  }
+  return events;
 }
 
 /**
@@ -195,14 +209,17 @@ function collectFrozen(out, track, mode, b0, b1, opts) {
   }
 }
 
-function collectCode(out, project, track, b0, b1, bpb, opts) {
+// Code tracks are beat-locked: one cycle = one bar of the FIRST meter (beatsPerBar), so a tempo map moves them with
+// the arrangement (events land on the same beats, the map turns beats into seconds); `cps` handed to the Strudel
+// sound engine is the tempo at the event (setcpm in code writes project.bpm = the starting tempo).
+function collectCode(out, project, track, b0, b1, bpb, opts, map) {
   const cache = opts.codeCache;
   if (!cache) return;
   const entry = cache.get(track);
   if (!entry?.evaluated) return;
   const c0 = b0 / bpb;
   const c1 = b1 / bpb;
-  const cps = project.bpm / 60 / bpb;
+  const constCps = project.bpm / 60 / bpb;
   const evs = strudel.queryEvents(entry.evaluated, c0, c1) || [];
   for (const ev of evs) {
     const begin = Number(ev.begin);
@@ -212,6 +229,7 @@ function collectCode(out, project, track, b0, b1, bpb, opts) {
     const legato = Number(value.legato) > 0 ? Number(value.legato) : 1;
     const durCycles = isFinite(end) && end > begin ? end - begin : 0.25;
     // cycle / cps / hapDur (cycles, Strudel's hap.duration) feed the Strudel sound engine (superdough)
+    const cps = map && !map.isConstant ? map.bpmAt(begin * bpb) / 60 / bpb : constCps;
     out.push({ type: 'code', trackId: track.id, beat: begin * bpb, dur: durCycles * bpb * legato, value, cycle: begin, cps, hapDur: ev.duration ?? durCycles * legato });
   }
 }
@@ -232,6 +250,9 @@ export function defaultEndBeat(project, mode = project.mode) {
 }
 
 // ------------------------------------------------------------------------------ realtime
+/** Scheduler anchor: ctx `time` at which `beat` sounds, under tempo `map` (sec = map.secAt(beat)). */
+const anchor = (time, beat, map) => ({ time, beat, map, bpm: map.bpmAt(beat), sec: map.secAt(beat) });
+
 /**
  * Classic lookahead scheduler. Keeps (time, beat, bpm) anchors per scheduled window so the
  * playhead is exact across tempo changes and loop wraps.
@@ -281,14 +302,17 @@ export class Scheduler {
   }
 
   _resetAt(beat, time) {
-    const bpm = this.o.getProject().bpm;
+    const map = this._map(this.o.getProject());
     this.nextBeat = beat;
     this.nextTime = time;
     this.nextTimeStart = time;
     this.jump = true;
     this.jumpKind = 'seek';
-    this.anchors = [{ time, beat, bpm }];
+    this.anchors = [anchor(time, beat, map)];
   }
+
+  /** Tempo map the transport follows (song mode: the project's map; pattern mode: constant project.bpm). */
+  _map(project) { return tempoMapFor(project, project.mode); }
 
   stop() {
     this.stopTimer();
@@ -308,7 +332,8 @@ export class Scheduler {
     if (!this.playing || !this.anchors.length) return null;
     let a = this.anchors[0];
     for (const x of this.anchors) if (x.time <= t + 1e-9) a = x; else break;
-    return a.beat + ((t - a.time) * a.bpm) / 60;
+    if (a.map.isConstant) return a.beat + ((t - a.time) * a.bpm) / 60;
+    return a.map.beatAt(a.sec + (t - a.time));
   }
 
   getPosition() {
@@ -332,7 +357,8 @@ export class Scheduler {
     if (this.nextTime - pre < now - 0.05) {
       this.dropouts = (this.dropouts || 0) + 1;
       const skip = now + pre + 0.02 - this.nextTime;
-      let b = this.nextBeat + (skip * project.bpm) / 60;
+      const sm = this._map(project);
+      let b = sm.beatAt(sm.secAt(this.nextBeat) + skip);
       const lp = project.loop;
       if (project.mode === 'song' && lp?.enabled && lp.end - lp.start >= 0.25 && this.nextBeat < lp.end && b >= lp.end) {
         b = lp.start + ((b - lp.start) % (lp.end - lp.start));
@@ -341,15 +367,17 @@ export class Scheduler {
       this.nextTime = now + pre + 0.02;
       this.jump = true;
       this.jumpKind = 'seek';
-      this.anchors.push({ time: this.nextTime, beat: b, bpm: project.bpm });
+      this.anchors.push(anchor(this.nextTime, b, sm));
     }
 
     let guard = 0;
     while (this.nextTime < horizon && guard++ < 64) {
-      const bpm = project.bpm;
-      const spb = 60 / bpm;
+      const map = this._map(project);
       const b0 = this.nextBeat;
-      let b1 = b0 + (horizon - this.nextTime) / spb;
+      const sec0 = map.secAt(b0);
+      // automation hook gets a number when the tempo is constant (bit-identical), else the map (spanOf, tempo-map.js)
+      const spb = map.isConstant ? 60 / map.bpm : map;
+      let b1 = map.isConstant ? b0 + (horizon - this.nextTime) / spb : map.beatAt(sec0 + (horizon - this.nextTime));
       let wrap = false;
       const lp = project.loop;
       if (project.mode === 'song' && lp?.enabled && lp.end - lp.start >= 0.25 && b0 < lp.end - EPS && b1 >= lp.end - EPS) {
@@ -358,8 +386,8 @@ export class Scheduler {
       }
       const t0 = this.nextTime;
       const last = this.anchors[this.anchors.length - 1];
-      if (!last || Math.abs(last.time - t0) > 1e-9 || last.bpm !== bpm || Math.abs(last.beat - b0) > 1e-9) {
-        this.anchors.push({ time: t0, beat: b0, bpm });
+      if (!last || Math.abs(last.time - t0) > 1e-9 || last.map !== map || Math.abs(last.beat - b0) > 1e-9) {
+        this.anchors.push(anchor(t0, b0, map));
       }
       if (this.o.onWindow) {
         try { this.o.onWindow(project, b0, b1, t0, spb, this.jump ? (this.jumpKind || 'seek') : null, pre); } catch (e) { this.o.onError?.(e); }
@@ -372,17 +400,18 @@ export class Scheduler {
       } catch (e) {
         this.o.onError?.(e);
       }
+      if (!map.isConstant) annotateTimes(events, map);
       for (const ev of events) {
-        const time = t0 + (ev.beat - b0) * spb - pre;
+        const time = map.isConstant ? t0 + (ev.beat - b0) * spb - pre : t0 + (ev.sec - sec0) - pre;
         if (time < now - 1e-4) this.lateEvents = (this.lateEvents || 0) + 1;
         try {
-          this.o.dispatch(ev, Math.max(time, now), spb);
+          this.o.dispatch(ev, Math.max(time, now), map.isConstant ? spb : map.spbAt(ev.beat), map);
         } catch (e) {
           this.o.onError?.(e, ev);
         }
       }
       this.jump = false;
-      this.nextTime = t0 + (b1 - b0) * spb;
+      this.nextTime = map.isConstant ? t0 + (b1 - b0) * spb : t0 + (map.secAt(b1) - sec0);
       if (wrap) {
         this.nextBeat = lp.start;
         this.jump = true;
