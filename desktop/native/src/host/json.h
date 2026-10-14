@@ -44,10 +44,10 @@ class Json {
   const std::map<std::string, Json>& fields() const { static const std::map<std::string, Json> e; return t_ == Object ? o_ : e; }
 
   const Json& operator[](const std::string& k) const {
-    static const Json nil;
-    if (t_ != Object) return nil;
+    static const Json kNil;
+    if (t_ != Object) return kNil;
     auto it = o_.find(k);
-    return it == o_.end() ? nil : it->second;
+    return it == o_.end() ? kNil : it->second;
   }
   Json& set(const std::string& k, Json v) { if (t_ != Object) { *this = object(); } o_[k] = std::move(v); return *this; }
   Json& push(Json v) { if (t_ != Array) { *this = array(); } a_.push_back(std::move(v)); return *this; }
