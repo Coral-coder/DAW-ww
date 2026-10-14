@@ -47,6 +47,7 @@ import { base64ToArrayBuffer, arrayBufferToBase64 } from '../samples.js';
 import { songTempoMap } from '../../time/tempo-map.js';
 import { applyTempoPoints, applyMeterPoints, tempoPoints, meterPoints } from '../../time/convert.js';
 import { isWarped, normalizeMarkers, beatAtSec } from '../../audio/warp/markers.js';
+import { compClips, normalizeComp } from '../../record/takes.js';
 
 export const DAWPROJECT_EXTENSION = '.dawproject';
 export const DAWPROJECT_VERSION = '1.0';
@@ -339,7 +340,7 @@ export function buildDawproject(project, opts = {}) {
   }
   const clipLength = Math.max(songBeats, ...clips.map((c) => c.start + c.length), bpb);
 
-  const noteClip = (c) => {
+  const noteClip = (c, extra = {}) => {
     const pat = project.patterns[c.patternId];
     if (!pat) return null;
     const len = pat.length > 0 ? pat.length : bpb;
@@ -356,24 +357,24 @@ export function buildDawproject(project, opts = {}) {
       }
     }
     notes.sort((a, b) => a.t - b.t || a.n.pitch - b.n.pitch);
-    return el('Clip', { time: r6(c.start), duration: r6(c.length), contentTimeUnit: 'beats', playStart: r6(playStart), loopStart: 0, loopEnd: r6(len), name: c.name || pat.name },
+    return el('Clip', { time: r6(c.start), duration: r6(c.length), contentTimeUnit: 'beats', playStart: r6(playStart), loopStart: 0, loopEnd: r6(len), name: c.name || pat.name, ...extra },
       el('Notes', { id: nextId() }, notes.map(({ t, n }) => el('Note', {
         time: r6(t), duration: r6(Math.max(1e-4, n.dur)), channel: 0, key: clamp(Math.round(n.pitch), 0, 127),
         vel: r6(clamp((n.vel ?? 0.8) * gain, 0, 1)), rel: r6(clamp(n.vel ?? 0.8, 0, 1)),
       }))));
   };
 
-  const audioClipEl = ({ start, length, offset = 0, fadeIn = 0, fadeOut = 0, name, warp }, file) => {
+  const audioClipEl = ({ start, length, offset = 0, fadeIn = 0, fadeOut = 0, name, warp }, file, extra = {}) => {
     const dur = file.info.duration || (offset + length) * spb;
     if (isWarped({ warp }) && warp.markers?.length) {
       // warp markers: content beats -> seconds (extrapolated to cover the file)
       const ms = warp.markers.length > 1 ? warp.markers : [...warp.markers, { beat: beatAtSec(warp, dur), sec: dur }];
-      return el('Clip', { time: r6(start), duration: r6(length), contentTimeUnit: 'beats', playStart: r6(offset), fadeTimeUnit: 'beats', fadeInTime: r6(fadeIn), fadeOutTime: r6(fadeOut), name },
+      return el('Clip', { time: r6(start), duration: r6(length), contentTimeUnit: 'beats', playStart: r6(offset), fadeTimeUnit: 'beats', fadeInTime: r6(fadeIn), fadeOutTime: r6(fadeOut), name, ...extra },
         el('Warps', { id: nextId(), timeUnit: 'beats', contentTimeUnit: 'seconds' },
           el('Audio', { id: nextId(), channels: file.info.channels || 2, sampleRate: Math.round(file.info.sampleRate || 44100), duration: r6(dur) }, el('File', { path: file.path })),
           ms.map((m) => el('Warp', { time: r6(m.beat), contentTime: r6(m.sec) }))));
     }
-    return el('Clip', { time: r6(start), duration: r6(length), contentTimeUnit: 'beats', playStart: r6(offset), fadeTimeUnit: 'beats', fadeInTime: r6(fadeIn), fadeOutTime: r6(fadeOut), name },
+    return el('Clip', { time: r6(start), duration: r6(length), contentTimeUnit: 'beats', playStart: r6(offset), fadeTimeUnit: 'beats', fadeInTime: r6(fadeIn), fadeOutTime: r6(fadeOut), name, ...extra },
       el('Warps', { id: nextId(), timeUnit: 'beats', contentTimeUnit: 'seconds' },
         el('Audio', { id: nextId(), channels: file.info.channels || 2, sampleRate: Math.round(file.info.sampleRate || 44100), duration: r6(dur) }, el('File', { path: file.path })),
         el('Warp', { time: 0, contentTime: 0 }),
@@ -410,8 +411,39 @@ export function buildDawproject(project, opts = {}) {
     return el('Points', { id: nextId(), unit: r.kind === 'real' ? r.unit : undefined }, el('Target', { parameter: r.id }), pts);
   };
 
+  // one clip / take (audio or notes) -> <Clip>; extra = attributes (enable, comment)
+  const anyClipEl = (t, c, extra) => {
+    if (c.sampleId) {
+      const f = sampleFile(c.sampleId);
+      if (!f) { report.warnings.push(`Track "${t.name}": audio take / clip at beat ${c.start} has no sample — skipped.`); return null; }
+      return audioClipEl({ start: c.start, length: c.length, offset: c.offset || 0, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0, name: c.name || project.samples[c.sampleId]?.name }, f, extra);
+    }
+    return c.patternId && t.type === 'instrument' ? noteClip(c, extra) : null;
+  };
+  /**
+   * Take lanes (src/record/takes.js): the comp is written as the active clips of the track lane (with its crossfades;
+   * comment daw3:comp:<takeId>:<segStart>:<segEnd>), every take lane as a nested <Lanes> of disabled (muted) clips
+   * (comment daw3:take:{json}) — other DAWs see the comp playing and the takes as muted lanes; daW³ rebuilds
+   * takeLanes / comp on import.
+   */
+  const takeLaneEls = (t) => {
+    if (!t.takeLanes?.some((l) => l.takes?.length)) return { comp: [], lanes: [] };
+    const comp = compClips(project, t).map((c) => anyClipEl(t, c, { comment: `daw3:comp:${c.takeId}:${r6(c.compStart)}:${r6(c.compEnd)}` })).filter(Boolean);
+    let n = 0;
+    const lanes = t.takeLanes.filter((l) => l.takes?.length).map((l, i) => el('Lanes', { id: nextId(), name: l.name || `Takes ${i + 1}`, comment: `daw3:takes:${l.id}` },
+      el('Clips', { id: nextId() }, l.takes.map((tk) => {
+        const meta = { id: tk.id, ...(tk.pass != null ? { pass: tk.pass } : {}), ...(tk.srcLength != null ? { srcLength: tk.srcLength } : {}), ...(tk.gain != null && tk.gain !== 1 ? { gain: tk.gain } : {}) };
+        const e = anyClipEl(t, { ...tk, name: tk.name }, { enable: 'false', comment: `daw3:take:${JSON.stringify(meta)}` });
+        if (e) n++;
+        return e;
+      }))));
+    report.exported.push(`Track "${t.name}": comp (${comp.length} segment${comp.length === 1 ? '' : 's'}) + ${n} take${n === 1 ? '' : 's'} in ${lanes.length} muted take lane${lanes.length === 1 ? '' : 's'}`);
+    return { comp, lanes };
+  };
+
   const trackLanes = lanesByOwner.map((o) => {
     const clipEls = [];
+    let takeLanes = [];
     if (o.track) {
       const t = o.track;
       if (t.type === 'code') { const c = codeClip(t); if (c) clipEls.push(c); }
@@ -426,11 +458,14 @@ export function buildDawproject(project, opts = {}) {
           if (ce) clipEls.push(ce);
         }
       }
+      const tl = takeLaneEls(t);
+      clipEls.push(...tl.comp);
+      takeLanes = tl.lanes;
     } else if (o.rendered) {
       clipEls.push(audioClipEl({ start: 0, length: r6(songTempoMap(project).beatAt(o.rendered.info.duration)), name: o.name }, o.rendered));
     }
     const pts = (o.automation || []).map((l) => pointsEl(l, o.owner, o.name)).filter(Boolean);
-    return el('Lanes', { id: nextId(), track: o.trackXmlId }, el('Clips', { id: nextId() }, clipEls), pts);
+    return el('Lanes', { id: nextId(), track: o.trackXmlId }, el('Clips', { id: nextId() }, clipEls), takeLanes, pts);
   });
 
   const markers = [...(project.markers || [])].filter((m) => Number.isFinite(m.beat)).sort((a, b) => a.beat - b.beat);
@@ -953,7 +988,8 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
   const lanesAutomation = [];
 
   const processClip = (clipEl, ctx) => {
-    if (boolAttr(clipEl, 'enable', true) === false) { disabledClips++; return; }
+    if (boolAttr(clipEl, 'enable', true) === false && !ctx.takes) { disabledClips++; return; }
+    const sink = ctx.sink || project.clips; // take lanes / comp clips are collected, the rest goes to the arrangement
     const unit = ctx.unit;
     const t0 = ctx.base + toBeats(numAttr(clipEl, 'time', 0), unit);
     const contentUnit = clipEl.attrs.contentTimeUnit || unit;
@@ -1002,7 +1038,7 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
       }
       if (!(len > 0)) return;
       const patternId = addPattern(track, patNotes, len, clipEl.attrs.name);
-      project.clips.push(createClip(track.id, { patternId, start: r6(start), length: r6(end - start), offset: r6(offset), name: clipEl.attrs.name || null }));
+      sink.push(createClip(track.id, { patternId, start: r6(start), length: r6(end - start), offset: r6(offset), name: clipEl.attrs.name || null }));
       return;
     }
     // audio
@@ -1013,7 +1049,7 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
     if (boolAttr(file, 'external', false) && !files.has(file.attrs.path)) { report.warnings.push(`Track "${track.name}": external audio "${file.attrs.path}" is not inside the archive — clip skipped.`); return; }
     const sampleId = sampleFromPath(file.attrs.path, null, { duration: numAttr(audio, 'duration', null) });
     if (!sampleId) { report.warnings.push(`Track "${track.name}": audio file "${file.attrs.path}" missing from the archive — clip skipped.`); return; }
-    const target = track.type === 'audio' ? track : audioCompanion(track);
+    const target = track.type === 'audio' || ctx.takes ? track : audioCompanion(track);
     let offSec, warp = null;
     if (content.name === 'Warps') {
       const w = warpMap(content, contentUnit);
@@ -1038,7 +1074,44 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
     }
     if (fi > 0) clip.fadeIn = r6(fi);
     if (fo > 0) clip.fadeOut = r6(fo);
-    project.clips.push(clip);
+    sink.push(clip);
+  };
+
+  // ---- take lanes + comps (see buildDawproject takeLaneEls)
+  const compCandidates = []; // { track, takeId, start, end, clips }
+  const takeCount = new Map(); // track -> takes imported
+  const TAKE_RE = /^daw3:take:(.*)$/s;
+  /** A nested <Lanes> holding takes: daW³'s own (comment daw3:takes:…) or any lane whose clips are all disabled (muted). */
+  const isTakeLanes = (lanesEl, track) => {
+    if (!track || track.type === 'code' || lanesEl.attrs.track) return false;
+    if (String(lanesEl.attrs.comment || '').startsWith('daw3:takes:')) return true;
+    const clipEls = children(lanesEl, 'Clips').flatMap((cs) => children(cs, 'Clip'));
+    return clipEls.length > 0 && clipEls.every((c) => boolAttr(c, 'enable', true) === false) && !children(lanesEl, 'Lanes').length;
+  };
+  const importTakeLane = (lanesEl, ctx) => {
+    const track = ctx.track;
+    const takes = [];
+    for (const cs of children(lanesEl, 'Clips')) {
+      for (const clipEl of children(cs, 'Clip')) {
+        const got = [];
+        processClip(clipEl, { ...ctx, takes: true, sink: got });
+        let meta = {};
+        const m = TAKE_RE.exec(String(clipEl.attrs.comment || ''));
+        if (m) { try { meta = JSON.parse(m[1]) || {}; } catch { meta = {}; } }
+        got.forEach((c, i) => {
+          takes.push({
+            id: (i === 0 && meta.id) || uid('take'), name: c.name || clipEl.attrs.name || `Take ${takes.length + 1}`,
+            ...(c.sampleId ? { sampleId: c.sampleId } : { patternId: c.patternId }),
+            start: c.start, length: c.length, offset: c.offset || 0,
+            ...(meta.gain != null ? { gain: meta.gain } : {}), ...(meta.srcLength != null ? { srcLength: meta.srcLength } : {}), ...(meta.pass != null ? { pass: meta.pass } : {}),
+          });
+        });
+      }
+    }
+    if (!takes.length) return;
+    const own = /^daw3:takes:(\S+)$/.exec(String(lanesEl.attrs.comment || ''));
+    track.takeLanes = [...(track.takeLanes || []), { id: own ? own[1] : uid('tl'), ...(lanesEl.attrs.name ? { name: lanesEl.attrs.name } : {}), takes }];
+    takeCount.set(track, (takeCount.get(track) || 0) + takes.length);
   };
 
   const processLanes = (node, ctx) => {
@@ -1046,8 +1119,18 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
       const track = c.attrs.track ? (trackByXmlId.has(c.attrs.track) ? trackByXmlId.get(c.attrs.track) : undefined) : ctx.track;
       if (c.attrs.track && track === null) continue; // skipped (rendered companion)
       const sub = { ...ctx, track: track === undefined ? ctx.track : track, unit: c.attrs.timeUnit || ctx.unit };
-      if (c.name === 'Lanes') processLanes(c, sub);
-      else if (c.name === 'Clips') for (const clip of children(c, 'Clip')) processClip(clip, sub);
+      if (c.name === 'Lanes' && isTakeLanes(c, sub.track)) importTakeLane(c, sub);
+      else if (c.name === 'Lanes') processLanes(c, sub);
+      else if (c.name === 'Clips') {
+        for (const clip of children(c, 'Clip')) {
+          const cm = /^daw3:comp:(.+):(-?[\d.e+-]+):(-?[\d.e+-]+)$/.exec(String(clip.attrs.comment || ''));
+          if (cm && sub.track) {
+            const got = [];
+            processClip(clip, { ...sub, sink: got });
+            compCandidates.push({ track: sub.track, takeId: cm[1], start: +cm[2], end: +cm[3], clips: got });
+          } else processClip(clip, sub);
+        }
+      }
       else if (c.name === 'Points') lanesAutomation.push({ el: c, unit: sub.unit });
       else if (c.name === 'Notes' && sub.track?.type === 'instrument') {
         const notes = readNotes(c, sub.unit);
@@ -1067,6 +1150,16 @@ export function parseDawproject(projectXml, files = new Map(), opts = {}) {
     const lanes = child(arrangement, 'Lanes');
     if (lanes) {
       processLanes({ children: [lanes] }, { track: null, unit: lanes.attrs.timeUnit || 'beats', base: 0, lo: -Infinity, hi: Infinity });
+    }
+    // comp clips: comp segments when their take came back, else ordinary clips (an editor dropped the take lanes)
+    for (const cc of compCandidates) {
+      const has = (cc.track.takeLanes || []).some((l) => l.takes.some((tk) => tk.id === cc.takeId));
+      if (has) (cc.track.comp ||= []).push({ takeId: cc.takeId, start: cc.start, end: cc.end });
+      else project.clips.push(...cc.clips);
+    }
+    for (const [track, n] of takeCount) {
+      if (track.comp?.length) normalizeComp(track);
+      report.mapped.push(`Track "${track.name}": ${n} take${n === 1 ? '' : 's'} in ${track.takeLanes.length} take lane${track.takeLanes.length === 1 ? '' : 's'}${track.comp?.length ? `, comp of ${track.comp.length} segment${track.comp.length === 1 ? '' : 's'}` : ' (muted lanes — swipe to comp)'}`);
     }
     const mk = child(arrangement, 'Markers');
     for (const m of children(mk, 'Marker')) project.markers.push({ id: uid('mk'), beat: r6(toBeats(numAttr(m, 'time', 0), mk.attrs.timeUnit || lanes?.attrs.timeUnit || 'beats')), name: m.attrs.name || 'Marker' });

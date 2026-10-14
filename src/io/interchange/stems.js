@@ -15,6 +15,7 @@ import { beatsPerBar, songLengthBeats } from '../../core/model.js';
 import { keySourcesFor } from '../../core/patch.js';
 import { pitchClassName, keySignature } from '../../theory/index.js';
 import { exportMidi } from '../midi.js';
+import { trackClips } from '../../record/clips.js';
 import { safeName, uniqueNamer } from './media.js';
 
 const MIXER_LANE = /^(volume|pan|mute|send:)/;
@@ -40,7 +41,8 @@ export function stemVariant(project, trackId, { tap = 'post-fader' } = {}) {
 /** Render range + the tracks that get a stem (unmuted tracks with something to play). */
 export function stemRenderPlan(project, { trackIds = null } = {}) {
   const bpb = beatsPerBar(project);
-  const song = project.clips?.length > 0;
+  // song mode when anything is arranged: clips or take-lane comps (comps play like clips — trackClips)
+  const song = project.clips?.length > 0 || project.tracks.some((t) => t.comp?.length && t.takeLanes?.length);
   let endBeat;
   if (song) endBeat = songLengthBeats(project);
   else {
@@ -49,7 +51,7 @@ export function stemRenderPlan(project, { trackIds = null } = {}) {
   }
   const hasContent = (t) => {
     if (t.type === 'code') return !!String(t.code || '').trim();
-    if (song) return project.clips.some((c) => c.trackId === t.id);
+    if (song) return trackClips(project, t).length > 0;
     return t.type === 'instrument' && (project.patterns[t.activePatternId]?.notes?.length || 0) > 0;
   };
   const tracks = project.tracks.filter((t) => (trackIds ? trackIds.includes(t.id) : !t.mute && hasContent(t)));

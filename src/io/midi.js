@@ -4,6 +4,7 @@
 //   importMidi(arrayBuffer) -> { format, ppq, bpm, timeSig, tracks:[{name, channel, isDrums, program, notes}] }
 //   addMidiToProject(project, parsed) -> { trackIds } (mutates project; call inside store.transact)
 import { songTempoMap } from '../time/tempo-map.js';
+import { trackClips } from '../record/clips.js';
 import {
   beatsPerBar, songLengthBeats, patternsForTrack, createTrack, createPattern, createNote, createClip, TRACK_COLORS,
 } from '../core/model.js';
@@ -55,8 +56,9 @@ function trackChunk(events) {
 export function collectTrackNotes(project, track, mode = 'pattern') {
   if (mode === 'song') {
     const out = [];
-    for (const clip of project.clips || []) {
-      if (clip.trackId !== track.id || clip.type === 'audio') continue;
+    // the track's clips + the comp of its take lanes (MIDI takes): what plays is what is exported
+    for (const clip of trackClips(project, track)) {
+      if (clip.type === 'audio') continue;
       const pat = project.patterns?.[clip.patternId];
       if (!pat || !pat.notes?.length) continue;
       const len = pat.length > 0 ? pat.length : beatsPerBar(project);

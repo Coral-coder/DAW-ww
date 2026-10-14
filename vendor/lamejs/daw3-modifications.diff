@@ -1,0 +1,163 @@
+--- lame.all.js	2026-10-14 02:34:37.208017490 +0000
++++ lame.mjs	2026-10-14 02:34:27.783315132 +0000
+@@ -1,3 +1,8 @@
++// lamejs 1.2.1 (https://github.com/zhuker/lamejs) — pure-JS port of LAME 3.99 (https://lame.sourceforge.io),
++// LGPL-3.0 — see LICENSE and README.md in this directory. Vendored for daW³ as an ES module with these
++// modifications (also LGPL-3.0): `export default lamejs` at the end; Mp3Encoder(channels, rate, kbps, opts) accepts
++// {vbr: 'abr'} (average bitrate) and exposes getEncoderInfo(); ABRIterationLoop ported from LAME's quantize.c
++// (missing upstream); `(int)` casts left over from the Java port replaced with `0|(` so ABR runs.
+ function lamejs() {
+ function new_byte(count) {
+     return new Int8Array(count);
+@@ -1054,7 +1059,7 @@
+         }
+         /* ns-bass tweaks */
+         if (Math.abs(abr_switch_map[r].nsbass) > 0) {
+-            var k = (int)(abr_switch_map[r].nsbass * 4);
++            var k = 0|(abr_switch_map[r].nsbass * 4);
+             if (k < 0)
+                 k += 64;
+             gfp.exp_nspsytune = gfp.exp_nspsytune | (k << 2);
+@@ -2547,7 +2552,7 @@
+ 		 */
+ 		if (gfp.brate > 320) {
+ 			/* in freeformat the buffer is constant */
+-			maxmp3buf = 8 * ((int) ((gfp.brate * 1000)
++			maxmp3buf = 8 * (0|((gfp.brate * 1000)
+ 					/ (gfp.out_samplerate / 1152) / 8 + .5));
+ 		} else {
+ 			/*
+@@ -2562,7 +2567,7 @@
+ 			 */
+ 
+ 			if (gfp.strict_ISO) {
+-				maxmp3buf = 8 * ((int) (320000 / (gfp.out_samplerate / 1152) / 8 + .5));
++				maxmp3buf = 8 * (0|(320000 / (gfp.out_samplerate / 1152) / 8 + .5));
+ 			}
+ 		}
+ 
+@@ -5484,6 +5489,56 @@
+ 
+ 
+ 
++
++// daW3 addition (port of LAME 3.99 quantize.c ABR_iteration_loop, missing from lamejs 1.2.1)
++function ABRIterationLoop(_quantize) {
++    var quantize = _quantize;
++    this.quantize = quantize;
++    this.iteration_loop = function (gfp, pe, ms_ener_ratio, ratio) {
++        var gfc = gfp.internal_flags;
++        var l3_xmin = new_float(L3Side.SFBMAX);
++        var xrpow = new_float(576);
++        var targ_bits = new_int_n([2, 2]);
++        var analog_silence_bits = new_int(1);
++        var max_frame_bits = new_int(1);
++        var mean_bits = 0;
++        var l3_side = gfc.l3_side;
++        this.quantize.calc_target_bits(gfp, pe, ms_ener_ratio, targ_bits, analog_silence_bits, max_frame_bits);
++        for (var gr = 0; gr < gfc.mode_gr; gr++) {
++            if (gfc.mode_ext == Encoder.MPG_MD_MS_LR) {
++                this.quantize.ms_convert(gfc.l3_side, gr);
++            }
++            for (var ch = 0; ch < gfc.channels_out; ch++) {
++                var masking_lower_db;
++                var cod_info = l3_side.tt[gr][ch];
++                if (cod_info.block_type != Encoder.SHORT_TYPE) {
++                    masking_lower_db = gfc.PSY.mask_adjust;
++                } else {
++                    masking_lower_db = gfc.PSY.mask_adjust_short;
++                }
++                gfc.masking_lower = Math.pow(10.0, masking_lower_db * 0.1);
++                this.quantize.init_outer_loop(gfc, cod_info);
++                if (this.quantize.init_xrpow(gfc, cod_info, xrpow)) {
++                    var ath_over = this.quantize.qupvt.calc_xmin(gfp, ratio[gr][ch], cod_info, l3_xmin);
++                    if (0 == ath_over)
++                        targ_bits[gr][ch] = analog_silence_bits[0];
++                    this.quantize.outer_loop(gfp, cod_info, l3_xmin, xrpow, ch, targ_bits[gr][ch]);
++                }
++                this.quantize.iteration_finish_one(gfc, gr, ch);
++            }
++        }
++        for (gfc.bitrate_index = gfc.VBR_min_bitrate; gfc.bitrate_index <= gfc.VBR_max_bitrate; gfc.bitrate_index++) {
++            var mb = new MeanBits(0);
++            var r = this.quantize.rv.ResvFrameBegin(gfp, mb);
++            mean_bits = mb.bits;
++            if (r >= 0)
++                break;
++        }
++        if (gfc.bitrate_index > gfc.VBR_max_bitrate) gfc.bitrate_index = gfc.VBR_max_bitrate;
++        this.quantize.rv.ResvFrameEnd(gfc, mean_bits);
++    };
++}
++
+ function CBRNewIterationLoop(_quantize)  {
+     var quantize = _quantize;
+     this.quantize = quantize;
+@@ -8159,13 +8214,13 @@
+         for (gr = 0; gr < gfc.mode_gr; gr++) {
+             var sum = 0;
+             for (ch = 0; ch < gfc.channels_out; ch++) {
+-                targ_bits[gr][ch] = (int)(res_factor * mean_bits);
++                targ_bits[gr][ch] = 0|(res_factor * mean_bits);
+ 
+                 if (pe[gr][ch] > 700) {
+-                    var add_bits = (int)((pe[gr][ch] - 700) / 1.4);
++                    var add_bits = 0|((pe[gr][ch] - 700) / 1.4);
+ 
+                     var cod_info = l3_side.tt[gr][ch];
+-                    targ_bits[gr][ch] = (int)(res_factor * mean_bits);
++                    targ_bits[gr][ch] = 0|(res_factor * mean_bits);
+ 
+                     /* short blocks use a little extra, no matter what the pe */
+                     if (cod_info.block_type == Encoder.SHORT_TYPE) {
+@@ -14281,7 +14336,7 @@
+         if (gfp.VBR == VbrMode.vbr_off && gfp.compression_ratio > 0) {
+ 
+             if (gfp.out_samplerate == 0)
+-                gfp.out_samplerate = map2MP3Frequency((int)(0.97 * gfp.in_samplerate));
++                gfp.out_samplerate = map2MP3Frequency(0|(0.97 * gfp.in_samplerate));
+             /*
+              * round up with a margin of 3 %
+              */
+@@ -15382,8 +15437,8 @@
+     }
+ }
+ 
+-function Mp3Encoder(channels, samplerate, kbps) {
+-    if (arguments.length != 3) {
++function Mp3Encoder(channels, samplerate, kbps, opts) {
++    if (arguments.length < 3) {
+         console.error('WARN: Mp3Encoder(channels, samplerate, kbps) not specified');
+         channels = 1;
+         samplerate = 44100;
+@@ -15426,6 +15481,12 @@
+     gfp.bWriteVbrTag = false;
+     gfp.disable_reservoir = true;
+     gfp.write_id3tag_automatic = false;
++    // daW3 modification: optional average-bitrate VBR (opts.vbr === 'abr'; kbps = mean bitrate)
++    if (opts && opts.vbr === 'abr') {
++        gfp.VBR = VbrMode.vbr_abr;
++        gfp.VBR_mean_bitrate_kbps = kbps;
++        gfp.disable_reservoir = false;
++    }
+ 
+     var retcode = lame.lame_init_params(gfp);
+     var maxSamples = 1152;
+@@ -15450,6 +15511,11 @@
+         var _sz = lame.lame_encode_flush(gfp, mp3buf, 0, mp3buf_size);
+         return new Int8Array(mp3buf.subarray(0, _sz));
+     };
++
++    // daW3 addition: encoder delay / padding (samples) for the LAME info tag (gapless playback)
++    this.getEncoderInfo = function () {
++        return { delay: gfp.encoder_delay, padding: gfp.encoder_padding, outSampleRate: gfp.out_samplerate, mode: gfp.mode };
++    };
+ }
+ 
+ function WavHeader() {
+@@ -15516,3 +15582,5 @@
+ }
+ //fs=require('fs');
+ lamejs();
++
++export default lamejs;
