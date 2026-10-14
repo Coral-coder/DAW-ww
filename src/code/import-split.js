@@ -36,6 +36,7 @@ import { detectKey as detectKeyFromNotes, keyRootName } from '../theory/keys.js'
 import { PRESETS } from '../audio/presets.js';
 import { PRESET_STRUDEL } from '../gen/strudel-sounds.js';
 import { DIVISIONS } from '../audio/effect-defs.js';
+import { repairStrudel, diagnose } from './repair.js';
 
 const EPS = 1e-6;
 const MAX_CYCLES = 512;
@@ -265,6 +266,8 @@ function cleanName(raw) {
   if (header) return '\u0000' + cleanName(x.slice(11)); // marked: decided by codeUnits
   if (!x || /[.(]\s*["'`]|\w\(.*\)|=>|^\$|^[A-Za-z_]+:\s*\w+\(/.test(x)) return ''; // commented-out code
   x = x.replace(/^(\d+|[a-z])[.)]\s*/i, '').replace(/^[-*#=>~]+\s*/, '');
+  // `LAYER 2: Generative Acid Bassline` / `Part 3 - Pads`: the numbering isn't the name
+  x = x.replace(/^(layer|part|section|track|voice|step|channel|instrument)\s*#?\d+\s*(?::|\.|-|—|–)\s*(?=\S)/i, '');
   x = x.split(/\s*[:(—–]\s*|\s+-\s+|\.\s+/)[0].replace(/[\s.,;!-]+$/, '').trim();
   // a description (`melody that sometimes jumps an octave`, `hats with random gaps`) -> its subject
   x = x.replace(/^(.+?)\s+(that|which|with|where|who|for)\s.*$/i, '$1');
@@ -451,11 +454,18 @@ const STRUDEL_PARAM_RENAME = { fmi: 'fm' };
 export function analyzeStrudel(code, opts = {}) {
   const bpc = opts.beatsPerCycle || 4;
   if (codeEngine() !== 'strudel') return { error: 'The Strudel engine is not loaded' };
-  const original = code;
+  // TidalCycles-isms (C'min7, |+, .arp("pinkyup") …) -> valid Strudel; the repaired code is what gets stored
+  const original = opts.original ?? code;
+  const tidal = opts.skipRepair ? { code, repairs: opts.repairs || [], unresolved: [] } : repairStrudel(code, { key: opts.key });
+  const userCode = tidal.code;
+  code = userCode;
   const fixed = repairCode(code);
   code = fixed.code;
   const res = evaluate(code);
-  if (res.error) return { error: res.error };
+  if (res.error) {
+    const d = diagnose(userCode);
+    return { error: res.error, diagnosis: d, repairs: tidal.repairs, unresolved: tidal.unresolved, code: userCode, original };
+  }
   const cps = res.cps > 0 ? res.cps : 0.5;
   const bpm = Math.round(cps * 60 * bpc * 100) / 100;
   const { defs, ast } = sourceMap(code);
@@ -549,7 +559,7 @@ export function analyzeStrudel(code, opts = {}) {
   for (const t of tracks) for (const [k, pr] of Object.entries(t.probes || {})) if (!probeAgrees(t.haps, k, pr.points)) delete t.probes[k];
 
   const parts = describeParts(code, defs, units, unitHaps, tracks, events, resolve);
-  return { bpm, cps, beatsPerCycle: bpc, cycles, sections, arranged, tracks, warnings, code: original, playedCode: code, parts, repaired: fixed.fixes };
+  return { bpm, cps, beatsPerCycle: bpc, cycles, sections, arranged, tracks, warnings, code: userCode, original, playedCode: code, parts, repaired: fixed.fixes, repairs: tidal.repairs };
 }
 
 /**
@@ -1009,7 +1019,8 @@ export function splitStrudelToProject(project, code, opts = {}) {
   project.mode = 'song';
   const total = a.cycles * bpc;
   project.loop = { enabled: !a.arranged, start: 0, end: total };
-  project.importedCode = a.code;
+  // the code as imported (repaired: the code track holds it) and the user's original text
+  project.importedCode = { code: a.code, original: a.original ?? a.code, repairs: a.repairs || [] };
 
   // ---- buses (room -> Reverb, delay -> Delay): one per distinct setting; a replaced project reuses its own buses first
   project.buses ||= [];
@@ -1279,6 +1290,7 @@ export function splitStrudelToProject(project, code, opts = {}) {
   summary.notes = report.notes;
   summary.parts = a.parts || [];
   summary.repaired = a.repaired || [];
+  summary.repairs = a.repairs || [];
   // key: the code's .scale(), else what the notes say (pitch classes weighted by length)
   const key = detectKey(a.code) || keyFromNotes(a.tracks);
   if (key && !hadTracks) project.key = { root: key.root, scale: key.scale };
@@ -1455,7 +1467,7 @@ export function splitCodeByLabels(text, splitTopLevel) {
 export async function importStrudelSplit(store, code, opts = {}) {
   await loadStrudel();
   const analysis = analyzeStrudel(code, opts);
-  if (analysis.error) return { error: analysis.error };
+  if (analysis.error) return { error: analysis.error, diagnosis: analysis.diagnosis, repairs: analysis.repairs };
   if (!analysis.tracks.length) return { error: 'The code plays no notes' };
   let summary;
   store.transact(opts.label || 'Import Strudel (split into tracks)', (p) => { summary = splitStrudelToProject(p, analysis, opts); });
@@ -1469,6 +1481,7 @@ export function summaryText(s) {
     + `${s.sections > 1 ? ` · ${s.sections} sections` : ''}${s.key ? ` · ${s.key}` : ''} · ${s.effects} effect${s.effects === 1 ? '' : 's'}, ${s.sends} send${s.sends === 1 ? '' : 's'}, ${s.lanes} automation lane${s.lanes === 1 ? '' : 's'}.`];
   const silent = (s.parts || []).filter((x) => x.status === 'silent');
   if (silent.length) lines.push(`Plays nothing in Strudel (no track): ${silent.map((x) => x.label).join(', ')}.`);
+  if (s.repairs?.length) lines.push(`Repaired ${s.repairs.length} thing${s.repairs.length === 1 ? '' : 's'} Strudel would reject or play wrong (TidalCycles syntax): ${s.repairs.map((r) => `line ${r.line} ${r.from} → ${r.to}`).slice(0, 3).join('; ')}${s.repairs.length > 3 ? ' …' : ''}.`);
   if (s.unmapped?.length) lines.push(`Not mapped: ${s.unmapped.join(', ')}.`);
   if (s.notes?.length) lines.push(...s.notes.slice(0, 4));
   return lines.join('\n');

@@ -61,7 +61,7 @@ try {
     const { analyzeStrudel } = await import('/src/code/import-split.js');
     await loadStrudel();
     const p = JSON.parse(JSON.stringify(window.daw3.store.get()));
-    const a = analyzeStrudel(p.importedCode);
+    const a = analyzeStrudel(p.importedCode?.code ?? p.importedCode);
     const parts = a.parts.filter((x) => x.status === 'ok');
     const sr = 44100;
     const end = Math.min(BARS * 4, a.cycles * 4);

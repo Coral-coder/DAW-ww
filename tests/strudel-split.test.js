@@ -56,7 +56,8 @@ test('house sketch: one track per instrument named from the code, drum kit on on
   // the original code is kept (muted code track + project.importedCode)
   const orig = p.tracks.find((t) => t.type === 'code');
   assert.ok(orig.mute && orig.code.includes('arrange('));
-  assert.equal(p.importedCode, orig.code);
+  assert.equal(p.importedCode.code, orig.code);
+  assert.equal(p.importedCode.original, fixture('house')); // (nothing to repair: the same text)
 });
 
 test('house sketch: effects, sends and automation lanes', () => {
@@ -268,7 +269,7 @@ test('ambient stack without consts: three parts named from their comments, nothi
   assert.deepEqual(s.parts.map((x) => [x.label, x.status]), [['Warm, Expanding Chord Progression', 'ok'], ['The Wanderer', 'ok'], ['Shimmering Sky', 'ok']]);
   assert.equal(p.bpm, 120); // no setcpm: Strudel's 0.5 cycles/s, 1 cycle = 1 bar of 4 beats
   assert.deepEqual(p.key, { root: 5, scale: 'major' }); // Fmaj7 Dm7 Bbmaj7 Cmaj7 -> F major (not the default C minor)
-  assert.equal(p.importedCode, fixture('ambient')); // the user's code is kept as written
+  assert.equal(p.importedCode.original, fixture('ambient')); // the user's code is kept as written
   // .scramble() without a count is silent in Strudel itself -> repaired (count = the 8 steps), and said so
   assert.ok(s.notes.some((n) => /scramble\(\) has no count.*\.scramble\(8\)/.test(n)), s.notes.join('\n'));
 

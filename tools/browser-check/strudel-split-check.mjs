@@ -79,7 +79,7 @@ try {
     // "fair" split: without the parts Strudel itself can't play (daW³ preset names, pads missing from the bank)
     const { splitStrudelToProject } = await import('/src/code/import-split.js');
     const { createProject } = await import('/src/core/model.js');
-    const silent = splitStrudelToProject(createProject(), p.importedCode).notInStrudel || [];
+    const silent = splitStrudelToProject(createProject(), p.importedCode?.code ?? p.importedCode).notInStrudel || [];
     const fair = { ...split, tracks: split.tracks.map((t) => {
       const x = silent.find((q) => q.name === t.name);
       if (!x) return t;

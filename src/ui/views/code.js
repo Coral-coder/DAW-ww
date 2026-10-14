@@ -12,6 +12,7 @@ import { isTyping } from '../keyboard.js';
 import * as strudel from '../../code/strudel.js';
 import { songToCode, applySongCode } from '../../code/song-code.js';
 import { songToLiveCode, applyLiveCode } from '../../code/livecoder.js';
+import { repairStrudel, locateError, diagnose, salvageParts } from '../../code/repair.js';
 import { PRESETS, DRUM_KITS } from '../../audio/index.js';
 
 const LS_AUTO = 'daw3-code-autoapply';
@@ -41,6 +42,15 @@ export function errorLineOf(err, code = '') {
   m = /(?:position|offset|index|char(?:acter)?)\s*:?\s*(\d+)/i.exec(s);
   if (m && code) return code.slice(0, Number(m[1])).split('\n').length;
   return null;
+}
+
+/** Where an error is: the mini-notation string / JS token in the code (repair.js locateError), else the message's line. */
+export function errorLocation(err, code = '') {
+  let loc = null;
+  try { loc = locateError(code, err); } catch { loc = null; }
+  if (loc?.line) return loc;
+  const line = errorLineOf(err, code);
+  return line ? { line } : null;
 }
 
 let modCache = null;
@@ -101,7 +111,9 @@ export function createCodeView(app) {
   let entry = SONG; // SONG or the id of the code track shown in the editor
   let trackId = null; // code track shown (null while the Song is shown)
   const drafts = new Map(); // trackId -> unapplied editor text
-  const localErr = new Map(); // trackId -> {error, line} from local evaluate on apply
+  const localErr = new Map(); // trackId -> {error, line, column, snippet} from local evaluate on apply
+  const repaired = new Map(); // trackId -> [{line, from, to, why}] the last Apply rewrote (TidalCycles-isms)
+  let songRepairs = null; // repairs of the last pasted song
   const engineErr = new Map(); // trackId -> error string from engine 'code-error'
   const evalCache = new Map(); // code -> evaluated
   let autoApply = !!lsGet(LS_AUTO, false);
@@ -260,6 +272,7 @@ export function createCodeView(app) {
   // ------------------------------------------------------------ DOM: editor + viz
   const errBar = h('div.code-errbar.hidden');
   const staleBar = h('div.code-stalebar.hidden');
+  const noteBar = h('div.code-notebar.hidden');
   const editor = createCodeEditor({
     placeholder: '// Type Strudel code, e.g.\n$: s("bd*4, ~ cp, hh*8")\n$: note("c2 eb2 g2 bb2").s("sawtooth").lpf(800)',
     onChange: onEditorChange,
@@ -287,7 +300,7 @@ export function createCodeView(app) {
     startDrag(e, (_dx, dy) => { const nh = Math.max(70, Math.min(600, h0 - dy)); vizEl.style.flexBasis = nh + 'px'; vizDirty = true; }, () => lsSet(LS_VIZ_H, vizEl.offsetHeight));
   });
 
-  const editorWrap = h('div.code-editor-wrap', errBar, staleBar, editor.el, hint);
+  const editorWrap = h('div.code-editor-wrap', errBar, staleBar, noteBar, editor.el, hint);
   const mainEl = h('div.code-main', editorWrap, vizEl);
 
   // ------------------------------------------------------------ DOM: reference drawer
@@ -414,11 +427,26 @@ export function createCodeView(app) {
     }));
   }
 
-  function setErrBar(err, line, src) {
+  /** "Repaired N things" banner (the repair pass fixed the code instead of it failing). */
+  function setNoteBar(repairs) {
+    if (!repairs?.length) { noteBar.classList.add('hidden'); return; }
+    const more = h('div.code-notebar-list.hidden', repairs.map((r) => h('div', h('span.muted', `line ${r.line}: `), h('code', r.from), ' → ', h('code', r.to), h('span.muted', ` — ${r.why}`))));
+    const toggleBtn = h('button.code-link', { type: 'button', onclick: () => { more.classList.toggle('hidden'); toggleBtn.textContent = more.classList.contains('hidden') ? 'show' : 'hide'; } }, 'show');
+    noteBar.replaceChildren(h('div.code-notebar-head', icon('wand', 13),
+      h('span', `Repaired ${repairs.length} thing${repairs.length === 1 ? '' : 's'} Strudel would reject or play wrong (TidalCycles syntax) — `), toggleBtn,
+      h('div.spacer'), h('button.code-link', { type: 'button', title: 'Dismiss', onclick: () => { if (isSong()) songRepairs = null; else repaired.delete(trackId); noteBar.classList.add('hidden'); } }, '×')), more);
+    noteBar.classList.remove('hidden');
+  }
+
+  function setErrBar(err, line, src, loc = null) {
     if (err) {
-      errBar.replaceChildren(icon('x', 13), h('b', line ? `Line ${line}: ` : 'Error: '), h('span', String(err)),
+      const where = line ? `Line ${line}${loc?.column ? `:${loc.column}` : ''}: ` : 'Error: ';
+      const detail = loc?.snippet || loc?.suggestion ? h('div.code-errbar-detail',
+        loc.snippet ? h('code.code-errbar-snippet', { title: 'The code Strudel could not read' }, loc.snippet) : null,
+        loc.suggestion ? h('span.code-errbar-hint', `Suggestion: ${loc.suggestion}`) : null) : null;
+      errBar.replaceChildren(...[icon('x', 13), h('b', where), h('span', String(loc?.message || err)),
         h('span.code-errbar-src', src),
-        h('span.muted', isSong() ? ' — nothing was applied; the project is unchanged.' : ' — the last working version keeps playing.'));
+        h('span.muted', isSong() ? ' — nothing was applied; the project is unchanged.' : ' — the last working version keeps playing.'), detail].filter(Boolean));
       errBar.classList.remove('hidden');
       editor.setErrorLine(line);
     } else {
@@ -435,7 +463,8 @@ export function createCodeView(app) {
       dirtyEl.textContent = err ? '● Error' : dirty ? '● Editing — Ctrl+Enter to apply to the project' : '● Live — in sync with the project';
       applyBtn.classList.toggle('primary', dirty);
       revertBtn.classList.toggle('hidden', !dirty);
-      setErrBar(err, songErr?.line, 'song');
+      setErrBar(err, songErr?.line, 'song', songErr);
+      setNoteBar(err ? null : songRepairs);
       staleBar.classList.toggle('hidden', !(dirty && songStale));
       if (dirty && songStale) {
         staleBar.replaceChildren(icon('bulb', 13), h('span', 'The project changed while you were editing. Apply to merge your edits, or '),
@@ -456,7 +485,8 @@ export function createCodeView(app) {
     dirtyEl.className = 'code-dirty' + (err ? ' err' : dirty ? ' dirty' : t ? ' ok' : '');
     dirtyEl.textContent = !t ? '' : err ? '● Error' : dirty ? '● Unsaved changes — Ctrl+Enter to apply' : '● Applied';
     applyBtn.classList.toggle('primary', !!dirty);
-    setErrBar(err, err ? (le?.line ?? errorLineOf(err, t.code)) : null, le ? 'evaluation' : 'engine');
+    setErrBar(err, err ? (le?.line ?? errorLocation(err, t.code)?.line) : null, le ? 'evaluation' : 'engine', le || (err ? errorLocation(err, t.code) : null));
+    setNoteBar(err || !t ? null : repaired.get(t.id));
     // tempo adoption
     const res = t ? evaluate(t.code || '') : null;
     const cps = res && !res.error ? res.cps : null;
@@ -472,11 +502,24 @@ export function createCodeView(app) {
   }
 
   // ------------------------------------------------------------ apply (code tracks)
-  function commit(code, { label = 'Edit code', coalesce = false } = {}) {
+  function commit(code, { label = 'Edit code', coalesce = false, repair = false } = {}) {
     const t = currentTrack();
     if (!t) return null;
-    const res = evaluate(code);
-    if (res.error) localErr.set(t.id, { error: res.error, line: errorLineOf(res.error, code) ?? locateErrorBlock(code) });
+    let res = evaluate(code);
+    if (repair) {
+      // TidalCycles-isms (C'min7, |+, .arp("pinkyup") …) -> valid Strudel: the repaired code is what the track keeps
+      const rep = repairStrudel(code, { key: keyRoot() });
+      if (rep.repairs.length) {
+        const res2 = evaluate(rep.code);
+        if (!res2.error || res.error) {
+          code = rep.code; res = res2;
+          repaired.set(t.id, rep.repairs);
+          drafts.set(t.id, code);
+          if (currentTrack()?.id === t.id) editor.setValue(code, { keepUndo: true });
+        }
+      } else if (!res.error) repaired.delete(t.id);
+    }
+    if (res.error) localErr.set(t.id, errLoc(res.error, code));
     else { localErr.delete(t.id); engineErr.delete(t.id); }
     if ((t.code || '') !== code) actions.updateTrack(t.id, (tt) => { tt.code = code; }, label, { coalesce });
     if (drafts.get(t.id) === code) drafts.delete(t.id);
@@ -487,13 +530,22 @@ export function createCodeView(app) {
     return res;
   }
 
+  /** {error, line, column, snippet, suggestion} of an error in `code`. */
+  function errLoc(error, code) {
+    const loc = errorLocation(error, code);
+    let suggestion = null;
+    if (loc?.line) { try { suggestion = diagnose(code)?.suggestion || null; } catch { /* */ } }
+    return { error, line: loc?.line ?? locateErrorBlock(code), column: loc?.column ?? null, snippet: loc?.snippet || null, message: loc?.message || null, suggestion };
+  }
+  const keyRoot = () => { const k = store.get().key; return k && Number.isFinite(k.root) ? ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'][((k.root % 12) + 12) % 12] : undefined; };
+
   function applyNow() {
     if (isSong()) { applySong(); return; }
     const t = currentTrack();
     if (!t) return;
     const code = editor.getValue();
     drafts.set(t.id, code);
-    const res = commit(code, { label: 'Apply code' });
+    const res = commit(code, { label: 'Apply code', repair: true });
     if (!res) return;
     if (res.error) {
       app.setStatus?.(`Code error in "${t.name}": ${res.error}`);
@@ -513,7 +565,7 @@ export function createCodeView(app) {
       code = applied.map((b, i) => (i === index ? blocks[i].text : b.text)).join('');
     }
     drafts.set(t.id, text);
-    const res = commit(code, { label: 'Apply code block' });
+    const res = commit(code, { label: 'Apply code block', repair: code === text });
     if (res && code !== text) drafts.set(t.id, text);
     if (res && !res.error) {
       app.setStatus?.(`Applied block ${index + 1} of ${blocks.length}${code !== text ? ' — other edits are still pending' : ''}.`);
@@ -567,15 +619,20 @@ export function createCodeView(app) {
   /** Replace the whole project with the pasted code (one undo step), keeping buses & master — split into instrument
    * tracks with effects (default), one code track per part, or one code track (actions.importStrudelCode). */
   async function replaceProjectWithCode(text) {
-    const res = evaluate(text);
-    if (res.error) {
-      songErr = { error: res.error, line: errorLineOf(res.error, text) ?? locateErrorBlock(text) };
+    // TidalCycles-isms are repaired first (actions.importStrudelCode does the same); only what still fails — and has
+    // no part that works — is an error, shown where it is in the code
+    const rep = repairStrudel(text);
+    const res = evaluate(rep.code);
+    if (res.error && !salvageParts(rep.code)) {
+      songErr = errLoc(res.error, rep.code);
+      if (rep.repairs.length) { editor.setValue(rep.code, { keepUndo: true }); songDraft = rep.code; }
       renderStatus();
-      app.setStatus?.(`Code error: ${res.error}`);
+      app.setStatus?.(`Code error${songErr.line ? ` (line ${songErr.line})` : ''}: ${res.error}`);
       return;
     }
     const r = await actions.importStrudelCode(text, { name: 'Strudel', replace: true });
     if (!r?.choice) { renderStatus(); return; }
+    songRepairs = r.summary?.repairs?.length ? r.summary.repairs : r.repairs?.length ? r.repairs : null;
     songDraft = null;
     songErr = null;
     regenSong();
@@ -602,7 +659,7 @@ export function createCodeView(app) {
     let dry;
     try { dry = applyFn(deepClone(store.get()), text, opts); } catch (e) { console.error(e); dry = { error: String(e?.message || e) }; }
     if (dry.error) {
-      songErr = { error: dry.error, line: errorLineOf(dry.error, text) ?? locateErrorBlock(text) };
+      songErr = errLoc(dry.error, text);
       renderStatus();
       renderList(codeTracks());
       app.setStatus?.(`Song code error: ${dry.error}`);

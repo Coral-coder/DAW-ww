@@ -20,7 +20,8 @@ import { fileToSample, arrayBufferToBase64 } from '../io/samples.js';
 import { createRecorder } from '../record/session.js';
 import { readStrudelFile } from '../io/strudel-file.js';
 import { importStrudelSplit, splitCodeByLabels, summaryText } from '../code/import-split.js';
-import { splitTopLevel as splitStrudelTopLevel } from '../code/strudel.js';
+import { splitTopLevel as splitStrudelTopLevel, loadStrudel } from '../code/strudel.js';
+import { repairStrudel, diagnose, salvageParts } from '../code/repair.js';
 import { saveLocal, listLocal, loadLocal, deleteLocal, createAutosaver } from '../io/autosave.js';
 import { codeToPatterns, patternsToCode } from '../code/convert.js';
 
@@ -604,10 +605,10 @@ export function createActions(app) {
    * How to bring Strudel code in: 'split' (one instrument track per sound, with effects — the default),
    * 'labels' (one code track per $: block) or 'single' (one code track). Resolves null when cancelled.
    */
-  function askStrudelImport(code, { replace = false } = {}) {
+  function askStrudelImport(code, { replace = false, repairs = [], diag = null, salvage = null } = {}) {
     const labels = (() => { try { return splitStrudelTopLevel(code).filter((it) => it.kind === 'label').length; } catch { return 0; } })();
     return new Promise((resolve) => {
-      let choice = 'split';
+      let choice = diag && salvage ? 'salvage' : 'split';
       let answer = null;
       const opt = (value, title, text) => h('label.import-choice', { style: { display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '8px 4px', cursor: 'pointer' } },
         h('input', { type: 'radio', name: 'strudel-import', value, checked: value === choice, onchange: () => { choice = value; } }),
@@ -616,6 +617,14 @@ export function createActions(app) {
         title: 'Import Strudel code',
         width: 520,
         body: h('div.col',
+          diag ? h('div.strudel-import-error', { style: { padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--bad)', background: 'color-mix(in srgb, var(--bad) 12%, var(--bg-2))', fontSize: '12px' } },
+            h('div', { style: { fontWeight: 600 } }, `Strudel can't run this code${diag.line ? ` — line ${diag.line}${diag.column ? `, column ${diag.column}` : ''}` : ''}`),
+            diag.snippet ? h('code', { style: { display: 'block', margin: '4px 0', whiteSpace: 'pre-wrap' } }, diag.snippet) : null,
+            h('div.muted', diag.error),
+            diag.suggestion ? h('div', { style: { marginTop: '4px' } }, `Suggestion: ${diag.suggestion}`) : null) : null,
+          repairs.length ? repairsList(repairs, { max: 6 }) : null,
+          diag && salvage ? opt('salvage', `Import the parts that work (${salvage.kept} kept, ${salvage.dropped.length} dropped)`,
+            `Split into tracks without: ${salvage.dropped.map((x) => `line ${x.line} ${x.label}`).join(' · ')}`) : null,
           opt('split', 'Split into tracks (one per instrument, with effects)', 'Drum kits, synths and samples each get their own track with notes in clips per section; filters, reverb / delay sends, drive and sidechain become mixer effects, moving values become automation.'),
           opt('labels', 'Keep as code tracks (one per part)', labels > 1 ? `${labels} code tracks — one per $: block, playing the code live.` : 'The code has one part: a single code track, playing the code live.'),
           opt('single', 'Single code track', 'The whole code in one live code track.'),
@@ -627,6 +636,15 @@ export function createActions(app) {
         onClose: () => resolve(answer),
       });
     });
+  }
+
+  /** "Repaired N things": each TidalCycles-ism the repair pass rewrote (line, before -> after, why). */
+  function repairsList(repairs, { max = 50 } = {}) {
+    return h('div.strudel-repairs',
+      h('div', { style: { fontWeight: 600, margin: '6px 0 2px' } }, `Repaired ${repairs.length} thing${repairs.length === 1 ? '' : 's'} (TidalCycles syntax Strudel rejects or plays wrong)`),
+      h('div', { style: { maxHeight: '24vh', overflow: 'auto', fontSize: '12px' } }, repairs.slice(0, max).map((r) => h('div.strudel-repair', { style: { padding: '2px 0' } },
+        h('span.muted', `line ${r.line}: `), h('code', r.from), ' → ', h('code', r.to), h('div.muted', { style: { paddingLeft: '12px' } }, r.why))),
+      repairs.length > max ? h('div.muted', `… and ${repairs.length - max} more`) : null));
   }
 
   /** Summary of a split import: tracks with their instrument, effects and automation; what wasn't mapped. */
@@ -641,7 +659,11 @@ export function createActions(app) {
       title: 'Strudel split into tracks',
       width: 640,
       body: h('div.col',
-        h('p', summaryText({ ...s, unmapped: [], notes: [] })),
+        h('p', summaryText({ ...s, unmapped: [], notes: [], repairs: [] })),
+        s.repairs?.length ? repairsList(s.repairs) : null,
+        s.dropped?.length ? h('div.split-dropped', { style: { fontSize: '12px', color: 'var(--danger, #ff6b6b)' } },
+          h('div', { style: { fontWeight: 600, margin: '6px 0 2px' } }, `Left out — Strudel can't run them (${s.dropped.length})`),
+          s.dropped.map((x) => h('div', `line ${x.line}: ${x.label} — ${x.error}`))) : null,
         h('div', { style: { maxHeight: '40vh', overflow: 'auto' } }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } }, s.tracks.map(row))),
         s.parts?.length ? h('div.split-parts',
           h('div', { style: { fontWeight: 600, margin: '6px 0 2px' } }, `Parts found in the code (${s.parts.length})`),
@@ -652,7 +674,7 @@ export function createActions(app) {
         s.unmapped.length ? h('p.muted', `Not mapped (no daW³ counterpart): ${s.unmapped.join(', ')}.`) : null,
         s.passed?.length ? h('p.muted', `Passed to the Strudel sound as-is: ${s.passed.join(', ')}.`) : null,
         ...(s.notes || []).map((n) => h('p.muted', n)),
-        h('p.muted', 'The original code is kept as a muted "Strudel (original)" track. Ctrl+Z undoes the whole import.')),
+        h('p.muted', s.repairs?.length || s.dropped?.length ? 'The repaired code is kept as a muted "Strudel (original)" track (your text as pasted is kept with the project). Ctrl+Z undoes the whole import.' : 'The original code is kept as a muted "Strudel (original)" track. Ctrl+Z undoes the whole import.')),
       actions: [
         { label: 'Undo import', onClick: () => { store.undo(); } },
         { label: 'OK', primary: true },
@@ -665,13 +687,31 @@ export function createActions(app) {
    * skips the question. Resolves { choice, summary?, trackIds } (choice null = cancelled).
    */
   async function importStrudelCode(code, { name = 'Strudel', replace = false, choice = null, summary = true } = {}) {
-    choice = choice || await askStrudelImport(code, { replace });
+    // TidalCycles-isms -> valid Strudel first (every way in: split, code tracks); what still fails is located and the
+    // parts that work can be imported without it
+    const original = code;
+    let repairs = [], diag = null, salvage = null;
+    if (await loadStrudel()) {
+      const key = get().key && get().tracks.length ? pitchClassName(get().key.root) : undefined;
+      const rep = repairStrudel(code, { key });
+      code = rep.code;
+      repairs = rep.repairs;
+      diag = diagnose(code);
+      salvage = diag ? salvageParts(code) : null;
+    }
+    choice = choice || await askStrudelImport(code, { replace, repairs, diag, salvage });
     if (!choice) return { choice: null };
+    let dropped = null;
+    if (choice === 'salvage') {
+      if (!salvage) choice = 'split';
+      else { code = salvage.code; dropped = salvage.dropped; choice = 'split'; }
+    }
     if (choice === 'split') {
       app.setStatus?.('Splitting the Strudel code into tracks…');
       await new Promise((r) => setTimeout(r, 0)); // (let the status paint before the analysis runs)
-      const s = await importStrudelSplit(store, code, { replace });
+      const s = await importStrudelSplit(store, code, { replace, original, skipRepair: true, repairs });
       if (!s.error) {
+        if (dropped) s.dropped = dropped;
         if (s.firstTrackId) selectTrack(s.firstTrackId);
         ui.set({ view: 'arrange' });
         toast(summary ? summaryText({ ...s, unmapped: [], notes: [] }) : summaryText(s), { level: 'success', timeout: 8000 });
@@ -693,10 +733,12 @@ export function createActions(app) {
         for (const sc of p.scenes || []) sc.slots = {};
       }
       p.tracks.push(...tracks);
+      if (repairs.length) p.importedCode = { code, original, repairs };
     });
     ui.set({ view: 'code', selectedTrackId: tracks[0].id });
-    toast(`Imported "${name}" as ${tracks.length} code track${tracks.length > 1 ? 's' : ''}. Play it live, or use "Render to tracks" to expand it into editable patterns.`, { level: 'success', timeout: 6000 });
-    return { choice, trackIds: tracks.map((t) => t.id) };
+    toast(`Imported "${name}" as ${tracks.length} code track${tracks.length > 1 ? 's' : ''}${repairs.length ? ` — repaired ${repairs.length} thing${repairs.length === 1 ? '' : 's'} Strudel would reject` : ''}. Play it live, or use "Render to tracks" to expand it into editable patterns.`, { level: 'success', timeout: 6000 });
+    if (repairs.length && summary) modal({ title: 'Strudel code repaired', width: 640, body: h('div.col', repairsList(repairs), h('p.muted', 'Your code as pasted is kept with the project (Ctrl+Z undoes the import).')), actions: [{ label: 'OK', primary: true }] });
+    return { choice, trackIds: tracks.map((t) => t.id), repairs };
   }
 
   /** Expand a code track into real instrument tracks + patterns (and clips). */

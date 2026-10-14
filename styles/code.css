@@ -242,3 +242,14 @@
 .code-complex-list { margin: 4px 0; padding-left: 18px; }
 .code-complex-list code { font-family: var(--mono); }
 .code-toolbar .hidden, .code-hint .hidden { display: none !important; }
+/* Strudel repair: what the repair pass rewrote (instead of an error) + where an error really is */
+.code-notebar { display: flex; flex-direction: column; gap: 4px; padding: 5px 10px; font-size: 12px; background: color-mix(in srgb, var(--good, #38d9a9) 14%, var(--bg-2)); border-bottom: 1px solid var(--good, #38d9a9); flex-shrink: 0; max-height: 40%; overflow: auto; }
+.code-notebar-head { display: flex; align-items: center; gap: 6px; }
+.code-notebar-head .icon { color: var(--good, #38d9a9); }
+.code-notebar .code-link { padding: 0; color: var(--accent-2); text-decoration: underline; }
+.code-notebar-list { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
+.code-notebar-list code { font-family: var(--mono); background: var(--bg-3); border-radius: 3px; padding: 0 3px; }
+.code-errbar { flex-wrap: wrap; }
+.code-errbar-detail { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; padding-left: 19px; }
+.code-errbar-snippet { font-family: var(--mono); background: var(--bg-3); border-radius: 3px; padding: 0 4px; white-space: pre-wrap; word-break: break-all; }
+.code-errbar-hint { font-family: var(--font); color: var(--text-2); }
