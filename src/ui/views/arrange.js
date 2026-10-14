@@ -13,6 +13,8 @@ import {
 import { splitKey } from '../../core/automation-record.js';
 import { targetGroups as autoTargetGroups, targetInfo as autoTargetInfo, ownerView, formatLaneValue } from '../automation-targets.js';
 import { isTyping } from '../keyboard.js';
+import { createArrangeRec } from './arrange-rec.js';
+import { splitClipAt } from '../../record/clips.js';
 
 // ----------------------------------------------------------------------------- constants
 const RULER_H = 22;
@@ -231,6 +233,14 @@ export function createArrangeView(app) {
     const r = anchor.getBoundingClientRect();
     contextMenu({ clientX: r.left, clientY: r.bottom + 4, preventDefault() {} }, items.filter(Boolean));
   };
+  // recording / takes / comping / clip handles (src/ui/views/arrange-rec.js)
+  const recUi = createArrangeRec({
+    app, get, ppb: () => ppb, laneH: () => laneH, theme: () => theme, invalidate: () => invalidate(),
+    relayout: () => { syncHeaders(); layout(); drawNow(); }, snapB, snapStep, setSel, selIds, pos, dragTx,
+    beginDrag: () => beginDrag(), endDrag: () => endDrag(), drawAudioClip: (...a) => drawAudioClip(...a),
+    drawPatternClip: (...a) => drawPatternClip(...a), rgba, hexToRgb, hitBeat: (e) => hitTest(e.clientX, e.clientY).beat,
+    get scroller() { return scroller; },
+  });
   const addTrackBtn = button('Track', (e) => menuAt(e.currentTarget, actions.addTrackMenuItems()), { icon: 'plus', title: 'Add a track: drum machine, instrument preset, synth, sampler, audio or code' });
   const toolBtns = {};
   const toolGroup = h('div.arr-seg', { title: 'Editing tool' }, TOOLS.map((t) => {
@@ -251,7 +261,7 @@ export function createArrangeView(app) {
   const toolbar = h('div.view-toolbar.arr-toolbar',
     addTrackBtn, h('div.sep'), toolGroup, snapSel, h('div.sep'),
     zoomOutBtn, zoomInBtn, fitBtn, followBtn, h('div.sep'),
-    p2sBtn, markerBtn, loopBtn, moreBtn, hint);
+    p2sBtn, markerBtn, loopBtn, ...recUi.toolbarButtons({ button, toggle, menuAt }), moreBtn, hint);
 
   // ------------------------------------------------------------------ banner
   const bannerText = h('span.arr-banner-text');
@@ -399,6 +409,7 @@ export function createArrangeView(app) {
       const t = p.tracks[i];
       const r = { t, i, y, auto: [] };
       y += laneH;
+      y = recUi.pushTakes(r, t, y);
       y = pushAuto(r, t, y);
       r.h = y - r.y;
       rows.push(r);
@@ -595,6 +606,17 @@ export function createArrangeView(app) {
       drawClip(ctx, p, c, tracks[i], L.rows[i].y - sy, W, sx, b0, b1, false);
     }
     for (const [c, i] of selected) drawClip(ctx, p, c, tracks[i], L.rows[i].y - sy, W, sx, b0, b1, true);
+    // comps (take lanes) play in the track lane; their take rows below it
+    for (let i = first; i <= last; i++) {
+      const cc = recUi.compFor(p, tracks[i]);
+      for (const c of cc) if (!(c.start + c.length < b0 || c.start > b1)) drawClip(ctx, p, c, tracks[i], L.rows[i].y - sy, W, sx, b0, b1, false);
+      if (cc.length) recUi.drawCompMarks(ctx, p, tracks[i], L.rows[i].y - sy, W, sx);
+      for (const tk of L.rows[i].takes || []) {
+        const y = tk.y - sy;
+        if (y > H || y + tk.h < 0) continue;
+        recUi.drawTakeRow(ctx, p, tracks[i], tk, y, W, sx, b0, b1);
+      }
+    }
 
     // automation lanes
     for (let i = first; i <= last; i++) {
@@ -778,6 +800,7 @@ export function createArrangeView(app) {
       }
     }
     ctx.restore();
+    if (c.type === 'audio' && hh >= 24) recUi.drawClipOverlay(ctx, c, x, y, w, hh, selected);
     // border
     ctx.lineWidth = selected ? 2 : 1;
     ctx.strokeStyle = selected ? theme.sel : rgba(rgb, 0.85);
@@ -1409,6 +1432,7 @@ export function createArrangeView(app) {
       ctx.fillRect(x0, y - 1, 3, lh + 2);
       ctx.fillRect(x1 - 3, y - 1, 3, lh + 2);
     }
+    recUi.drawPunch(ctx, p, sx, RULER_H + MARK_H + 1, LOOP_H - 2);
     ctx.fillStyle = theme.line;
     ctx.fillRect(0, RULER_H - 1, W, 1);
     ctx.fillRect(0, RULER_H + MARK_H - 1, W, 1);
@@ -1456,17 +1480,8 @@ export function createArrangeView(app) {
         if (m) hd.mtr.setLevels(m.l || 0, m.r ?? m.l ?? 0);
       });
     }
-    // live input level on armed audio tracks
-    const rec = actions.recorder;
-    if (rec?.inputOpen) {
-      const lvl = rec.getLevel();
-      const pct = Math.min(100, Math.round(Math.sqrt(Math.min(1, lvl)) * 100)) + '%';
-      for (const t of p.tracks) {
-        if (t.type !== 'audio' || !t.arm) continue;
-        const hd = headers.get(t.id);
-        if (hd) { hd.inFill.style.width = pct; hd.inFill.classList.toggle('clip', lvl >= 0.99); }
-      }
-    }
+    // live input level (+ latched clip) on audio tracks with an open input (src/record/inputs.js)
+    recUi.updateMeters(p, headers);
     updateAutoValues(p, L, sy, H);
     rafLoop = requestAnimationFrame(frame);
   }
@@ -1496,12 +1511,14 @@ export function createArrangeView(app) {
     vol.classList.add('arr-th-vol');
     const mtr = meter({ height: 30 });
     mtr.classList.add('arr-th-meter');
-    const ctrls = h('div.arr-th-ctrls', mute, solo, arm, autoBtn, vol);
+    const recBits = recUi.headerControls(id);
+    const ctrls = h('div.arr-th-ctrls', mute, solo, arm, autoBtn, recBits.el, vol);
     const el = h('div.arr-th', strip, h('div.arr-th-main', h('div.arr-th-top', ic, name), ctrls, inMeter), mtr);
 
     strip.addEventListener('click', (e) => { e.stopPropagation(); contextMenu(e, [{ header: 'Track color' }, ...colorItems((c) => upd((t) => { t.color = c; }, 'Track color'))]); });
     name.addEventListener('dblclick', () => actions.renameTrack(id));
-    el.addEventListener('contextmenu', (e) => { e.preventDefault(); actions.selectTrack(id); contextMenu(e, [...autoTrackMenuItems(id), '-', ...actions.trackMenuItems(id)]); });
+    el.addEventListener('contextmenu', (e) => { e.preventDefault(); actions.selectTrack(id); const rk = recUi.trackMenuItems(id); contextMenu(e, [...autoTrackMenuItems(id), '-', ...(rk.length ? [...rk, '-'] : []), ...actions.trackMenuItems(id)]); });
+    inMeter.addEventListener('click', (e) => { e.stopPropagation(); app.rec?.inputs.clearClip(id); });
     el.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || e.target.closest('button, .fader, input, select, .arr-th-strip')) return;
       const p = get();
@@ -1535,6 +1552,7 @@ export function createArrangeView(app) {
     return {
       el, mtr, inFill,
       update(t, i, selected, y) {
+        recBits.update(t);
         el.style.top = y + 'px';
         el.style.height = laneH + 'px';
         el.style.setProperty('--tc', t.color);
@@ -1608,6 +1626,8 @@ export function createArrangeView(app) {
     const track = lane >= 0 ? p.tracks[lane] || null : null;
     let clip = null, edge = null, auto = null;
     if (track && y >= L.rows[lane].y + laneH) {
+      const takeRow = (L.rows[lane].takes || []).find((tk) => y >= tk.y && y < tk.y + tk.h) || null;
+      if (takeRow) return { x, y, beat, lane, track, clip, edge, auto: null, takeRow };
       auto = L.rows[lane].auto.find((a) => y >= a.y && y < a.y + AUTO_H) || null;
       return { x, y, beat, lane, track, clip, edge, auto };
     }
@@ -1677,16 +1697,26 @@ export function createArrangeView(app) {
     store.transact('Split clip', (p) => {
       const i = p.clips.findIndex((c) => c.id === clipId);
       const c = p.clips[i];
-      const cut = beat - c.start;
-      const L = p.patterns[c.patternId]?.length || 0;
-      const second = { ...deepClone(c), id: uid('clip'), start: beat, length: c.length - cut, offset: c.type === 'pattern' ? mod((c.offset || 0) + cut, L) : (c.offset || 0) + cut };
-      c.length = cut;
-      p.clips.splice(i + 1, 0, second);
+      // fades stay on the outer edges, a gain envelope is cut in two (src/record/clips.js)
+      const [left, right] = splitClipAt(deepClone(c), beat, { patternLength: p.patterns[c.patternId]?.length || 0, newId: uid('clip') });
+      p.clips.splice(i, 1, left, right);
     });
     return true;
   }
 
+  /** Split clips (default: the selection, else every clip under the playhead on the selected track) at `beat`. */
+  function splitSelectionAt(beat, ids = null) {
+    const p = get();
+    let list = ids ? p.clips.filter((c) => ids.includes(c.id)) : selectedClips();
+    if (!list.length && !ids) list = p.clips.filter((c) => c.trackId === ui.get('selectedTrackId'));
+    const hitList = list.filter((c) => beat > c.start + EPS && beat < c.start + c.length - EPS);
+    if (!hitList.length) return false;
+    store.transact('Split', () => { for (const c of hitList) splitClip(c.id, recUi.splitBeat(c, beat)); });
+    return true;
+  }
+
   function deleteClips(ids) {
+    if (recUi.ripple) { const s = [...new Set(ids)]; if (!s.length) return; recUi.rippleDeleteClips(s); setSel(selIds().filter((id) => !s.includes(id))); return; }
     const s = new Set(ids);
     if (!s.size) return;
     store.transact(s.size > 1 ? `Delete ${s.size} clips` : 'Delete clip', (p) => { p.clips = p.clips.filter((c) => !s.has(c.id)); });
@@ -1945,7 +1975,8 @@ export function createArrangeView(app) {
       pat ? { label: isDrumTrack(t) ? 'Edit in Step Rack' : 'Edit in Piano Roll', icon: isDrumTrack(t) ? 'grid' : 'piano', onClick: () => openClipEditor(clip) } : null,
       { label: 'Rename…', icon: 'pencil', onClick: () => renameClip(clip.id) },
       { label: n > 1 ? `Duplicate ${n} clips` : 'Duplicate', icon: 'copy', shortcut: 'Ctrl+D', onClick: duplicateSelection },
-      { label: 'Split at playhead', icon: 'scissors', disabled: !(ph > clip.start + EPS && ph < clip.start + clip.length - EPS), onClick: () => splitClip(clip.id, ph) },
+      { label: 'Split at playhead', icon: 'scissors', shortcut: 'S', disabled: !(ph > clip.start + EPS && ph < clip.start + clip.length - EPS), onClick: () => splitSelectionAt(ph, [clip.id]) },
+      { label: 'Split at loop / punch range', icon: 'scissors', onClick: () => { const lp = get().punch?.enabled ? get().punch : get().loop; const ids = n > 1 ? selIds() : [clip.id]; splitSelectionAt(lp.end, ids); splitSelectionAt(lp.start, ids); } },
       pat ? { label: 'Make unique (own copy of the pattern)', icon: 'layers', onClick: () => makeUnique(clip.id) } : null,
       pat || clip.type === 'pattern' ? { label: 'Choose pattern', icon: 'music', submenu: [
         ...pats.map((pt) => ({ label: `${pt.id === clip.patternId ? '● ' : ''}${pt.name}`, onClick: () => setClipPattern(clip.id, pt.id) })),
@@ -1962,8 +1993,10 @@ export function createArrangeView(app) {
       })) },
       clip.type === 'audio' ? { label: 'Gain', icon: 'volume', submenu: [-12, -6, -3, 0, 3, 6].map((db) => ({ label: `${db > 0 ? '+' : ''}${db} dB${Math.abs(20 * Math.log10(clip.gain ?? 1) - db) < 0.5 ? '  ●' : ''}`, onClick: () => store.transact('Clip gain', (pp) => { const c = pp.clips.find((x) => x.id === clip.id); if (c) c.gain = +Math.pow(10, db / 20).toFixed(4); }) })) } : null,
       { label: 'Loop this clip', icon: 'loop', onClick: () => setLoop(clip.start, clip.start + clip.length) },
+      ...recUi.clipMenuItems(clip),
       '-',
       { label: n > 1 ? `Delete ${n} clips` : 'Delete', icon: 'trash', shortcut: 'Del', onClick: deleteSelection },
+      { label: n > 1 ? `Ripple delete ${n} clips` : 'Ripple delete (close the gap)', icon: 'trash', shortcut: 'Shift+Del', onClick: () => { recUi.rippleDeleteClips(n > 1 ? selIds() : [clip.id]); setSel([]); } },
     ];
     return items.filter(Boolean);
   }
@@ -1996,6 +2029,7 @@ export function createArrangeView(app) {
     if (e.clientX - r.left >= scroller.clientWidth || e.clientY - r.top >= scroller.clientHeight) return;
     const hit = hitTest(e.clientX, e.clientY);
     if (!hit.track) { if (!e.shiftKey) setSel([]); startRubber(e, hit); return; }
+    if (hit.takeRow) { if (hit.track.id !== ui.get('selectedTrackId')) actions.selectTrack(hit.track.id); recUi.takePointerDown(e, hit); return; }
     if (hit.auto) {
       if (!hit.ownerRow && hit.track.id !== ui.get('selectedTrackId')) actions.selectTrack(hit.track.id);
       if (hit.auto.lane?.virtual) return;
@@ -2009,8 +2043,19 @@ export function createArrangeView(app) {
     }
     if (tool === 'eraser') return startErase(e, hit);
     if (tool === 'scissors') {
-      if (hit.clip) splitClip(hit.clip.id, snapB(hit.beat, e));
+      if (hit.clip) splitClip(hit.clip.id, recUi.splitBeat(hit.clip, snapB(hit.beat, e)));
       return;
+    }
+    // fade / gain / envelope handles of a selected audio clip, Alt-drag = slip the audio inside it
+    if (hit.clip && tool === 'pointer') {
+      const laneTop = trackY(rowsLayout(), hit.lane);
+      const hd = recUi.clipHandleAt(hit.clip, hit.x, hit.y, laneTop);
+      if (hd) { recUi.startHandleDrag(e, hit.clip, hd, laneTop); return; }
+      if (e.altKey && hit.clip.type === 'audio' && !hit.edge && hit.y > laneTop + (laneH - 5 >= 30 ? 16 : 0)) {
+        if (!selIds().includes(hit.clip.id)) setSel([hit.clip.id]);
+        recUi.startSlip(e, hit.clip);
+        return;
+      }
     }
     if (tool === 'pencil' && !hit.clip) return startPencil(e, hit);
     if (!hit.clip) {
@@ -2085,9 +2130,11 @@ export function createArrangeView(app) {
     const p = get();
     const ids = new Set(selIds());
     const orig = new Map();
-    for (const c of p.clips) if (ids.has(c.id)) orig.set(c.id, { start: c.start, length: c.length, offset: c.offset || 0, L: p.patterns[c.patternId]?.length || 0, type: c.type });
+    for (const c of p.clips) if (ids.has(c.id)) orig.set(c.id, { start: c.start, length: c.length, offset: c.offset || 0, L: p.patterns[c.patternId]?.length || 0, type: c.type, trackId: c.trackId });
     const a = orig.get(anchor.id);
     if (!a) return;
+    // ripple editing: lengthening / shortening moves the clips after it on the same track
+    const later = recUi.ripple && side === 'right' ? p.clips.filter((c) => !ids.has(c.id) && [...orig.values()].some((o) => o.trackId === c.trackId && c.start >= o.start + o.length - EPS)).map((c) => ({ id: c.id, start: c.start })) : [];
     const tx = dragTx(side === 'right' ? 'Resize clips' : 'Trim clips');
     beginDrag();
     startDrag(e, (dx, _dy, ev) => {
@@ -2095,7 +2142,11 @@ export function createArrangeView(app) {
       if (side === 'right') {
         const end = snapB(a.start + a.length + dx / ppb, ev);
         const delta = end - (a.start + a.length);
-        tx((pp) => { for (const c of pp.clips) { const o = orig.get(c.id); if (o) c.length = +Math.max(ml, o.length + delta).toFixed(6); } });
+        tx((pp) => {
+          for (const c of pp.clips) { const o = orig.get(c.id); if (o) c.length = +Math.max(ml, o.length + delta).toFixed(6); }
+          const d = Math.max(ml, a.length + delta) - a.length;
+          for (const l of later) { const c = pp.clips.find((x) => x.id === l.id); if (c) c.start = +Math.max(0, l.start + d).toFixed(6); }
+        });
       } else {
         let delta = snapB(a.start + dx / ppb, ev) - a.start;
         let lo = -Infinity, hi = Infinity;
@@ -2171,6 +2222,7 @@ export function createArrangeView(app) {
     const hit = hitTest(e.clientX, e.clientY);
     if (hit.ownerRow && !hit.auto) { toggleAutoOpen(hit.ownerRow.t.id); return; }
     if (!hit.track) { menuAt(addRow, actions.addTrackMenuItems()); return; }
+    if (hit.takeRow) { recUi.takeDblClick(hit); return; }
     if (hit.auto) {
       if (!hit.auto.lane || hit.auto.lane.virtual) return;
       const pk = autoPick(hit);
@@ -2178,6 +2230,7 @@ export function createArrangeView(app) {
       return;
     }
     if (hit.clip) { openClipEditor(hit.clip); return; }
+    if (recUi.compFor(get(), hit.track).some((c) => hit.beat >= c.start && hit.beat < c.start + c.length)) { recUi.setOpen(hit.track.id, true); return; }
     if (tool !== 'pointer') return;
     if (hit.track.type === 'instrument') createClipAt(hit.track, hit.beat);
     else if (hit.track.type === 'audio') importAudioAt(hit.track, snapB(hit.beat, null, Math.floor));
@@ -2187,6 +2240,7 @@ export function createArrangeView(app) {
     e.preventDefault();
     const hit = hitTest(e.clientX, e.clientY);
     if (hit.ownerRow && !hit.auto) { contextMenu(e, autoTrackMenuItems(hit.ownerRow.t.id)); return; }
+    if (hit.takeRow) { contextMenu(e, recUi.takeMenu(hit)); return; }
     if (hit.auto) {
       if (!hit.auto.lane) { contextMenu(e, addAutomationItems(hit.track.id)); return; }
       if (hit.auto.lane.virtual) return;
@@ -2312,7 +2366,8 @@ export function createArrangeView(app) {
       });
       return;
     }
-    // loop lane
+    // loop lane (Shift: the punch range)
+    if (e.shiftKey) { recUi.startPunchDrag(e, beat); return; }
     const loop = p.loop || { start: 0, end: 16, enabled: false };
     const x = beat * ppb;
     const nearStart = Math.abs(x - loop.start * ppb) < 6, nearEnd = Math.abs(x - loop.end * ppb) < 6;
@@ -2375,6 +2430,8 @@ export function createArrangeView(app) {
       { label: p.loop?.enabled ? 'Disable loop' : 'Enable loop', icon: 'loop', onClick: () => store.transact('Toggle loop', (pp) => { pp.loop.enabled = !pp.loop.enabled; }) },
       { label: 'Loop the whole song', icon: 'loop', disabled: !p.clips.length, onClick: () => setLoop(0, songLengthBeats(p)) },
       { label: 'Loop 4 bars from here', icon: 'loop', onClick: () => setLoop(beat, beat + bpbNow() * 4) },
+      '-',
+      ...recUi.punchMenuItems(),
     ]);
   });
 
@@ -2446,7 +2503,9 @@ export function createArrangeView(app) {
     const k = e.key.toLowerCase();
     const n = selIds().length;
     let handled = true;
-    if ((k === 'delete' || k === 'backspace') && !modk) { if (!n) return; deleteSelection(); }
+    if ((k === 'delete' || k === 'backspace') && !modk && e.shiftKey) { if (!n) return; recUi.rippleDeleteClips(selIds()); setSel([]); }
+    else if ((k === 'delete' || k === 'backspace') && !modk) { if (!n) return; deleteSelection(); }
+    else if (k === 's' && !modk && !e.shiftKey && !e.altKey) { if (!splitSelectionAt(pos())) return; }
     else if (modk && k === 'd') { if (!n) return; duplicateSelection(); }
     else if (modk && k === 'c') { if (!copySelection()) return; }
     else if (modk && k === 'x') { if (!copySelection()) return; deleteSelection(); }
@@ -2478,7 +2537,7 @@ export function createArrangeView(app) {
       text = 'Pattern mode — the timeline isn\'t playing (each track loops its active pattern). Switch to SONG (P) to hear the arrangement.';
       btns = [button('Switch to SONG', () => actions.setMode('song'), { cls: 'small', primary: true, title: 'Play the arrangement timeline (P)' })];
       if (!p.clips.length) btns.push(button('Pattern ▸ Song…', (e) => menuAt(e.currentTarget, patternToSongItems()), { cls: 'small', title: 'Build the arrangement from scenes or active patterns' }));
-    } else if (p.tracks.length && !p.clips.length && p.tracks.some((t) => t.type !== 'code')) {
+    } else if (p.tracks.length && !p.clips.length && !p.tracks.some((t) => t.comp?.length) && p.tracks.some((t) => t.type !== 'code')) {
       text = 'The timeline is empty — double-click a lane to add a clip, draw with the pencil, or build it from your patterns.';
       btns = [button('Clips from active patterns', () => clipsFromActive(4), { cls: 'small', primary: true, title: 'Place every active pattern as a 4-bar clip' }), button('Fill from scenes', () => fillFromScenes(null), { cls: 'small', title: 'One section per scene' })];
     }

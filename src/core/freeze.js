@@ -136,6 +136,7 @@ function soundState(project, track) {
     volume: mode === 'postFader' ? track.volume : null, pan: mode === 'postFader' ? track.pan : null,
     active: f.renderMode === 'pattern' ? track.activePatternId : null,
     lanes: (track.automation || []).filter(keepLane), clips, patterns,
+    takes: track.takeLanes ?? null, comp: track.comp ?? null, compXfade: track.compXfade ?? null, // src/record comps
   });
 }
 

@@ -21,8 +21,7 @@ import { monitorActive } from './timing.js';
 const LAT_KEY = 'daw3-rec-latency';
 export const DEFAULT_SOURCE = 'default';
 
-export const isCaptureSupported = () => typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia
-  && typeof globalThis.AudioWorkletNode === 'function';
+export const isCaptureSupported = () => typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
 
 const native = () => (typeof window !== 'undefined' ? window.daw3Native?.audio : null) || null;
 
@@ -93,7 +92,56 @@ export function trackChannels(t, n) {
   return ok.length ? ok.slice(0, 2) : [0];
 }
 
-let workletLoaded = new WeakMap();
+const workletLoaded = new WeakMap(); // ctx -> Promise<boolean> (true: the capture worklet is usable)
+const WORKLET_TIMEOUT = 2500;
+/** Load the capture worklet on ctx; resolves false when the browser can't (or stalls) — ScriptProcessor fallback. */
+export function loadCaptureWorklet(ctx) {
+  if (!workletLoaded.has(ctx)) {
+    const add = ctx.audioWorklet && typeof globalThis.AudioWorkletNode === 'function'
+      ? ctx.audioWorklet.addModule(new URL('./capture-processor.js', import.meta.url).href).then(() => true, () => false)
+      : Promise.resolve(false);
+    workletLoaded.set(ctx, Promise.race([add, new Promise((r) => setTimeout(() => r(false), WORKLET_TIMEOUT))]));
+  }
+  return workletLoaded.get(ctx);
+}
+
+/**
+ * Capture tap: an input node + the same message protocol as capture-processor.js (peaks / chunk / stopped), from the
+ * AudioWorklet or — where AudioWorklet is unavailable or stalls — a ScriptProcessorNode. The ScriptProcessor delivers
+ * its input two buffers before e.playbackTime (measured in Chromium: ±1 render quantum); the loopback calibration
+ * measures through the same path, so a calibrated device is exact either way.
+ */
+export async function createCaptureTap(ctx, channels, onMessage) {
+  if (await loadCaptureWorklet(ctx)) {
+    const node = new AudioWorkletNode(ctx, 'daw3-capture', {
+      numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
+      channelCount: channels, channelCountMode: 'explicit', channelInterpretation: 'discrete',
+      processorOptions: { channels },
+    });
+    node.port.onmessage = (e) => onMessage(e.data);
+    return { node, kind: 'worklet', start: () => node.port.postMessage({ cmd: 'start' }), stop: () => node.port.postMessage({ cmd: 'stop' }) };
+  }
+  const N = 1024;
+  const node = ctx.createScriptProcessor(N, channels, 1);
+  node.channelCountMode = 'explicit';
+  node.channelInterpretation = 'discrete';
+  let rec = false;
+  const peaks = new Float32Array(channels);
+  node.onaudioprocess = (e) => {
+    const ib = e.inputBuffer;
+    const data = [];
+    for (let c = 0; c < channels; c++) {
+      const d = ib.getChannelData(Math.min(c, ib.numberOfChannels - 1));
+      let m = 0;
+      for (let i = 0; i < d.length; i++) { const a = d[i] < 0 ? -d[i] : d[i]; if (a > m) m = a; }
+      peaks[c] = m;
+      if (rec) data.push(d.slice());
+    }
+    onMessage({ type: 'peaks', peaks: Array.from(peaks) });
+    if (rec) onMessage({ type: 'chunk', frame: Math.round(e.playbackTime * ctx.sampleRate) - 2 * N, data });
+  };
+  return { node, kind: 'script', start: () => { rec = true; }, stop: () => { rec = false; onMessage({ type: 'stopped' }); } };
+}
 
 export class InputManager extends Emitter {
   constructor(engine, store, { getPrefs = () => ({}) } = {}) {
@@ -134,27 +182,22 @@ export class InputManager extends Emitter {
   }
 
   async _open(id) {
-    if (!isCaptureSupported()) throw new Error('Audio recording needs a browser with AudioWorklet and microphone access.');
+    if (!isCaptureSupported()) throw new Error('Audio recording needs a browser with microphone access (getUserMedia).');
     const ctx = this.ctx;
     const entry = { id, opening: true, peaks: [], hold: [] };
     this.sources.set(id, entry);
     try {
-      if (!workletLoaded.get(ctx)) workletLoaded.set(ctx, ctx.audioWorklet.addModule(new URL('./capture-processor.js', import.meta.url)));
-      await workletLoaded.get(ctx);
       const h = await openInputSource(ctx, id);
       if (this.sources.get(id) !== entry || this.ctx !== ctx) { h.close(); return; }
-      const cap = new AudioWorkletNode(ctx, 'daw3-capture', {
-        numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
-        channelCount: h.channels, channelCountMode: 'explicit', channelInterpretation: 'discrete',
-        processorOptions: { channels: h.channels },
-      });
+      const tap = await createCaptureTap(ctx, h.channels, (m) => this._onMessage(entry, m));
+      if (this.sources.get(id) !== entry || this.ctx !== ctx) { h.close(); return; }
+      const cap = tap.node;
       const sink = ctx.createGain();
       sink.gain.value = 0;
       h.node.connect(cap);
       cap.connect(sink);
       sink.connect(ctx.destination);
-      Object.assign(entry, { h, cap, sink, channels: h.channels, label: h.label, opening: false, chunks: [] });
-      cap.port.onmessage = (e) => this._onMessage(entry, e.data);
+      Object.assign(entry, { h, cap, tap, sink, channels: h.channels, label: h.label, opening: false, chunks: [] });
       this.errors.delete(id);
       for (const t of h.stream?.getAudioTracks?.() || []) t.addEventListener('ended', () => { this._close(id); this.emit('change'); });
       this.emit('change');
@@ -298,7 +341,7 @@ export class InputManager extends Emitter {
     for (const s of this.sources.values()) {
       if (s.opening) continue;
       s.chunks = [];
-      s.cap.port.postMessage({ cmd: 'start' });
+      s.tap.start();
     }
     return Math.round(this.ctx.currentTime * this.ctx.sampleRate);
   }
@@ -311,7 +354,7 @@ export class InputManager extends Emitter {
       done.push(new Promise((resolve) => {
         const to = setTimeout(resolve, 1500);
         s.onStopped = () => { clearTimeout(to); s.onStopped = null; resolve(); };
-        s.cap.port.postMessage({ cmd: 'stop' });
+        s.tap.stop();
       }));
     }
     await Promise.all(done);
