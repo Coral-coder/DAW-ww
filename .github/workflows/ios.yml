@@ -1,0 +1,84 @@
+name: iOS
+on:
+  push:
+    branches: [ios]
+    paths: ['ios/**', 'src/**', 'styles/**', 'vendor/**', 'index.html', '.github/workflows/ios.yml']
+  workflow_dispatch:
+jobs:
+  build:
+    # Work-in-progress checkpoints ("WIP: …") are skipped, like the web CI.
+    if: ${{ github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'WIP') }}
+    runs-on: macos-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: ios
+    steps:
+      - uses: actions/checkout@v5
+      - name: Tools
+        run: |
+          brew install xcodegen >/dev/null
+          xcodebuild -version
+          xcodegen --version
+      - name: Generate Xcode project
+        run: |
+          xcodegen generate
+          mkdir -p build
+      - name: Pick a simulator
+        id: sim
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          d = json.load(sys.stdin)["devices"]
+          ios = sorted((k for k in d if "iOS" in k), key=lambda k: [int(x) for x in k.split("iOS-")[-1].split("-")])
+          for k in reversed(ios):
+              phones = [x for x in d[k] if x["name"].startswith("iPhone")]
+              if phones:
+                  print(phones[-1]["udid"]); break
+          ')
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl list devices available | grep "$UDID"
+      - name: Build + test (iOS Simulator)
+        run: |
+          set -o pipefail
+          xcodebuild test -project daW3.xcodeproj -scheme daW3 \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath build/dd -resultBundlePath build/Tests.xcresult \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
+            | tee build/test.log | grep -E "error:|warning: .*daW3|Test Case|Executed|\*\* " || true
+          grep -q "\*\* TEST SUCCEEDED \*\*" build/test.log
+      - name: Simulator app artifact
+        if: always()
+        run: |
+          APP=$(find build/dd/Build/Products -maxdepth 2 -name 'daW3.app' -path '*iphonesimulator*' | head -1)
+          if [ -n "$APP" ]; then ditto -c -k --keepParent "$APP" build/daW3-simulator.zip; fi
+      - name: Archive (device, unsigned)
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          xcodebuild archive -project daW3.xcodeproj -scheme daW3 -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath build/daW3.xcarchive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= \
+            | tee build/archive.log | grep -E "error:|\*\* " || true
+          grep -q "\*\* ARCHIVE SUCCEEDED \*\*" build/archive.log
+          mkdir -p build/ipa/Payload
+          cp -R build/daW3.xcarchive/Products/Applications/daW3.app build/ipa/Payload/
+          (cd build/ipa && zip -qry ../daW3-unsigned.ipa Payload)
+          ditto -c -k --keepParent build/daW3.xcarchive build/daW3-unsigned.xcarchive.zip
+          ls -la build/*.ipa build/*.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: daW3-ios
+          if-no-files-found: warn
+          path: |
+            ios/build/daW3-simulator.zip
+            ios/build/daW3-unsigned.ipa
+            ios/build/daW3-unsigned.xcarchive.zip
+            ios/build/test.log
+            ios/build/archive.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results
+          path: ios/build/Tests.xcresult

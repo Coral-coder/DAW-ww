@@ -17,6 +17,8 @@ const safeName = (s, fb) => (String(s || '').replace(/[^\w\- ]+/g, '').trim() ||
 
 /** Share a file through the iOS share sheet (Save to Files, AirDrop, Messages…) or download it. Call from a tap. */
 export function shareFile(blob, filename, title) {
+  const nat = globalThis.daw3Native; // iOS app: native share sheet (WKWebView has no file sharing)
+  if (nat?.share) return blob.arrayBuffer().then((data) => nat.share({ name: filename, data: new Uint8Array(data), title })).catch((e) => console.error('[share]', e));
   try {
     const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
     if (navigator.canShare?.({ files: [file] })) {

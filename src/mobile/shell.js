@@ -8,6 +8,7 @@ import { PAGES, SUBPAGES, parseRoute, routeHash, tabOf, neighbour, swipeDecision
 import { switchLayout } from './mode.js';
 import { actionSheet, haptic, closeTopSheet } from './touch.js';
 import { openParamPopup, valueTarget } from './controls.js';
+import { installPocketNative, nativeMenuItems } from './native.js';
 
 const PAGE_MODULES = {
   home: () => import('./pages/home.js').then((m) => m.createHomePage),
@@ -101,6 +102,7 @@ export async function createPocketApp(rootEl) {
       { label: `Loop / song: ${p.mode === 'song' ? 'whole song' : 'loop patterns'}`, icon: 'loop', onClick: () => actions.setMode(p.mode === 'song' ? 'pattern' : 'song') },
       { label: `Theme: ${ui.get('theme') === 'dark' ? 'switch to light' : 'switch to dark'}`, icon: 'sun', onClick: () => ui.set({ theme: ui.get('theme') === 'dark' ? 'light' : 'dark' }) },
       { label: 'Desktop layout', icon: 'grid', onClick: () => switchLayout('desktop') },
+      ...nativeMenuItems(app, nav), // iOS app: Files import; MIDI keyboards
       '-',
       { label: 'Help', icon: 'help', onClick: () => actions.showHelp() },
       { label: 'About / source code', icon: 'code', onClick: () => actions.showAbout() },
@@ -238,6 +240,7 @@ export async function createPocketApp(rootEl) {
   if (!location.hash) { try { const s = localStorage.getItem('daw3-pocket-page'); if (s) initial = parseRoute('#/' + s); } catch { /* */ } }
   if (!store.get().tracks.length && !location.hash) initial = { page: 'home' };
   go(initial, { replace: true });
+  installPocketNative(app, nav); // iOS app (ios/): "Open in daW³" documents, after boot so they win over autosave
   void raf;
   return app;
 }

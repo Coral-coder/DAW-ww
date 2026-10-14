@@ -1,0 +1,61 @@
+# XcodeGen spec — generate daW3.xcodeproj with:  cd ios && xcodegen generate
+name: daW3
+options:
+  bundleIdPrefix: com.coralcoder
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # Set your Team in Xcode (Signing & Capabilities) or here: DEVELOPMENT_TEAM: ABCDE12345
+    CODE_SIGN_STYLE: Automatic
+targets:
+  daW3:
+    type: application
+    platform: iOS
+    sources:
+      - path: daW3/App
+      - path: daW3/Bridge
+      - path: daW3/Web
+        buildPhase: resources
+      - path: daW3/Resources
+    settings:
+      base:
+        PRODUCT_NAME: daW3
+        PRODUCT_BUNDLE_IDENTIFIER: com.coralcoder.daw3
+        INFOPLIST_FILE: daW3/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        SUPPORTS_MACCATALYST: NO
+    preBuildScripts:
+      - name: Bundle web app
+        script: '"${SRCROOT}/scripts/bundle-web.sh" "${SRCROOT}/.." "${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/web"'
+        basedOnDependencyAnalysis: false
+  daW3Tests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: daW3Tests
+    dependencies:
+      - target: daW3
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.coralcoder.daw3.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/daW3.app/daW3"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+schemes:
+  daW3:
+    build:
+      targets:
+        daW3: all
+        daW3Tests: [test]
+    test:
+      targets:
+        - daW3Tests
+      gatherCoverageData: false
