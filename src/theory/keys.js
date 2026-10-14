@@ -69,6 +69,7 @@ export function diatonicChord(root, scaleId, degree, opts = {}) {
   const chordRoot = mod12(root + iv[d]);
   const chord = { root: chordRoot, type, degree: d };
   chord.roman = chordToRoman(chord, root);
+  chord.preferFlats = keyPrefersFlats(root, id);
   chord.notes = chordPitchClasses(chordRoot, type);
   chord.name = chordName(chord);
   return chord;
@@ -215,9 +216,28 @@ export function detectKey(notes) {
 }
 
 // ---- Key relations ----
+/** Major-key roots written with flats (F Bb Eb Ab Db Gb); minor / modal keys follow their relative major. */
+export const FLAT_MAJOR_ROOTS = Object.freeze([5, 10, 3, 8, 1, 6]);
 export function keyPrefersFlats(root, scaleId = 'major') {
-  // count via relative major
-  return [5, 10, 3, 8, 1].includes(relativeMajorRoot(root, scaleId));
+  // count via relative major: Eb minor (Gb major, 6 flats) — not D# minor; Ab major — not G# major
+  return FLAT_MAJOR_ROOTS.includes(relativeMajorRoot(root, scaleId || 'major'));
+}
+
+/**
+ * THE key-signature-aware spelling: a pitch class named as the key {root, scale} writes it (flat keys -> flats,
+ * sharp keys -> sharps). With no key, the common mixed spelling. Used for key names, chord symbols, code comments,
+ * MusicXML, setlist and toasts.
+ */
+export function spellPitch(pc, key = null) {
+  if (!key) return pitchClassName(pc, 'common');
+  return pitchClassName(pc, keyPrefersFlats(key.root, key.scale));
+}
+/** The key's own root name: 8 + major -> 'Ab', 3 + minor -> 'Eb', 6 + minor -> 'F#'. */
+export const keyRootName = (root, scaleId = 'major') => pitchClassName(root, keyPrefersFlats(root, scaleId));
+/** Key-aware MIDI note name ('Ab4' in Eb major, 'G#4' in E major). */
+export function spellNote(midi, key = null) {
+  const m = Math.round(midi);
+  return spellPitch(m, key) + (Math.floor(m / 12) - 1);
 }
 
 export function keyName(root, scaleId = 'major') {
@@ -280,7 +300,7 @@ export function fifthsDistance(a, b) {
 export function keySignature(root, scaleId = 'major') {
   const maj = relativeMajorRoot(root, scaleId);
   const i = CIRCLE_OF_FIFTHS.indexOf(maj);
-  return i <= 6 ? i : i - 12; // G=+1 ... F#=+6, Db=-5 ... F=-1
+  return i <= 5 ? i : i - 12; // G=+1 ... B=+5, Gb=-6, Db=-5 ... F=-1 (matches keyPrefersFlats)
 }
 
 /**

@@ -44,3 +44,38 @@ test('count-in: accents follow the meter (6/8 groups 3+3) even without a tempo m
   if (map.meterOfBar(-1).num === 6) assert.deepEqual(ci.clicks.map((c) => c.level), [2, 0, 0, 1, 0, 0]);
   else assert.equal(ci.clicks[0].level, 2);
 });
+
+import { keyName, keyRootName, spellPitch, spellNote, keySignature, diatonicChords, keyPrefersFlats } from '../src/theory/index.js';
+import { keyName as setlistKeyName, keyMoveOptions } from '../src/live/setlist-engine.js';
+import { noteSpeller } from '../src/code/song-code.js';
+
+test('key spelling: flat keys (F Bb Eb Ab Db Gb + relative minors) use flats everywhere', () => {
+  assert.equal(keyName(8, 'major'), 'Ab major');
+  assert.equal(keyRootName(8, 'major'), 'Ab');
+  assert.equal(keyRootName(8, 'minor'), 'G#');
+  assert.equal(keyName(3, 'minor'), 'Eb minor'); // 6 flats, not D# minor
+  assert.equal(keyName(6, 'major'), 'Gb major');
+  assert.equal(keyName(10, 'minor'), 'Bb minor');
+  assert.equal(keyName(1, 'minor'), 'C# minor');
+  assert.equal(keyName(4, 'major'), 'E major');
+  assert.equal(keyRootName(2, 'dorian'), 'D');
+  assert.equal(keyRootName(3, 'dorian'), 'Eb'); // Eb dorian = Db major
+  assert.equal(spellPitch(8, { root: 3, scale: 'major' }), 'Ab');
+  assert.equal(spellPitch(8, { root: 4, scale: 'major' }), 'G#');
+  assert.equal(spellNote(68, { root: 3, scale: 'minor' }), 'Ab4');
+  assert.equal(keySignature(6, 'major'), -6);
+  assert.equal(keySignature(3, 'minor'), -6);
+  assert.equal(keySignature(11, 'major'), 5);
+  assert.ok(keyPrefersFlats(5, 'major') && !keyPrefersFlats(7, 'major'));
+});
+
+test('key spelling: chord symbols, setlist and code speller agree with the key', () => {
+  assert.deepEqual(diatonicChords(8, 'major').map((c) => c.name), ['Ab', 'Bbm', 'Cm', 'Db', 'Eb', 'Fm', 'Gdim']);
+  assert.deepEqual(diatonicChords(4, 'major').map((c) => c.name).slice(0, 3), ['E', 'F#m', 'G#m']);
+  assert.equal(setlistKeyName({ root: 3, scale: 'minor' }), 'Eb minor');
+  const par = keyMoveOptions({ root: 3, scale: 'major' }).find((o) => /parallel/i.test(o.label));
+  if (par) assert.match(par.text, /^Eb major → Eb minor/);
+  assert.equal(noteSpeller({ key: { root: 8, scale: 'major' } })(68), 'ab4');
+  assert.equal(noteSpeller({ key: { root: 3, scale: 'minor' } })(66), 'gb4');
+  assert.equal(noteSpeller({ key: { root: 9, scale: 'minor' } })(66), 'f#4');
+});

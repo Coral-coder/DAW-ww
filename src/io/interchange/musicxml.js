@@ -11,7 +11,7 @@ import { el, toXml, parseXml, child, children, numAttr } from './xml.js';
 import { readZip, zipText, isZip } from './zip.js';
 import { beatsPerBar, songLengthBeats, createTrack, createPattern, createNote, createClip, TRACK_COLORS } from '../../core/model.js';
 import { collectTrackNotes } from '../midi.js';
-import { detectChord, chordName, parseChordName, chordNotes, keySignature, pitchClassName, mod12 } from '../../theory/index.js';
+import { detectChord, chordName, parseChordName, chordNotes, keySignature, keyPrefersFlats, pitchClassName, mod12 } from '../../theory/index.js';
 import { clamp } from '../../core/util.js';
 
 export const DIVISIONS = 24; // per quarter note: 16ths, 32nds and (16th-)triplets are exact
@@ -104,6 +104,7 @@ export function harmonyChords(project, { exclude = null } = {}) {
   const bass = project.tracks.find((t) => isMelodic(t) && t.role === 'bass');
   const bassNotes = bass ? trackNotes(project, bass) : [];
   const end = Math.max(...notes.map((n) => n.start + n.dur));
+  const keyFlats = project.key ? keyPrefersFlats(project.key.root, project.key.scale) : 'common'; // chord symbols spelled like the key
   const out = [];
   let prev = null;
   for (let b = 0; b < end - 1e-9; b += 1) {
@@ -113,7 +114,7 @@ export function harmonyChords(project, { exclude = null } = {}) {
     if (!ch) continue;
     const bassNote = bassNotes.filter((n) => n.start <= b + 1e-9 && n.start + n.dur > b + 1e-9).sort((x, y) => x.pitch - y.pitch)[0];
     const chord = { root: ch.root, type: ch.type, ...(bassNote && mod12(bassNote.pitch) !== ch.root ? { bass: mod12(bassNote.pitch) } : ch.bass !== ch.root ? { bass: ch.bass } : {}) };
-    const name = chordName(chord);
+    const name = chordName(chord, { preferFlats: keyFlats });
     if (name !== prev) out.push({ beat: b, name });
     prev = name;
   }

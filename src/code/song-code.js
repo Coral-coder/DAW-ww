@@ -23,6 +23,7 @@ import {
 } from './idioms.js';
 import { valueAt, parseTarget } from '../core/automation.js';
 import { grooveFor } from '../gen/groove.js';
+import { keyPrefersFlats, keyRootName } from '../theory/keys.js';
 import { resolveInstrumentDef } from '../audio/presets.js';
 import { strudelPatchCode } from '../audio/strudel-patches.js';
 
@@ -31,8 +32,6 @@ const SHARP = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b'];
 const FLAT = ['c', 'db', 'd', 'eb', 'e', 'f', 'gb', 'g', 'ab', 'a', 'bb', 'b'];
 const PITCH_TO_SHORT = Object.fromEntries(DRUM_PADS.map((p) => [p.pitch, p.short]));
 const DRUM_ORDER = new Map(DRUM_PADS.map((p, i) => [p.pitch, i]));
-// keys whose signature uses flats (major-relative pitch class of the key)
-const FLAT_KEYS = new Set([5, 10, 3, 8, 1, 6]);
 /** Onset quantisation used by the code view (see idioms.js snapBeat). */
 export const snapBeat = snapBeatQ;
 /** Velocity quantisation used by the code view (0.05 steps). */
@@ -44,7 +43,6 @@ const RESERVED = new Set(['break', 'case', 'catch', 'class', 'const', 'continue'
   'this', 'throw', 'try', 'typeof', 'var', 'void', 'while', 'with', 'yield', 'let', 'static', 'enum', 'await', 'implements',
   'package', 'protected', 'interface', 'private', 'public', 'eval', 'arguments', 'null', 'true', 'false', 'undefined',
   'http', 'https', 'silence', 'all', 'each']);
-const MINOR_LIKE = new Set(['minor', 'aeolian', 'dorian', 'phrygian', 'harmonicMinor', 'melodicMinor', 'harmonic-minor', 'melodic-minor', 'locrian', 'minorPentatonic', 'blues']);
 export const TEMPO_MARK = '// [project tempo] ';
 export const ALL_MARK = '// [this track only] ';
 
@@ -67,8 +65,7 @@ function velStr(v) {
 export function noteSpeller(project) {
   const root = project?.key?.root ?? 0;
   const scale = project?.key?.scale || 'major';
-  const rel = MINOR_LIKE.has(scale) ? (root + 3) % 12 : root;
-  const names = FLAT_KEYS.has(rel) ? FLAT : SHARP;
+  const names = keyPrefersFlats(root, scale) ? FLAT : SHARP;
   return (m) => { m = Math.round(m); return names[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1); };
 }
 
@@ -917,7 +914,7 @@ export function songToCode(project, opts = {}) {
   // ---- header
   let code = '';
   const push = (text) => { code += text; };
-  const keyName = key ? `${rootName(key.root)} ${scaleTitle(key.scale)}` : '';
+  const keyName = key ? `${keyRootName(key.root, key.scale)} ${scaleTitle(key.scale)}` : '';
   const bars = Math.round(totalBeats / bpb);
   const facts = [keyName, `${fmt(project.bpm)} BPM`, project.genre, arranged ? `${bars} bars (${fmtTime((totalBeats * 60) / (project.bpm || 120))})` : 'loop'].filter(Boolean);
   push(`// ${project.name || 'Untitled project'} — ${facts.join(' · ')}\n`);

@@ -633,6 +633,7 @@ export function createPianoView(app) {
       const c = T.detectChord(g.map((n) => n.pitch));
       if (!c) continue;
       const key = keyInfo();
+      if (T.chordName && T.keyPrefersFlats) c.name = T.chordName(c, { preferFlats: T.keyPrefersFlats(key.root, key.scale) });
       const roman = T.chordToRoman ? T.chordToRoman(c, key.root) : c.name;
       if (out.length && out[out.length - 1].roman === roman) continue;
       out.push({ roman, chord: c, start: k, end: Math.max(...g.map((n) => n.start + n.dur)) });
@@ -655,7 +656,7 @@ export function createPianoView(app) {
     for (const s of suggestions) {
       const ch = s.chord || T.romanToChord(s.roman, k.root, k.scale);
       if (!ch) continue;
-      const b = h('button.piano-chip', { type: 'button', title: `${s.reason || ''}\nClick to insert ${ch.name || ''} after the last chord` }, h('b', s.roman), ' ', T.chordName ? T.chordName(ch) : (ch.name || ''));
+      const b = h('button.piano-chip', { type: 'button', title: `${s.reason || ''}\nClick to insert ${ch.name || ''} after the last chord` }, h('b', s.roman), ' ', T.chordName ? T.chordName(ch, { preferFlats: T.keyPrefersFlats(k.root, k.scale) }) : (ch.name || ''));
       b.addEventListener('click', () => insertChord(ch.root, ch.type, { at: after }));
       chips.append(b);
     }
@@ -795,7 +796,7 @@ export function createPianoView(app) {
     const scales = Object.entries(T.SCALES);
     return [
       { header: 'Project key' },
-      { label: `Root: ${T.pitchClassName(k.root, 'common')}`, submenu: Array.from({ length: 12 }, (_, i) => ({ label: T.pitchClassName(i, 'common'), icon: i === k.root ? 'chevronRight' : null, onClick: () => store.transact('Key', (p) => { p.key.root = i; }) })) },
+      { label: `Root: ${T.keyRootName(k.root, k.scale)}`, submenu: Array.from({ length: 12 }, (_, i) => ({ label: T.keyRootName(i, k.scale), icon: i === k.root ? 'chevronRight' : null, onClick: () => store.transact('Key', (p) => { p.key.root = i; }) })) },
       { label: `Scale: ${T.SCALES[k.scale]?.name || k.scale}`, submenu: scales.slice(0, 40).map(([id, s]) => ({ label: s.name, icon: id === k.scale ? 'chevronRight' : null, onClick: () => store.transact('Scale', (p) => { p.key.scale = id; }) })) },
       '-',
       { label: 'Detect key from this pattern', icon: 'sparkles', onClick: detectKeyFromPattern, disabled: !cur.pat?.notes.length || typeof T.detectKey !== 'function' },
