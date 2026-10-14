@@ -1,0 +1,5 @@
+setcpm(120/4)
+kick: s("bd*4").bank("RolandTR707")
+hats: s("hh*8").bank("RolandTR707").gain(".5 .3").pan(sine.slow(4))
+bass: note("c2*8").s("sawtooth").lpf(sine.range(300, 3000).slow(4)).delay(.3).delaytime(.375)
+lead: n("0 2 4 <7 9>").scale("C4:major").s("triangle").shape(.3).crush(6)

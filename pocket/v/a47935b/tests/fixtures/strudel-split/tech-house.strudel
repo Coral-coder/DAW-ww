@@ -1,0 +1,57 @@
+// Tech House sketch — G# minor · 125 BPM · 6:39
+// live-coder view: one idea per part. Edit + Ctrl+Enter re-renders the parts you changed.
+setcpm(125/4)
+
+const intro  = "<G#m!6 C#m>"
+const intro2 = "<G#m!6 C#m G#m>"
+const verse  = "<G#m!4 C#!2 G#m!2>"
+const break_ = "<B!2 F#!2 E!2 F#!2>"
+const build  = "<E!2 F#!2>"
+const chorus = "<G#m!2 F#!2 E!2 F#!2>"
+const chords = h => chord(h).voicing()
+const drums  = stack(
+  s("bd*4, [~ cp]*2, [~ [~ rim] ~ rim]*2, [~ oh]*4"),
+  s("~ [~ [~ perc]] ~ [[~ perc] ~]"),
+  s("hh*4").gain(.4),
+  s("[~ [~ sh]*2] [~ sh]*4").gain(perlin.range(.41, 1)),
+).bank("RolandTR909").sometimesBy(.1, x => x.ply(2))
+const bass   = n("[~ 0 ~ 0 ~ ~ ~ 7] [~ 0 [~ 4] ~]".add("<0!2 6!2 5!2 6!2>")).scale("G#1:minor").s("sine").adsr(".002:.4:.7:.1").fm(2.5).fmh(1).fmattack(.001).fmdecay(.25).fmsustain(.15)
+const stabs  = h => chords(h).struct("x(3,8) [[~ x] x]").s("sawtooth").adsr(".001:.09:0:.05").lpf(1300).lpq(3).lpenv(2.5).lpattack(.005).lpdecay(.07).lpsustain(0).lprelease(.1).hpf(180).delay(.15).delayfeedback(.3).room(.15).size(3)
+const pad    = h => chords(h).s("sawtooth").adsr(".9:1:.85:2").lpf(520).lpq(4).lpenv(1).lpattack(1.5).lpdecay(1).lpsustain(.5).lprelease(.1).room(.6).size(8)
+const lead   = n("<[2 ~@2 1 0 ~ -1 ~@2 -1 ~ 0 2 ~ 2 ~] [0 ~@2 1 0 ~ -1 ~@2 -1 ~ 0 2 ~ 0 ~]>").scale("G#4:minor").s("square").adsr(".001:.12:0:.04").lpf(650).lpq(6).lpenv(3).lpattack(.002).lpdecay(.07).lpsustain(0).lprelease(.05).hpf(220).delay(.12).delayfeedback(.25).room(.12).size(3)
+const arp    = h => chords(h).arp("0 1 ~ 2 3 0 ~ 1 2 3 ~ 0 1 ~ 2 ~").transpose(12).s("triangle").adsr(".002:.22:0:.12").lpf(1600).lpenv(3).lpattack(.005).lpdecay(.12).lpsustain(0).lprelease(.1).delay(.35).delayfeedback(.45).room(.2).size(3)
+const fx     = n("<2 ~!3>").scale("G#3:minor").s("white").adsr("1.5:.5:1:1").lpf(500).lpq(4).lpenv(4.5).lpattack(2).lpdecay(.5).lpsustain(1).lprelease(.1).room(.5).size(6).delay(.2)
+const percussion = s("[~ tb]*2, [~ [~ perc]] [~ perc]*2").bank("RolandTR909").sometimesBy(.1, x => x.ply(2))
+const sub    = n("<[~ 0@3 ~@3 0 ~@2 0 ~@2 4 ~@2] [~ 0 ~ -1 ~@3 0 ~@2 0 ~@2 4 ~@2]>").scale("G#1:minor").s("sine").adsr(".005:.3:.9:.1").lpf(400)
+const vocal_chops = n("<[~@3 2 ~@2 2 ~@2 2 ~@2 4@2 ~@2]!3 [~@6 2 2 ~@2 2@2 ~@2 4@2]>").scale("G#4:minor").s("sawtooth").adsr(".003:.14:.35:.08").lpf(3200).hpf(250).vowel("o").delay(.25).delayfeedback(.35).room(.2).size(3)
+const texture = n("<4 -3 -5 2>").scale("G#4:minor").s("supersaw").adsr("1.2:1:.9:2.5").lpf(1500).unison(3).detune(.1).spread(1).room(.75).size(9)
+const impacts = s("bd, lt, cr").bank("RolandR8")
+
+$: arrange(
+  [8, drums.lpf(saw.rangex(380, 16000).slow(8)).degradeBy(.4)],                 // intro
+  [16, stack(drums.lpf(saw.rangex(380, 16000).slow(16)), bass, fx, sub,         // intro 2
+    texture)],
+  [16, stack(drums, bass, stabs(verse), percussion, sub, vocal_chops)],         // groove
+  [16, stack(drums, bass, stabs(verse), pad(verse).mask("<0!8 1!8>"),           // groove 2
+    percussion, sub, vocal_chops)],
+  [16, stack(stabs(break_).lpf(sine.rangex(1800, 16000).slow(16)).struct("x"),  // breakdown
+    pad(break_).lpf(saw.rangex(1800, 12000).slow(16)).gain(.6), lead.degradeBy(.4), fx,
+    texture)],
+  [8, stack(drums, stabs(build).lpf(sine.rangex(3700, 16000).slow(8)),          // build
+    arp(build).lpf(saw.rangex(450, 16000).slow(8)), fx, percussion, vocal_chops)],
+  [32, stack(drums, bass, stabs(chorus), pad(chorus), lead, percussion, sub,    // drop
+    impacts)],
+  [16, stack(drums, bass, stabs(verse), pad(verse), percussion, sub,            // groove 3
+    vocal_chops)],
+  [8, stack(stabs(break_).lpf(sine.rangex(1800, 16000).slow(8)).struct("x"),    // breakdown 2
+    pad(break_).lpf(saw.rangex(1800, 12000).slow(8)).gain(.7),
+    lead.lpf(saw.rangex(510, 16000).slow(8)).degradeBy(.4), texture)],
+  [8, stack(drums, stabs(build).lpf(sine.rangex(3700, 16000).slow(8)),          // build 2
+    arp(build).lpf(saw.rangex(450, 16000).slow(8)), fx, percussion, vocal_chops)],
+  [32, stack(drums, bass, stabs(chorus), pad(chorus), lead, fx, percussion, sub,  // drop 2
+    impacts)],
+  [16, stack(drums.degradeBy(.4), bass, stabs(intro2).struct("x"), sub,         // outro
+    texture)],
+  [16, drums.degradeBy(.4)],                                                    // outro 2
+)
+

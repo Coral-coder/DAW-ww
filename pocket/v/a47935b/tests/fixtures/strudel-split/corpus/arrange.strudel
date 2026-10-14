@@ -1,0 +1,9 @@
+setcps(0.55)
+const drums = stack(s("bd*4"), s("~ sd").room(.2), s("hh*8").gain(.5)).bank("RolandTR707")
+const pad = note("<[c3,eb3,g3] [ab2,c3,eb3]>").s("supersaw").attack(.5).release(1).lpf(1200).gain(.5)
+const arp = n("0 2 4 6".add("<0 3>")).scale("C4:minor").s("sine").fm(2).fmh(1.5).lpf(saw.range(500, 4000).slow(8))
+arrange(
+  [4, pad],                              // intro
+  [8, stack(drums, pad, arp)],           // main
+  [4, stack(drums.degradeBy(.3), arp)],  // break
+)

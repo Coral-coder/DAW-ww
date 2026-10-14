@@ -1,0 +1,9 @@
+// a live coder–style acid sketch
+setcpm(140/4)
+
+register('acidenv', (x, pat) => pat.lpf(100).lpenv(x * 9).lps(.2).lpd(.12).lpq(12))
+
+$: s("bd*4").bank("RolandTR909").duck("2:3").duckdepth(.8).duckattack(.16)
+$: s("[~ hh]*4, [~ cp]*2").bank("RolandTR909").gain(.6).room(.2)
+$: n("<0 3 5 7>*8").scale("A1:minor").s("sawtooth").acidenv(slider(0.6, 0, 1)).orbit(2).delay(.25).delayfeedback(.4)
+$: n("<[0,2,4] [-2,0,2]>").scale("A3:minor").s("supersaw").lpf(slider(2400, 300, 8000)).room(.6).size(6).orbit(3).gain(.45)
