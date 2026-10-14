@@ -1,0 +1,6 @@
+setcps(0.5)
+$: stack(
+  s("bd*4, ~ sd, hh*8").bank("RolandTR808"),
+  note("c2 eb2 g2 bb2").s("sawtooth").lpf(800).lpq(4),
+  note("<[c4,eb4,g4] [bb3,d4,f4]>").s("gm_epiano1").room(.4).pan(.3),
+)
