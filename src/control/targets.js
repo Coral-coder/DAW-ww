@@ -2,6 +2,7 @@
 // 0..1 (same curves as the knobs and the automation lanes), resolve template owner aliases.
 //   owner aliases (controller templates): '@sel' = selected track, '@t3' = third track, 'master'.
 import { parseTarget, automationOwner, toNorm, fromNorm, decodeParam } from '../core/automation.js';
+import { createModState } from '../core/modulation.js';
 import { targetInfo } from '../ui/automation-targets.js';
 
 export function resolveOwner(project, owner, ctx = {}) {
@@ -58,6 +59,13 @@ export function applyLaneValue(p, owner, target, v) {
       return true;
     }
     case 'fxen': { const f = o.fx?.find((x) => x.id === tg.fxId); if (f) f.enabled = v >= 0.5; return !!f; }
+    case 'macro': {
+      o.mod = o.mod ? { ...o.mod, macros: [...(o.mod.macros || createModState().macros)] } : createModState();
+      const m = o.mod.macros[tg.index];
+      if (!m) return false;
+      o.mod.macros[tg.index] = { ...m, value: Math.max(0, Math.min(1, v)) };
+      return true;
+    }
     case 'fx': {
       const f = o.fx?.find((x) => x.id === tg.fxId);
       if (!f) return false;

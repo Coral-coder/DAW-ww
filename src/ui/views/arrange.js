@@ -1100,6 +1100,7 @@ export function createArrangeView(app) {
     const fxGroups = [];
     for (const g of targetGroups(t)) {
       if (g.kind === 'mixer') out.push({ label: 'Mixer', icon: 'sliders', submenu: g.items.map(item) });
+      else if (g.kind === 'macro') out.push({ label: 'Macros', icon: 'sliders', submenu: g.items.map(item) });
       else if (g.kind === 'inst') {
         const sections = new Map();
         for (const it of g.items) { if (!sections.has(it.section)) sections.set(it.section, []); sections.get(it.section).push(it); }

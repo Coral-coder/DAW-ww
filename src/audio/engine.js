@@ -21,6 +21,7 @@ import * as freeze from './freeze.js';
 import { EngineMonitor } from './monitor.js';
 import { SampleStreamer } from './stream/streamer.js';
 import { tempoMapFor } from '../time/tempo-map.js';
+import { hasModulation } from '../core/modulation.js';
 
 /** Sample rates offered in the UI (the device / browser decides what actually works). */
 export const SAMPLE_RATES = [44100, 48000, 88200, 96000];
@@ -121,6 +122,7 @@ export class AudioEngine extends Emitter {
         getPreroll: () => this.graph?.latency || 0, // plugin delay compensation (see latency.js)
       });
       try { this.graph.sync(this.project); } catch (e) { this._error(e); }
+      this._modSync();
       for (const [id, e] of this.codeCache.entries) if (this._daw3Code(id)) prefetchCodeSamples(ctx, e.evaluated).catch(() => {});
       if (ctx.state === 'suspended') ctx.resume().catch(() => {});
       this.streamer = SampleStreamer.supported(ctx) ? new SampleStreamer(ctx, { onError: (e) => this._error(e) }) : null;
@@ -141,6 +143,7 @@ export class AudioEngine extends Emitter {
       const bpmChanged = this.graph.bpm !== project.bpm;
       this._retimeOnTempoEdit(project);
       try { this.graph.sync(project); } catch (e) { this._error(e); }
+      this._modSync(project);
       if (bpmChanged && this._playing) {
         // re-align tempo-synced LFOs once the scheduler has anchored the new tempo
         clearTimeout(this._resyncTimer);
@@ -391,6 +394,28 @@ export class AudioEngine extends Emitter {
     this._autoActive = false;
     try { this.graph.endAutomation(project); } catch (e) { this._error(e); }
   }
+
+  // ------------------------------------------------------------------ modulation (core/modulation.js)
+  // Macros / modulators run at control rate (~66 Hz) while the project has routes — also when stopped, so live
+  // playing hears LFOs and envelopes. Offline renders tick at suspend points instead (render.js).
+  _modSync(project = this.project) {
+    const on = !!this.graph && hasModulation(project);
+    if (on && !this._modTimer) this._modTimer = setInterval(() => this._modTick(), 15);
+    if (!on && this._modTimer) { clearInterval(this._modTimer); this._modTimer = null; this._modTick(); } // last tick releases
+  }
+
+  _modTick() {
+    if (!this.graph || !this.ctx) return;
+    const p = this._withoutOverrides(this.project);
+    const t = this.ctx.currentTime;
+    const beat = this._playing ? this.scheduler.beatAt(t) : null;
+    let bpm = p.bpm;
+    try { bpm = this.getCurrentTempo(); } catch { /* */ }
+    try { this.graph.applyModulation(p, t, { beat, bpm, songAuto: this._playing && p.mode === 'song' && !!this._autoActive }); } catch (e) { this._error(e); }
+  }
+
+  /** Live modulation of a track for the UI: { macros, mods: {id: 0..1}, targets: {target: {base, norm, lo, hi}} } | null. */
+  getModView(trackId) { return this.graph?.modView(trackId) || null; }
 
   // ------------------------------------------------------------------ transport
   /**
@@ -685,6 +710,7 @@ export class AudioEngine extends Emitter {
 
   async dispose() {
     this.stop();
+    if (this._modTimer) { clearInterval(this._modTimer); this._modTimer = null; }
     this.monitor.stop();
     this._unguard?.();
     try { this.streamer?.dispose(); } catch { /* */ }

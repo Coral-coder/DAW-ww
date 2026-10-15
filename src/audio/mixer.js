@@ -41,6 +41,7 @@ import { spanOf } from '../time/tempo-map.js';
 import { WarpPlayer, needsWarpPlayer, unwarpedInSeconds } from './warp/player.js';
 import { MasterAnalysis } from './meters.js';
 import { inputGain, widthMatrix, vcaGainFor, vcaCombinedLane, soloState, sendTap, outputOf } from '../core/mixer-model.js';
+import { ModRunner } from './mod/runner.js';
 
 const TC = 0.012;
 
@@ -81,6 +82,13 @@ function withParams(def, ov, defs) {
   const out = { ...def, params: mergeParamOverrides(def.params, dec) };
   if (en !== undefined) out.enabled = en;
   return out;
+}
+
+/** Automation overrides with modulation values on top (modulation already includes the automated base). */
+function mergeOv(auto, mod) {
+  if (!mod) return auto || null;
+  if (!auto) return mod;
+  return { ...auto, ...mod };
 }
 
 /** Did an override map change enough to be worth an update()? (tiny relative epsilon) */
@@ -201,6 +209,7 @@ export class ChannelStrip {
     this.sendVals = {}; // static send amounts (restored when send automation ends)
     this.fxDefs = new Map(); // fxId -> last static Effect def
     this.fxOv = new Map(); // fxId -> {key: value} automation overrides
+    this.fxMod = new Map(); // fxId -> {key: value} modulation values (mod/runner.js; merged over fxOv)
     this.auto = { volume: false, pan: false, mute: false, vca: false, sends: new Set() }; // AudioParams currently driven by automation
     this.cableOv = new Map(); // cableId -> automated gain (plugboard)
     this.peak = { l: 0, r: 0 };
@@ -289,7 +298,7 @@ export class ChannelStrip {
     const byId = new Map(list.map((f) => [f.id, f]));
     this.fxDefs = byId;
     for (const e of this.effects) {
-      try { e.fx.update(withParams(byId.get(e.id), this.fxOv.get(e.id), EFFECT_DEFS[e.type])); } catch (err) { this.onError(err); }
+      try { e.fx.update(withParams(byId.get(e.id), mergeOv(this.fxOv.get(e.id), this.fxMod.get(e.id)), EFFECT_DEFS[e.type])); } catch (err) { this.onError(err); }
     }
   }
 
@@ -398,9 +407,23 @@ export class ChannelStrip {
       if (ov) this.fxOv.set(e.id, ov); else this.fxOv.delete(e.id);
       const def = this.fxDefs.get(e.id);
       if (!def) continue;
-      try { e.fx.update(withParams(def, ov, EFFECT_DEFS[e.type]), immediate); } catch (err) { this.onError(err); }
+      try { e.fx.update(withParams(def, mergeOv(ov, this.fxMod.get(e.id)), EFFECT_DEFS[e.type]), immediate); } catch (err) { this.onError(err); }
     }
     for (const id of [...this.fxOv.keys()]) if (!this.effects.some((e) => e.id === id)) this.fxOv.delete(id);
+  }
+
+  /** Modulation values for insert fx: {fxId: {key: value}} | null (see mod/runner.js). */
+  setFxMod(map) {
+    for (const e of this.effects) {
+      const m = map?.[e.id] || null;
+      const cur = this.fxMod.get(e.id) || null;
+      if (!m && !cur) continue;
+      if (m) this.fxMod.set(e.id, m); else this.fxMod.delete(e.id);
+      const def = this.fxDefs.get(e.id);
+      if (!def) continue;
+      try { e.fx.update(withParams(def, mergeOv(this.fxOv.get(e.id), m), EFFECT_DEFS[e.type])); } catch (err) { this.onError(err); }
+    }
+    for (const id of [...this.fxMod.keys()]) if (!this.effects.some((e) => e.id === id)) this.fxMod.delete(id);
   }
 
   /** Automation overrides for plugboard cable gains: {cableId: gain} | null (null = back to static). */
@@ -885,6 +908,8 @@ export class MixGraph {
         try {
           e.instrument = createInstrument(this.ctx, e.strip.input, def, {
             getSampleBuffer: this.o.getSampleBuffer, getBpm: this.o.getBpm,
+            getWavetable: (id) => this._project?.wavetables?.[id] || null, // wavetable synth: project tables
+            onNote: (t, on) => { if (!this.mod) return; if (on == null) this.mod.allOff(track.id); else this.mod.note(track.id, t, on); }, // envelope modulators
           });
           e.instType = def.type;
           e.instJson = JSON.stringify(def);
@@ -901,7 +926,7 @@ export class MixGraph {
         const json = JSON.stringify(def);
         if (json !== e.instJson) {
           e.instJson = json;
-          try { e.instrument.update(withParams(def, e.instOv, INSTRUMENT_DEFS[e.instrument.type || def.type])); } catch (err) { this.onError(err); }
+          try { e.instrument.update(withParams(def, mergeOv(e.instOv, e.modInst), INSTRUMENT_DEFS[e.instrument.type || def.type])); } catch (err) { this.onError(err); }
         }
       }
     } else if (track.type === 'code') {
@@ -995,7 +1020,7 @@ export class MixGraph {
         const type = e.instrument.type || resolveInstrument(track.instrument).type;
         if (changed(e.instOv || null, ov.inst, INSTRUMENT_DEFS[type]?.params)) {
           e.instOv = ov.inst;
-          try { e.instrument.update(withParams(track.instrument, ov.inst, INSTRUMENT_DEFS[type])); } catch (err) { this.onError(err); }
+          try { e.instrument.update(withParams(track.instrument, mergeOv(ov.inst, e.modInst), INSTRUMENT_DEFS[type])); } catch (err) { this.onError(err); }
         }
       }
     }
@@ -1018,9 +1043,32 @@ export class MixGraph {
       if (e.instOv) {
         e.instOv = null;
         const track = project?.tracks.find((t) => t.id === id);
-        if (e.instrument && track?.instrument) { try { e.instrument.update(track.instrument); } catch (err) { this.onError(err); } }
+        if (e.instrument && track?.instrument) { try { e.instrument.update(e.modInst ? withParams(track.instrument, e.modInst, INSTRUMENT_DEFS[e.instrument.type || track.instrument.type]) : track.instrument); } catch (err) { this.onError(err); } }
       }
     }
+  }
+
+  // ---------------------------------------------------------------- modulation (core/modulation.js, mod/runner.js)
+  /**
+   * Evaluate macros / modulators of every track at context time t and apply them.
+   * opts: { beat (transport beat at t or null), bpm, songAuto (automation lanes play), immediate }
+   */
+  applyModulation(project, t, opts = {}) {
+    (this.mod ||= new ModRunner(this)).tick(project, t, opts);
+  }
+
+  /** Live modulation view of a track for the UI (null when it has no modulation). */
+  modView(trackId) { return this.mod?.view(trackId) || null; }
+
+  /** Instrument param values from modulation ({key: value} | null), merged over the automation overrides. */
+  setModInst(trackId, map) {
+    const e = this.tracks.get(trackId);
+    if (!e) return;
+    e.modInst = map || null;
+    const track = this._project?.tracks.find((t) => t.id === trackId);
+    if (!e.instrument || !track?.instrument) return;
+    const type = e.instrument.type || resolveInstrument(track.instrument).type;
+    try { e.instrument.update(withParams(track.instrument, mergeOv(e.instOv, e.modInst), INSTRUMENT_DEFS[type])); } catch (err) { this.onError(err); }
   }
 
   /** The Strudel-engine code instruments of this graph (see strudel-instrument.js). */
@@ -1206,6 +1254,7 @@ export class MixGraph {
 
   dispose() {
     try { this.analysis?.dispose(); } catch { /* */ }
+    try { this.mod?.dispose(); } catch { /* */ }
     for (const e of this.tracks.values()) { this._disposeSources(e); e.strip.dispose(); }
     for (const s of this.buses.values()) s.dispose();
     this.master.dispose();
