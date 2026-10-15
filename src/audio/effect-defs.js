@@ -6,6 +6,8 @@
 //                 curve?: 'lin'|'log'|'exp', options?: [{value,label}], section, advanced? }
 // type 'track' holds a track id (string, '' = none) — the UI renders a track picker; it is
 // never automatable (automation only targets 'number' params).
+// type 'pattern' holds an opaque string (step pattern, drawn curve…) edited only by the effect's custom card UI
+// (src/ui/fx-ui); generic param panels, Pocket and automation skip it. Optional maxLength (default 4096).
 
 import { FX_DEF_FAMILIES } from './fx/defs/index.js';
 
@@ -429,6 +431,9 @@ export function resolveEffectParams(effect) {
       v = v === true || v === 1 || v === 'true' || v === '1';
     } else if (p.type === 'track') {
       v = v ? String(v) : '';
+    } else if (p.type === 'pattern') {
+      v = Array.isArray(v) ? v.join(' ') : typeof v === 'string' || typeof v === 'number' ? String(v) : p.default;
+      if (v.length > (p.maxLength || 4096)) v = v.slice(0, p.maxLength || 4096);
     } else if (p.type === 'enum') {
       const match = p.options.find((o) => o.value === v || String(o.value) === String(v));
       v = match ? match.value : p.default;

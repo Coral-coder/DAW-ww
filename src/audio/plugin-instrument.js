@@ -147,5 +147,8 @@ export async function flushPlugins(graph) {
     const pl = e.instrument?.engine?.plugin;
     if (pl?.flush) jobs.push(pl.flush().catch(() => {}));
   }
+  // worklet effects (rhythm effects: params / beat clock messages)
+  const strips = [graph.master, ...(graph.buses?.values?.() || []), ...[...(graph.tracks?.values?.() || [])].map((e) => e.strip)];
+  for (const s of strips) for (const fx of s?.effects || []) if (fx.fx?.flush) jobs.push(Promise.resolve(fx.fx.flush()).catch(() => {}));
   if (jobs.length) await Promise.all(jobs);
 }

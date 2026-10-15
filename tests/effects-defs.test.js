@@ -26,7 +26,7 @@ test('effect defs are well-formed', () => {
       keys.add(p.key);
       assert.equal(typeof p.label, 'string', where);
       assert.equal(typeof p.section, 'string', where);
-      assert.ok(['number', 'enum', 'bool', 'track'].includes(p.type), where);
+      assert.ok(['number', 'enum', 'bool', 'track', 'pattern'].includes(p.type), where);
       if (p.type === 'number') {
         assert.ok(p.min < p.max, `${where} range`);
         assert.ok(p.default >= p.min && p.default <= p.max, `${where} default in range`);
@@ -37,8 +37,8 @@ test('effect defs are well-formed', () => {
         assert.ok(p.options.length >= 2, `${where} options`);
         assert.ok(p.options.some((o) => o.value === p.default), `${where} default in options`);
         for (const o of p.options) assert.equal(typeof o.label, 'string', where);
-      } else if (p.type === 'track') {
-        assert.equal(typeof p.default, 'string', `${where} track default`);
+      } else if (p.type === 'track' || p.type === 'pattern') {
+        assert.equal(typeof p.default, 'string', `${where} ${p.type} default`);
       } else {
         assert.equal(typeof p.default, 'boolean', `${where} bool default`);
       }
