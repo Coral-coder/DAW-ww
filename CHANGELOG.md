@@ -22,6 +22,12 @@ the desktop apps share one version.
   User presets, FX chains and track templates can be saved, dragged onto tracks and shared as .daw3preset / .daw3bank
   files. Every device has A/B compare, eight snapshots with morphing, and randomize (subtle, wild or within preset
   tags; right-click a knob to lock it). Pocket gets the same search and favorites for sounds and effect presets.
+- **Chord track + chord pads**: a chord lane in Arrange (add / edit / drag / resize chord symbols, detect them from
+  your MIDI), chord pads in the project key with inversions, voicings and voice leading (drag a chord or a
+  progression onto the chord lane, a MIDI clip or the piano roll), and MIDI tracks / clips that follow the chord
+  track non-destructively. **Clip effects** (per-clip effect chains, rendered and latency-compensated with the mix),
+  a **spectral editor** for audio clips (attenuate, remove, heal, isolate — undoable, original kept) and **action
+  macros** (record or compose command sequences, give them a shortcut, run them from the palette, export as JSON).
 
 ### Fixed
 - **Faust plugins load without the internet**: the Faust compiler now ships with the app (web, Pocket and desktop)

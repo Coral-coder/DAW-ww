@@ -1,0 +1,96 @@
+/* Workflow features: chord track lane, chord pads, clip inspector, spectral editor, action macros */
+
+/* chord track lane (src/ui/chord-lane.js) */
+.chord-lane { display: grid; grid-template-columns: var(--arr-head-w, 210px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); overflow: hidden; border-bottom: 1px solid var(--line); background: var(--bg); flex: none; }
+.chord-lane.hidden { display: none; }
+.chord-lane-head { display: flex; align-items: center; gap: 6px; padding: 0 8px; background: var(--bg-2); border-right: 1px solid var(--line); min-width: 0; }
+.chord-lane-title { display: flex; align-items: baseline; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text); white-space: nowrap; min-width: 0; flex: 1; overflow: hidden; }
+.chord-lane-now { font: 700 11px var(--mono); color: var(--accent-3); overflow: hidden; text-overflow: ellipsis; }
+.chord-lane-btns { display: flex; gap: 3px; }
+.chord-lane-btns .btn.small { height: 22px; padding: 0 6px; font-size: 11px; }
+.chord-lane-follow.on { color: var(--accent-3); border-color: var(--accent-3); }
+.chord-lane-follow.hidden { display: none; }
+.chord-lane-canvas { width: 100%; height: 100%; min-height: 0; display: block; touch-action: none; }
+
+/* chord pads (src/ui/chord-pads.js) */
+.chord-pads { position: fixed; right: 24px; bottom: 48px; z-index: 900; width: min(640px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--line-2); border-radius: 10px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 10px; color: var(--text); }
+.chord-pads-head { display: flex; align-items: center; gap: 8px; cursor: move; user-select: none; font-weight: 600; font-size: 13px; }
+.chord-pads-head .spacer, .ci-section-head .spacer, .macro-toolbar .spacer, .ci-fx-head .spacer { flex: 1; }
+.chord-pads-controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chord-pads-controls select { height: 26px; }
+.chord-pads-grid { display: flex; flex-direction: column; gap: 5px; }
+.chord-pads-row { display: grid; grid-template-columns: 70px repeat(7, minmax(0, 1fr)); gap: 5px; align-items: stretch; }
+.chord-pads-rowlbl { font-size: 10.5px; color: var(--text-3); align-self: center; text-transform: uppercase; letter-spacing: .04em; }
+.chord-pad { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; min-height: 44px; border-radius: 7px; border: 1px solid var(--line); background: var(--bg-3); color: var(--text); cursor: pointer; padding: 4px 2px; }
+.chord-pad:hover { border-color: var(--accent-3); background: color-mix(in srgb, var(--accent-3) 14%, var(--bg-3)); }
+.chord-pad:active { transform: translateY(1px); }
+.chord-pad-name { font-weight: 700; font-size: 13px; white-space: nowrap; }
+.chord-pad-roman { font-size: 10px; color: var(--text-3); }
+.chord-pads-prog { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 8px; }
+.chord-pads-prog-handle { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-2); cursor: grab; padding: 2px 6px; border-radius: 5px; border: 1px dashed var(--line-2); }
+.chord-pads-prog-handle.disabled { opacity: .5; cursor: default; }
+.chord-pads-strip { display: flex; gap: 4px; flex-wrap: wrap; flex: 1; min-width: 120px; }
+.chord-chip { height: 24px; padding: 0 8px; border-radius: 12px; border: 1px solid var(--accent-3); background: color-mix(in srgb, var(--accent-3) 18%, transparent); color: var(--text); font-weight: 600; font-size: 12px; cursor: pointer; }
+.chord-pads-empty, .chord-pads-hint { font-size: 11px; color: var(--text-3); }
+@media (max-width: 640px) { .chord-pads-row { grid-template-columns: repeat(4, minmax(0, 1fr)); } .chord-pads-rowlbl { grid-column: 1 / -1; } }
+
+/* clip inspector (src/ui/clip-inspector.js) */
+.clip-inspector { display: flex; flex-direction: column; gap: 12px; }
+.ci-name { font-weight: 700; font-size: 14px; }
+.ci-meta, .ci-hint { font-size: 11.5px; color: var(--text-3); }
+.ci-hint { margin: 4px 0 6px; }
+.ci-follow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ci-follow.hidden { display: none; }
+.ci-follow label { display: flex; align-items: center; gap: 5px; font-weight: 600; font-size: 12px; }
+.ci-section-head { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12.5px; margin-bottom: 2px; }
+.ci-audio { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.ci-audio .ci-section-head { align-self: stretch; }
+.ci-fx-list { display: flex; flex-direction: column; gap: 6px; }
+.ci-fx { border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2); padding: 4px 6px; }
+.ci-fx.off { opacity: .6; }
+.ci-fx-head { display: flex; align-items: center; gap: 6px; }
+.ci-fx-name { display: flex; align-items: center; gap: 4px; background: none; border: 0; color: var(--text); font-weight: 600; cursor: pointer; padding: 4px 2px; }
+.ci-power { min-width: 20px; height: 20px; border-radius: 50%; padding: 0; }
+.ci-up .icon, .macro-up .icon { transform: rotate(180deg); }
+.ci-empty { font-size: 12px; color: var(--text-3); padding: 6px 2px; }
+.icon-btn.hidden { display: none; }
+.icon-btn.invisible { visibility: hidden; }
+
+/* spectral editor (src/ui/spectral-editor.js) */
+.spx { display: flex; flex-direction: column; gap: 8px; }
+.spx-tools { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.spx-tools .sep { width: 1px; height: 20px; background: var(--line); margin: 0 3px; }
+.spx-tools select { height: 26px; }
+.spx-view { position: relative; height: min(56vh, 460px); border-radius: 6px; overflow: hidden; background: #000004; border: 1px solid var(--line); }
+.spx-canvas { width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
+.spx-foot { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-3); }
+.spx-busy { font-size: 11px; color: var(--warn); }
+.spx-busy.hidden { display: none; }
+
+/* action macros (src/ui/macros-ui.js) */
+.macro-manager, .macro-editor { display: flex; flex-direction: column; gap: 10px; }
+.macro-toolbar { display: flex; gap: 6px; align-items: center; }
+.macro-list { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; }
+.macro-row { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2); }
+.macro-row-main { flex: 1; min-width: 0; }
+.macro-name { font-weight: 600; }
+.macro-steps { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+kbd.macro-key { font: 600 11px var(--mono); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line-2); background: var(--bg-3); color: var(--text-2); white-space: nowrap; }
+.macro-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 18px; color: var(--text-3); text-align: center; }
+.macro-hint, .macro-empty-steps { font-size: 11.5px; color: var(--text-3); }
+.macro-ed-row { display: flex; align-items: center; gap: 8px; }
+.macro-ed-row label { width: 70px; font-size: 12px; color: var(--text-2); }
+.macro-name-input, .macro-search { flex: 1; height: 30px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg-3); color: var(--text); font: inherit; }
+.macro-ed-sub { font-weight: 600; font-size: 12px; margin-top: 4px; }
+.macro-steps-edit { display: flex; flex-direction: column; gap: 4px; max-height: 30vh; overflow: auto; }
+.macro-step { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 6px; background: var(--bg-2); border: 1px solid var(--line); }
+.macro-step-n { width: 18px; text-align: right; font: 600 11px var(--mono); color: var(--text-3); }
+.macro-step-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.macro-results { display: flex; flex-direction: column; max-height: 26vh; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
+.macro-result { display: flex; gap: 8px; align-items: baseline; padding: 5px 8px; cursor: pointer; font-size: 12.5px; }
+.macro-result:hover { background: var(--bg-3); }
+.btn.listening { border-color: var(--accent-2); color: var(--accent-2); }
+.macro-rec { position: fixed; left: 50%; bottom: calc(var(--status-h) + 12px); transform: translateX(-50%); z-index: 950; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 20px; background: var(--panel); border: 1px solid var(--rec); box-shadow: var(--shadow); font-size: 12.5px; }
+.macro-rec-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--rec); animation: macro-rec-blink 1s infinite; }
+.macro-rec-count { color: var(--text-3); font: 600 11px var(--mono); }
+@keyframes macro-rec-blink { 50% { opacity: .3; } }

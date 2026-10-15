@@ -191,6 +191,8 @@ export async function createApp(rootEl) {
   installAutomationRecorder(app);
   const engineUi = installEngineUi(app, status); // health meter, panic, sample rate, freeze, recovery / history
   import('../control/index.js').then((m) => m.installControl(app)).catch((e) => console.warn('[control]', e)); // MIDI, surfaces, sync, palette
+  // chord track / pads, clip inspector, spectral editor, action macros (src/ui/workflow.js)
+  import('./workflow.js').then((m) => m.installWorkflow(app)).catch((e) => console.warn('[workflow]', e));
 
   await showView(ui.get('view'));
   app.panels = {

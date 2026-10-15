@@ -20,6 +20,8 @@ import { openWarpEditor } from '../warp-editor.js';
 import { openGrooveDialog } from '../groove-dialog.js';
 import { sourceTimeFn } from '../../audio/warp/markers.js';
 import { createArrangeRec } from './arrange-rec.js';
+import { createChordLane } from '../chord-lane.js';
+import { DT_CHORDS, parseChordDrag, dropChordsAsNotes } from '../chord-actions.js';
 import { splitClipAt } from '../../record/clips.js';
 import { DT_PRESET_REF, decodeRef, dropRef, isPresetFile, importPresetFiles } from '../preset-apply.js';
 
@@ -323,7 +325,13 @@ export function createArrangeView(app) {
   const tempoLane = createTempoLane(app, { getPpb: () => ppb, getHeadW: () => headW, getScroller: () => scroller, snapB: (b, ev, fn) => snapB(b, ev, fn), pos: () => pos(), invalidate: () => invalidate() });
   const tempoBtn = toggle({ label: 'Tempo', value: tempoLane.shown, title: 'Show the tempo track: tempo changes, ramps and time-signature changes', onChange: (v) => tempoLane.toggle(v) });
   toolbar.insertBefore(tempoBtn, moreBtn);
-  const el = h('div.arr', toolbar, banner, tempoLane.el, body);
+  // chord track (src/ui/chord-lane.js): chord symbols over time, chord pads, follow modes
+  const chordLane = createChordLane(app, { getPpb: () => ppb, getHeadW: () => headW, getScroller: () => scroller, snapB: (b, ev, fn) => snapB(b, ev, fn), pos: () => pos(), openPads: () => import('../chord-pads.js').then((m) => m.toggleChordPads(app, true)) });
+  app.chordLane = chordLane;
+  const chordBtn = toggle({ label: 'Chords', value: chordLane.shown, title: 'Show the chord track: chord symbols over time, chord pads, MIDI tracks that follow the chords', onChange: (v) => chordLane.toggle(v) });
+  chordLane.onToggle = (v) => chordBtn.setValue(v);
+  toolbar.insertBefore(chordBtn, moreBtn);
+  const el = h('div.arr', toolbar, banner, tempoLane.el, chordLane.el, body);
 
   // ------------------------------------------------------------------ theme
   function readTheme() {
@@ -483,7 +491,7 @@ export function createArrangeView(app) {
   }
   function drawNow() {
     if (!visible) return;
-    try { drawLanes(); drawTop(); updatePlayhead(); tempoLane.draw(); } catch (e) { console.error('[arrange draw]', e); }
+    try { drawLanes(); drawTop(); updatePlayhead(); tempoLane.draw(); chordLane.draw(); } catch (e) { console.error('[arrange draw]', e); }
   }
 
   // ------------------------------------------------------------------ pattern preview cache (offscreen canvases)
@@ -812,7 +820,7 @@ export function createArrangeView(app) {
       }
     }
     // label
-    const label = clipLabel(p, c) + (c.type === 'pattern' && pat && Math.abs(c.length - pat.length) > EPS && c.length > pat.length ? `  ×${+(c.length / pat.length).toFixed(2)}` : '');
+    const label = clipLabel(p, c) + (app.clipBadges?.(c, t) || '') + (c.type === 'pattern' && pat && Math.abs(c.length - pat.length) > EPS && c.length > pat.length ? `  ×${+(c.length / pat.length).toFixed(2)}` : '');
     const tx = Math.max(x, 0) + 5;
     if (vx1 - tx > 14) {
       if (headH) {
@@ -1496,6 +1504,7 @@ export function createArrangeView(app) {
     const p = get();
     const x = updatePlayhead();
     tempoLane.tick();
+    chordLane.tick();
     if (ui.get('followPlayhead') !== false && engine.isPlaying && p.mode === 'song' && !dragging) {
       const W = scroller.clientWidth;
       if (x > W * 0.92 || x < 0) {
@@ -2041,6 +2050,7 @@ export function createArrangeView(app) {
       clip.type === 'audio' ? { label: 'Warp / tempo…', icon: 'wave', title: 'Clip warp editor: warp mode, markers, transpose, detect tempo, quantize', onClick: () => openWarpEditor(app, clip.id) } : null,
       { label: 'Loop this clip', icon: 'loop', onClick: () => setLoop(clip.start, clip.start + clip.length) },
       ...recUi.clipMenuItems(clip),
+      ...(app.clipMenuExtras?.(clip, n > 1 ? selIds() : [clip.id]) || []), // clip inspector / clip fx / spectral / chord follow (workflow.js)
       '-',
       { label: n > 1 ? `Delete ${n} clips` : 'Delete', icon: 'trash', shortcut: 'Del', onClick: deleteSelection },
       { label: n > 1 ? `Ripple delete ${n} clips` : 'Ripple delete (close the gap)', icon: 'trash', shortcut: 'Shift+Del', onClick: () => { recUi.rippleDeleteClips(n > 1 ? selIds() : [clip.id]); setSel([]); } },
@@ -2496,7 +2506,7 @@ export function createArrangeView(app) {
   });
 
   // ------------------------------------------------------------------ drag & drop (browser panel + OS files)
-  const acceptsDrop = (dt) => { const ty = [...(dt?.types || [])]; return ty.includes(DT_SAMPLE) || ty.includes(DT_PRESET) || ty.includes(DT_PRESET_REF) || ty.includes('Files'); };
+  const acceptsDrop = (dt) => { const ty = [...(dt?.types || [])]; return ty.includes(DT_SAMPLE) || ty.includes(DT_PRESET) || ty.includes(DT_PRESET_REF) || ty.includes(DT_CHORDS) || ty.includes('Files'); };
   body.addEventListener('dragover', (e) => {
     if (!acceptsDrop(e.dataTransfer)) return;
     e.preventDefault();
@@ -2518,6 +2528,8 @@ export function createArrangeView(app) {
     const beat = Math.max(0, snapB(hit.beat, null, Math.floor));
     const track = hit.ownerRow ? null : hit.track;
     const dt = e.dataTransfer;
+    const chords = dt.getData(DT_CHORDS);
+    if (chords) { const payload = parseChordDrag(chords); if (payload) dropChordsAsNotes(app, payload, { track, clip: hit.clip, beat: hit.clip ? Math.max(0, snapB(hit.beat, null, Math.round)) : beat }); return; }
     const sid = dt.getData(DT_SAMPLE);
     if (sid) { await actions.placeSample(sid, { trackId: track?.type === 'audio' ? track.id : undefined, start: beat }); return; }
     // presets / FX chains / templates (src/ui/preset-apply.js): onto a track lane = apply to that track, else new track

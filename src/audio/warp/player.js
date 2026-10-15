@@ -99,7 +99,7 @@ export class WarpPlayer {
     const ctx = this.ctx;
     const g = ctx.createGain();
     this.g._clipEnvelope(g, clip, ev, time, duration, map.spbAt(b0));
-    g.connect(e.strip.input);
+    g.connect(this.g._clipDest ? this.g._clipDest(e, clip) : e.strip.input); // clip effects (clip-fx.js)
     let src = null;
     if (stream) src = this._streamed(clip, stream, points, time, g, mode);
     else if (mode === 'off' || mode === 'repitch') src = this._native(buffer, points, duration, time, g, mode, clip.warp?.transpose || 0);
