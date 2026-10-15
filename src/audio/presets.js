@@ -3,6 +3,7 @@
 import { getParamDefaults, sanitizeParams, INSTRUMENT_DEFS } from './defs.js';
 import { DRUM_KITS } from './kits.js';
 import { STRUDEL_PATCHES } from './strudel-patches.js';
+import { WAVETABLE_PRESETS } from './wavetable/presets.js';
 
 // osc 2's def default is +7 ct (a detuned layer for the init patch); presets state their tuning explicitly
 const synth = (params) => ({ type: 'synth', params: { osc2Fine: 0, ...params } });
@@ -485,6 +486,9 @@ for (const [id, db] of Object.entries(LEVEL_DB)) {
   const pp = PRESETS[id]?.instrument.params;
   if (pp) pp.gain = Math.round(Math.min(2, Math.max(0.02, (pp.gain ?? 0.8) * 10 ** (db / 20))) * 1000) / 1000;
 }
+
+/* Wavetable synth presets (src/audio/wavetable/presets.js) */
+Object.assign(PRESETS, WAVETABLE_PRESETS);
 
 /* Strudel patches (src/audio/strudel-patches.js): type 'strudel' presets in the 'Strudel' category; each carries
    the built-in preset that plays when superdough can't (fallbackPreset). */

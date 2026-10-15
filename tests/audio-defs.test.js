@@ -6,7 +6,7 @@ import { PRESETS, resolveInstrumentDef, listPresets, PRESET_CATEGORIES } from '.
 import { DRUM_KITS } from '../src/audio/kits.js';
 import { DRUM_PADS } from '../src/core/model.js';
 
-const TYPES = ['synth', 'fm', 'organ', 'drums', 'sampler', 'drumsampler', 'soundfont', 'faust', 'wam', 'native', 'strudel'];
+const TYPES = ['synth', 'fm', 'organ', 'drums', 'sampler', 'drumsampler', 'soundfont', 'faust', 'wam', 'native', 'strudel', 'wavetable'];
 
 test('INSTRUMENT_DEFS covers every instrument type with well-formed ParamDefs', () => {
   assert.deepEqual(Object.keys(INSTRUMENT_DEFS).sort(), [...TYPES].sort());
@@ -25,7 +25,7 @@ test('INSTRUMENT_DEFS covers every instrument type with well-formed ParamDefs', 
       } else if (p.type === 'enum') {
         assert.ok(p.options.some((o) => o.value === p.default), `${type}.${p.key} default is an option`);
       } else {
-        assert.ok(['bool', 'sample'].includes(p.type), `${type}.${p.key} known type`);
+        assert.ok(['bool', 'sample', 'wavetable'].includes(p.type), `${type}.${p.key} known type`);
       }
     }
     // both a simple and an advanced view exist
