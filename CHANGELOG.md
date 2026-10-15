@@ -6,6 +6,12 @@ the desktop apps share one version.
 ## [Unreleased]
 
 ### Added
+- **Metering**: the Loudness panel meters the master or any track / bus and adds PLR, PSR, DR, a short-term
+  histogram, pass / adjust against 14 streaming / broadcast / club targets, pause, and master bit / DC / clip meters.
+  Mixer meters switch (globally or per strip) between digital peak, RMS, VU, BBC / EBU / DIN / Nordic PPM and
+  K-20 / 14 / 12, with optional LUFS under every strip. Exports show an analysis report (PLR, PSR, DR, clips, DC,
+  loudness over time, spectrum), savable as .txt / .json. EQ Three and Parametric EQ cards get a draggable response
+  curve over a live spectrum.
 - **Prebake** (as in strudel.cc Settings → prebake): Strudel helper libraries evaluated before your code — add one by
   URL (cached for offline use), paste or upload it; enable, reorder, reload; see the functions it defines and any
   failing statement (line, message). It runs once per change in every code path (Code tab, Song, split import,

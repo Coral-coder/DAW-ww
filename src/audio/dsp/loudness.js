@@ -197,15 +197,26 @@ export function correlation(l, r) {
 }
 
 // ------------------------------------------------------------------------------------------------ normalisation
-/** Delivery targets (integrated LUFS, true-peak ceiling dBTP). */
+/**
+ * Delivery targets: integrated LUFS, true-peak ceiling dBTP, tolerance (± LU) and how the platform plays a file that
+ * misses the target (`normalize`: 'both' = turned up or down, 'down' = only turned down, null = played as is;
+ * kind 'broadcast' = a hard spec, not playback normalisation). See dsp/loudness-stats.js checkTarget().
+ */
 export const LOUDNESS_PRESETS = [
-  { id: 'spotify', label: 'Spotify (−14 LUFS)', lufs: -14, ceiling: -1 },
-  { id: 'apple', label: 'Apple Music (−16 LUFS)', lufs: -16, ceiling: -1 },
-  { id: 'youtube', label: 'YouTube (−14 LUFS)', lufs: -14, ceiling: -1 },
-  { id: 'ebu', label: 'Broadcast EBU R128 (−23 LUFS)', lufs: -23, ceiling: -1 },
-  { id: 'club', label: 'Club (−7 LUFS)', lufs: -7, ceiling: -0.3 },
-  { id: 'club-loud', label: 'Club loud (−6 LUFS)', lufs: -6, ceiling: -0.1 },
-  { id: 'club-soft', label: 'Club open (−8 LUFS)', lufs: -8, ceiling: -0.5 },
+  { id: 'spotify', label: 'Spotify (−14 LUFS)', lufs: -14, ceiling: -1, tol: 1, kind: 'stream', normalize: 'both' },
+  { id: 'apple', label: 'Apple Music (−16 LUFS)', lufs: -16, ceiling: -1, tol: 1, kind: 'stream', normalize: 'both' },
+  { id: 'youtube', label: 'YouTube (−14 LUFS)', lufs: -14, ceiling: -1, tol: 1, kind: 'stream', normalize: 'down' },
+  { id: 'tidal', label: 'Tidal (−14 LUFS)', lufs: -14, ceiling: -1, tol: 1, kind: 'stream', normalize: 'down' },
+  { id: 'amazon', label: 'Amazon Music (−14 LUFS)', lufs: -14, ceiling: -2, tol: 1, kind: 'stream', normalize: 'both' },
+  { id: 'deezer', label: 'Deezer (−15 LUFS)', lufs: -15, ceiling: -1, tol: 1, kind: 'stream', normalize: 'down' },
+  { id: 'soundcloud', label: 'SoundCloud (−14 LUFS)', lufs: -14, ceiling: -1, tol: 1, kind: 'stream', normalize: null },
+  { id: 'podcast', label: 'Podcast (−16 LUFS)', lufs: -16, ceiling: -1, tol: 1, kind: 'stream', normalize: null },
+  { id: 'ebu', label: 'Broadcast EBU R128 (−23 LUFS)', lufs: -23, ceiling: -1, tol: 0.5, kind: 'broadcast', normalize: null },
+  { id: 'atsc', label: 'Broadcast ATSC A/85 (−24 LKFS)', lufs: -24, ceiling: -2, tol: 2, kind: 'broadcast', normalize: null },
+  { id: 'cd', label: 'CD / loud master (−9 LUFS)', lufs: -9, ceiling: -0.3, tol: 1.5, kind: 'master', normalize: null },
+  { id: 'club', label: 'Club (−7 LUFS)', lufs: -7, ceiling: -0.3, tol: 1, kind: 'master', normalize: null },
+  { id: 'club-loud', label: 'Club loud (−6 LUFS)', lufs: -6, ceiling: -0.1, tol: 1, kind: 'master', normalize: null },
+  { id: 'club-soft', label: 'Club open (−8 LUFS)', lufs: -8, ceiling: -0.5, tol: 1, kind: 'master', normalize: null },
 ];
 
 /** Linear gain that moves `measured` (LUFS) to `target`. */

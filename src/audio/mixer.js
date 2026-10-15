@@ -210,14 +210,14 @@ export class ChannelStrip {
       this.splitter = ctx.createChannelSplitter(2);
       this.anL = ctx.createAnalyser();
       this.anR = ctx.createAnalyser();
-      this.anL.fftSize = this.anR.fftSize = 1024;
+      this.anL.fftSize = this.anR.fftSize = 2048; // > one 30 fps frame: meter ballistics (dsp/ballistics.js) see every sample
       // PDC-aware: the meter hears the strip when its signal reaches the master (same compensation as the out link)
       this.meterDelay = ctx.createDelay(1);
       this.muteGain.connect(this.meterDelay);
       this.meterDelay.connect(this.splitter);
       this.splitter.connect(this.anL, 0);
       this.splitter.connect(this.anR, 1);
-      this._buf = new Float32Array(1024);
+      this._buf = new Float32Array(2048);
     }
   }
 

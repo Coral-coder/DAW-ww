@@ -1,5 +1,6 @@
-// AudioWorklet processor 'daw3-loudness' (see meters.js): K-weighted 100 ms energy blocks, 4x true peak and
-// stereo correlation sums, posted to the main thread 10x per second. Self-contained (no imports).
+// AudioWorklet processor 'daw3-loudness' (see meters.js): K-weighted 100 ms energy blocks, 4x true peak (unless
+// processorOptions.truePeak === false), stereo correlation sums and the unweighted per-channel sum of squares / sample
+// peak (DR meter), posted to the main thread 10x per second. Self-contained (no imports).
 const PH = 4, TAPS = 12;
 function kernel() {
   const N = TAPS * PH, h = new Float64Array(N), c = (N - 1) / 2;
@@ -22,10 +23,11 @@ class Daw3Loudness extends AudioWorkletProcessor {
     this.hist = [new Float64Array(TAPS), new Float64Array(TAPS)];
     this.hp = 0;
     this.ker = kernel();
+    this.tpOn = opts.processorOptions.truePeak !== false;
     this.reset();
     this.port.onmessage = (e) => { if (e.data === 'reset') this.reset(); };
   }
-  reset() { this.n = 0; this.e = [0, 0]; this.tp = 0; this.lr = 0; this.ll = 0; this.rr = 0; }
+  reset() { this.n = 0; this.e = [0, 0]; this.tp = 0; this.lr = 0; this.ll = 0; this.rr = 0; this.pk = [0, 0]; }
   process(inputs) {
     const inp = inputs[0];
     if (!inp || !inp.length) return true;
@@ -42,6 +44,9 @@ class Daw3Loudness extends AudioWorkletProcessor {
           z.x2 = z.x1; z.x1 = x; z.y2 = z.y1; z.y1 = y; x = y;
         }
         this.e[c] += x * x;
+        const ax = xs[c] < 0 ? -xs[c] : xs[c];
+        if (ax > this.pk[c]) this.pk[c] = ax;
+        if (!this.tpOn) { if (ax > this.tp) this.tp = ax; continue; }
         const hh = this.hist[c];
         hh[this.hp] = xs[c];
         for (let p = 0; p < PH; p++) {
@@ -55,7 +60,7 @@ class Daw3Loudness extends AudioWorkletProcessor {
       this.hp = (this.hp + 1) % TAPS;
       this.lr += L[i] * R[i]; this.ll += L[i] * L[i]; this.rr += R[i] * R[i];
       if (++this.n >= this.hop) {
-        this.port.postMessage({ e: (this.e[0] + this.e[1]) / this.n, tp: this.tp, lr: this.lr, ll: this.ll, rr: this.rr });
+        this.port.postMessage({ e: (this.e[0] + this.e[1]) / this.n, tp: this.tp, lr: this.lr, ll: this.ll, rr: this.rr, n: this.n, ss: [this.ll, this.rr], pk: this.pk });
         this.reset();
       }
     }
