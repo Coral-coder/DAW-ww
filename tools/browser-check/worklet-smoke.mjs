@@ -10,6 +10,7 @@ const MODULES = [
   ['/src/record/capture-processor.js', 'daw3-capture'],
   ['/src/audio/stream/stream-processor.js', 'daw3-stream'],
   ['/src/audio/fx/dynamics-worklet.js', 'daw3-multiband'],
+  ['/src/audio/fx/rhythm-worklet.js', 'daw3-rhythm'],
 ];
 
 const srv = await serveRepo();

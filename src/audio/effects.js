@@ -1328,6 +1328,8 @@ export function createEffect(ctx, effectDef, opts = {}) {
     setTempo(bpm) { try { impl.setTempo?.(bpm); fallbackFx?.setTempo(bpm); } catch (e) { console.warn('[fx] setTempo', e); } },
     sync(time) { try { impl.sync?.(time); fallbackFx?.sync(time); } catch (e) { console.warn('[fx] sync', e); } },
     getReduction: impl.getReduction ? () => impl.getReduction() : undefined,
+    /** Offline renders: resolves once every message posted to the effect's worklet has arrived (worklet builders). */
+    flush: impl.flush ? () => impl.flush() : undefined,
     /** Live data a builder exposes for its custom UI (analyzers, step position…), else null. */
     get probe() { return impl.probe ?? null; },
     /** Sidechain key input (ducker only): connect the key signal here. */
@@ -1348,6 +1350,7 @@ export function createEffect(ctx, effectDef, opts = {}) {
     },
   };
   if (!fx.getReduction) delete fx.getReduction;
+  if (!fx.flush) delete fx.flush;
   fx.update(effectDef, true);
   fx.sync();
   // Plugin effects with params.fallback = {type, params} (generated songs): if the plugin can't load (no network,

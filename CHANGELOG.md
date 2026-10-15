@@ -12,6 +12,11 @@ the desktop apps share one version.
   K-20 / 14 / 12, with optional LUFS under every strip. Exports show an analysis report (PLR, PSR, DR, clips, DC,
   loudness over time, spectrum), savable as .txt / .json. EQ Three and Parametric EQ cards get a draggable response
   curve over a live spectrum.
+- **Rhythm effects**, locked sample-accurately to the song grid (seeks, loops, tempo maps, exports): **Trance Gate**
+  (1–32 drawable steps, attack / release / shape, swing, stereo offset or separate right pattern, 31 patterns),
+  **Volume Shaper** (drawable LFO-tool curve over 1/8 note to 4 bars, pumps / gates / swells, optional filter sweep),
+  **Beat Repeat** (grid stutter with chance, decay, pitch-down per repeat and a hold-to-stutter button) and
+  **Time Shaper** (tape stop / start, synced reverse, half speed — every N bars or on a trigger button).
 - **Prebake** (as in strudel.cc Settings → prebake): Strudel helper libraries evaluated before your code — add one by
   URL (cached for offline use), paste or upload it; enable, reorder, reload; see the functions it defines and any
   failing statement (line, message). It runs once per change in every code path (Code tab, Song, split import,
