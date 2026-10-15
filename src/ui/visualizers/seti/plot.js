@@ -83,7 +83,7 @@ export class SessionStats {
   /** dt seconds, playing flag, current 0-based bar (null when unknown). */
   tick(dt, playing, bar) {
     if (!playing) { this.lastBar = null; return; }
-    if (dt > 0 && dt < 1) this.cpu += dt;
+    if (dt > 0 && dt < 5) this.cpu += dt;
     if (bar != null && this.lastBar != null && bar !== this.lastBar) this.bars++;
     this.lastBar = bar;
   }

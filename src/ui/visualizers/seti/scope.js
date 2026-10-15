@@ -449,7 +449,7 @@ export function mountSetiScope(host, app, opts = {}) {
 
   // ------------------------------------------------------------------ loop
   const budget = new FrameBudget({ budgetMs: 21, window: 2.5 });
-  let raf = 0, lastTs = 0, rowT = 0, camT = 0, panelT = 0, graphT = 0, closed = false;
+  let raf = 0, lastTs = 0, rowT = 0, camT = 0, panelT = 0, graphT = 0, closed = false, lastAudio = null;
   function frame(ts) {
     raf = 0;
     if (closed) return;
@@ -468,14 +468,18 @@ export function mountSetiScope(host, app, opts = {}) {
       for (let b = 0; b < nB; b++) { const v = dbToUnit(bandsDb[b]); if (v > rowAcc[b]) rowAcc[b] = v; }
     }
     rowT += dt;
-    while (rowT >= rowPeriod) {
+    let pushed = false;
+    while (rowT >= rowPeriod) { // a stalled frame repeats the row instead of leaving gaps
       rowT -= rowPeriod;
       scene?.uploadRow(hist.push(rowAcc), hist.row(hist.head));
-      rowAcc.fill(0);
+      pushed = true;
     }
+    if (pushed) rowAcc.fill(0);
     const p = store.get();
     const pos = Math.max(0, engine.getPosition?.() || 0);
-    session.tick(Math.min(1, rawDt), !!engine.isPlaying, engine.isPlaying ? tempoMapFor(p, p.mode).barAt(pos).bar : null);
+    const audioNow = engine.ctx?.currentTime ?? 0; // "CPU time" = playback time on the audio clock
+    session.tick(lastAudio == null ? 0 : audioNow - lastAudio, !!engine.isPlaying, engine.isPlaying ? tempoMapFor(p, p.mode).barAt(pos).bar : null);
+    lastAudio = audioNow;
     camT += dt;
     const aspect = W / Math.max(1, H);
     const vp = viewProjection(st.camera, camT, aspect, { depth: PLOT.depth });
