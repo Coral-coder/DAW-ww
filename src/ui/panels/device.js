@@ -19,6 +19,8 @@ import { fxPresetControls, instrumentPresetControls, installLockMenu, markLocks,
 import { openPresetBrowser } from '../preset-browser.js';
 import { presetStore } from '../../core/preset-store.js';
 import { hasRef, decodeRef, dropRef, insertChain } from '../preset-apply.js';
+import { wavetableEditor } from '../wavetable-editor.js';
+import { macroRow, modulationCard, installModRings } from '../mod-ui.js';
 
 // ============================================================================ effect presets
 // Factory effect presets live in src/audio/effect-presets.js (tags + descriptions); effect families can carry their
@@ -118,7 +120,7 @@ const RANDOM_RANGES = {
 const RANDOM_SKIP = new Set(['gain', 'polyphony', 'transpose', 'bendRange', 'rootNote', 'kit', 'sampleId', 'start', 'end', 'loopStart', 'loopEnd', 'slices', 'toneCut', 'tune', 'fine', 'velToAmp', 'velSens', 'keyScale', 'pitchEnvAmt']);
 const RANDOM_ENUMS = /Wave$|^algorithm$|^vibrato$|^percHarmonic$/;
 /** Secondary sections start folded (as slim vertical tabs) so the chain stays compact. */
-const DEFAULT_CLOSED = new Set(['Unison', 'LFO 1', 'LFO 2', 'Voice', 'Band 1', 'Band 8']);
+const DEFAULT_CLOSED = new Set(['Unison', 'LFO 1', 'LFO 2', 'Voice', 'Band 1', 'Band 8', 'LFO 3', 'LFO 4', 'Env 3', 'Matrix', 'Sub & Noise']);
 const OP_RATIOS = [0.5, 1, 1, 1, 2, 2, 3, 4, 5, 7];
 
 // Hammond drawbar colours: brown (sub), white (octaves), black (non-octave harmonics)
@@ -140,6 +142,9 @@ export function createDevicePanel(app) {
   let lastSig = '';
   let cards = []; // [{ key, el, update(ctx) }]
   let header = null; // { update(ctx) }
+  let macros = null; // macro knob row of a track (mod-ui.js)
+  const macrosOpen = new Set(); // trackIds whose macro row is shown
+  const modSeen = new Set(); // trackIds whose Modulation card got its default open / folded state
   let grEls = []; // [{ fxId, el }] gain-reduction meters
   let pendingFocus = null;
 
@@ -216,7 +221,7 @@ export function createDevicePanel(app) {
     if (!tgt) return `none:${p.tracks.length ? 1 : 0}`;
     const t = tgt.track;
     return JSON.stringify([
-      tgt.kind, tgt.id, tgt.name, tgt.color, fxSig(tgt.fx),
+      tgt.kind, tgt.id, tgt.name, tgt.color, fxSig(tgt.fx), tgt.kind === 'track' && (macrosOpen.has(tgt.id) || !!tgt.track.mod?.routes?.some((r) => String(r.src).startsWith('macro:'))),
       t && isPatchActive(t) ? patchFxOrder(t).join(',') : 0,
       // effects with a track picker must rebuild when tracks are added / renamed
       tgt.fx.some((f) => EFFECT_DEFS?.[f.type]?.params?.some((d) => d.type === 'track')) ? p.tracks.map((t) => `${t.id}:${t.name}`).join(',') : '',
@@ -236,6 +241,7 @@ export function createDevicePanel(app) {
     } else {
       const ctx = makeCtx(p, tgt);
       header?.update(ctx);
+      macros?.update(ctx);
       for (const c of cards) c.update?.(ctx);
     }
     if (pendingFocus) focusCard(pendingFocus);
@@ -256,6 +262,12 @@ export function createDevicePanel(app) {
     header = buildHeader(ctx);
     headerHost.appendChild(header.el);
     header.update(ctx);
+    macros = null;
+    if (tgt?.kind === 'track' && (macrosOpen.has(tgt.id) || tgt.track.mod?.routes?.some((r) => String(r.src).startsWith('macro:')))) {
+      macros = macroRow(app, tgt);
+      headerHost.appendChild(macros.el);
+      macros.update(ctx);
+    }
     if (el.classList.contains('dv-none') !== !tgt) { el.classList.toggle('dv-none', !tgt); applyHeight(); }
     if (!tgt) {
       chain.appendChild(h('div.dv-empty',
@@ -267,6 +279,15 @@ export function createDevicePanel(app) {
     }
     // first card: instrument / info
     const first = tgt.kind === 'track' ? (tgt.track.type === 'instrument' ? instrumentCard(ctx) : tgt.track.type === 'code' ? codeCard(ctx) : audioCard(ctx)) : busInfoCard(ctx);
+    if (tgt.kind === 'track') {
+      // macros / modulators / mod matrix (core/modulation.js) on the left of the chain (not in the signal flow, and
+      // next to the instrument's knobs for drag-to-modulate); folded until the track uses modulation
+      const mk = 'mod:' + tgt.id;
+      if (!modSeen.has(tgt.id)) { modSeen.add(tgt.id); if (!tgt.track.mod?.mods?.length && !tgt.track.mod?.routes?.length) collapsed.add(mk); }
+      const shell = cardShell({ key: mk, title: 'Modulation', iconName: 'wave', color: tgt.color, cls: 'dv-mod-card', help: 'Modulators (LFO / MSEG, envelope, step sequencer, random, envelope follower) and the mod matrix — drag a plug handle onto any knob' });
+      addCard(shell.collapsed ? { el: shell.el } : modulationCard(app, tgt, shell));
+      chain.appendChild(h('div.dv-mod-gap'));
+    }
     if (first) addCard(first);
     const patched = tgt.kind === 'track' && isPatchActive(tgt.track);
     let list = tgt.fx;
@@ -435,6 +456,10 @@ export function createDevicePanel(app) {
     }
     if (tgt.kind === 'track' && isPatchActive(tgt.track)) {
       parts.push(button('Plugboard', () => { actions.selectTrack(tgt.id); app.showView('patch'); }, { icon: 'plug', cls: 'small dv-plugboard', title: 'This channel is routed on the Plugboard — open it (7)' }));
+    }
+    if (tgt.kind === 'track') {
+      parts.push(prio(button('Macros', () => { if (macrosOpen.has(tgt.id)) macrosOpen.delete(tgt.id); else macrosOpen.add(tgt.id); render(true); },
+        { icon: 'sliders', cls: `small${macrosOpen.has(tgt.id) ? ' on' : ''}`, title: 'Show / hide this track’s 8 macro knobs (automatable, MIDI-learnable; drag a macro’s plug onto any knob to map it)' }), 6));
     }
     parts.push(button('Effect', (e) => showEffectMenu(e, (type, params) => addEffect(tgt, type, params), { app, ownerId: tgt.id }), { icon: 'plus', cls: 'small', title: 'Add an insert effect to the end of the chain' }));
     const el = h('div.dv-header-row', parts);
@@ -624,6 +649,7 @@ export function createDevicePanel(app) {
 
     // instrument-specific editors
     if (ins.type === 'synth') updaters.push(synthVisuals(shell.body));
+    if (ins.type === 'wavetable') { skip = [...skip, 'osc1Table', 'osc2Table']; updaters.push(wavetableEditor(app, shell.body, tgt, onParam)); }
     if (ins.type === 'organ') updaters.push(drawbarEditor(shell.body, def, onParam));
     if (ins.type === 'drums' || ins.type === 'drumsampler') updaters.push(drumEditor(shell.body, tgt));
     if (ins.type === 'sampler') updaters.push(samplerEditor(shell.body, tgt, onParam));
@@ -1347,6 +1373,7 @@ export function createDevicePanel(app) {
 
   applyHeight();
   render(true);
+  installModRings(app, el);
   return { el, refresh: () => render(true) };
 }
 

@@ -4,6 +4,8 @@ import { uid } from './util.js';
 import { normalizeLane } from './automation.js';
 import { normalizePatch } from './patch.js';
 import { migrateLegacyTempo } from '../time/convert.js';
+import { normalizeMod } from './modulation.js';
+import { sanitizeWavetables, referencedTables } from '../audio/wavetable/tables.js';
 
 export const PROJECT_FORMAT = 'daw3-project';
 export const PROJECT_VERSION = 1;
@@ -152,6 +154,13 @@ export function normalizeProject(p) {
     ...(t.patch ? { patch: normalizePatch(t.patch) } : {}),
   }));
   for (const t of out.tracks) if (!t.patch) delete t.patch;
+  // macros / modulators / routes (core/modulation.js)
+  for (const t of out.tracks) { if (t.mod) { const m = normalizeMod(t.mod); if (m) t.mod = m; else delete t.mod; } }
+  // user wavetables (src/audio/wavetable/tables.js): compact int16 tables keyed by content hash; unused ones are dropped
+  if (p.wavetables) {
+    out.wavetables = sanitizeWavetables(p.wavetables, referencedTables(out));
+    if (!Object.keys(out.wavetables).length) delete out.wavetables;
+  }
   out.patterns = p.patterns || {};
   out.clips = p.clips || [];
   out.scenes = p.scenes?.length ? p.scenes : base.scenes;

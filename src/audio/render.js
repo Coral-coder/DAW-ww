@@ -6,6 +6,7 @@ import { MixGraph, codeSoundOf } from './mixer.js';
 import { claimSuperdough } from './strudel-instrument.js';
 import { CodeCache, collectEvents, defaultEndBeat, isTrackAudible } from './scheduler.js';
 import { hasAutomation, hasControlAutomation } from '../core/automation.js';
+import { hasModulation } from '../core/modulation.js';
 import { keySourcesFor } from '../core/patch.js';
 import { awaitPluginsReady, flushPlugins } from './plugin-instrument.js';
 import { prepareCodeSamples } from './code-instrument.js';
@@ -231,7 +232,50 @@ async function renderOnceWith(project, cfg) {
   const control = automate && hasControlAutomation(project) && typeof ctx.suspend === 'function';
 
   const chunkSec = 2;
-  if (control) {
+  // Modulation (macros / modulators, core/modulation.js): control-rate ticks every ~8.7 ms of render time on top of the
+  // event steps (the automation step grid when control lanes exist, else 1/4-beat scheduling windows).
+  const modulate = hasModulation(project) && typeof ctx.suspend === 'function';
+  if (modulate) {
+    const q = 128 / sampleRate;
+    const modDt = Math.max(1, Math.round(0.0087 / q)) * q;
+    const stepBeats = 0.25;
+    const steps = Math.ceil((endBeat - startBeat) / stepBeats - 1e-9);
+    const total = (length + pad) / sampleRate;
+    const songAuto = mode === 'song' && automate;
+    const modTick = (t) => {
+      try { graph.applyModulation(project, t, { beat: beatOf(t), bpm: constant ? project.bpm : 60 / map.spbAt(beatOf(t)), songAuto, immediate: t === 0 }); } catch (e) { onError(e); }
+    };
+    const runStep = (k, jump) => {
+      const b = startBeat + k * stepBeats;
+      if (control) { try { graph.applyControl(project, b, { immediate: k === 0 }); } catch (e) { onError(e); } }
+      schedule(b, Math.min(endBeat, b + stepBeats), jump);
+    };
+    runStep(0, true);
+    modTick(0);
+    let k = 1, m = 1, lastT = 0;
+    const plan = () => {
+      for (;;) {
+        const te = k < steps ? Math.floor(timeOf(startBeat + k * stepBeats) / q) * q : Infinity;
+        const tm = m * modDt < total - q ? m * modDt : Infinity;
+        const tn = Math.min(te, tm);
+        if (!Number.isFinite(tn)) return;
+        if (!(tn > lastT)) { // sub-quantum (extreme tempo): run it now
+          if (te <= tn) { runStep(k, false); k++; }
+          if (tm <= tn) m++;
+          continue;
+        }
+        lastT = tn;
+        ctx.suspend(tn).then(() => {
+          if (te <= tn) { runStep(k, false); k++; }
+          if (tm <= tn) { modTick(tn); m++; }
+          plan();
+          flushAll(graph).then(() => ctx.resume()); // worklet plugins / superdough must receive their notes first
+        }, (e) => { onError(e); });
+        return;
+      }
+    };
+    plan();
+  } else if (control) {
     const stepBeats = 0.25;
     const q = 128 / sampleRate; // suspend() works on render-quantum boundaries
     const steps = Math.ceil((endBeat - startBeat) / stepBeats - 1e-9);

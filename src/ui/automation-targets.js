@@ -18,6 +18,9 @@ export const VCA_COLOR = '#b197fc';
 // VCA level lane: linear gain 0..VCA_MAX (+12 dB); square-law scale puts 0 dB (1.0) in the middle of the lane
 const VCA_DEF = { key: 'volume', label: 'VCA level', type: 'number', min: 0, max: VCA_MAX, default: 1, step: 0.01, curve: 'exp' };
 
+/** Macro knobs (core/modulation.js): 0..1. */
+export const MACRO_DEF = { key: 'macro', label: 'Macro', type: 'number', min: 0, max: 1, default: 0, step: 0.001, curve: 'lin' };
+const macroName = (o, i) => o?.mod?.macros?.[i]?.name || `Macro ${i + 1}`;
 const MUTE_DEF = { ...MIXER_TARGETS.mute, boolParam: true, onLabel: 'Muted', offLabel: 'Playing' };
 const FXEN_DEF = { ...MIXER_TARGETS.fxen, boolParam: true, onLabel: 'On', offLabel: 'Bypassed' };
 const automatable = (d) => d && !d.hidden && (d.type === 'number' || d.type === 'enum' || d.type === 'bool' || d.type == null);
@@ -100,6 +103,9 @@ export function targetGroups(project, ownerId) {
       ...[...ed.params, ...faustDefs(f)].filter(automatable).map((d) => ({ target: `fx:${f.id}:${d.key}`, label: d.label, def: laneDef(d), paramDef: d, section: d.section }))];
     groups.push({ name: `FX ${k + 1} · ${fxName(o, f)}`, kind: 'fx', fxId: f.id, items });
   });
+  if (oi.kind === 'track') { // macro knobs (core/modulation.js), listed after the devices
+    groups.push({ name: 'Macros', kind: 'macro', items: Array.from({ length: 8 }, (_, k) => ({ target: `macro:${k}`, label: macroName(o, k), def: MACRO_DEF, section: 'Macros' })) });
+  }
   return groups;
 }
 
@@ -135,6 +141,10 @@ export function targetInfo(project, ownerId, target) {
     const bus = (project.buses || []).find((b) => b.id === tg.busId);
     if (!bus) return miss('Send → (deleted bus)');
     return ok(`Send → ${bus.name}`, MIXER_TARGETS.send, o.sends?.[tg.busId] || 0);
+  }
+  if (tg.kind === 'macro') {
+    if (oi.kind !== 'track') return miss('Macro (tracks only)');
+    return ok(macroName(o, tg.index), MACRO_DEF, Number(o.mod?.macros?.[tg.index]?.value ?? 0));
   }
   if (tg.kind === 'cable') {
     const cables = o.patch?.enabled ? o.patch.cables || [] : [];

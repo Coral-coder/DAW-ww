@@ -146,6 +146,9 @@ export async function flushPlugins(graph) {
   for (const e of graph.tracks?.values?.() || []) {
     const pl = e.instrument?.engine?.plugin;
     if (pl?.flush) jobs.push(pl.flush().catch(() => {}));
+    // built-in worklet engines (wavetable synth): notes travel over the node's port too
+    const en = e.instrument?.engine;
+    if (!pl && typeof en?.flush === 'function') jobs.push(Promise.resolve(en.flush()).catch(() => {}));
   }
   // worklet effects (rhythm effects: params / beat clock messages)
   const strips = [graph.master, ...(graph.buses?.values?.() || []), ...[...(graph.tracks?.values?.() || [])].map((e) => e.strip)];
