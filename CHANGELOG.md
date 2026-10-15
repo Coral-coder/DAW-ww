@@ -12,6 +12,11 @@ the desktop apps share one version.
   render, Setlist, Pocket), its functions show in autocomplete and the building blocks, and a project keeps a
   reference to the prebakes its code uses. Code calling undefined functions offers the saved prebake that defines
   them. Split import maps what the helpers produce (filter envelopes, delay sends, filters, gain, orbit mute / solo).
+- **Analyzer devices** (Analysis category, zero-latency pass-through): Oscilloscope (cycle-locked trigger, pitch
+  readout), Vectorscope (Lissajous / polar / scatter, correlation and balance), Spectrum Analyzer (FFT up to 32k,
+  slope, averaging, peak hold, max, compare trace from another track), Spectrogram (log / linear / mel, colour-blind
+  safe maps, 3D waterfall) and Tuner (needle + strobe, A4 415–466 Hz) — each with presets and a pop-out window.
+  A Scopes panel in the Mixer shows them for the master or any track without an insert; Pocket shows them compact.
 
 ## [1.0.0] — 2026-10-14
 

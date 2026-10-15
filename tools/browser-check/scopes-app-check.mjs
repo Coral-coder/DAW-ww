@@ -63,11 +63,25 @@ try {
   }
   await shot('mixer-scopes');
   await page.evaluate(({ track }) => window.daw3.engine.noteOff(track, 57), ids);
-  // Pocket
-  await page.goto(srv.url + '/index.html?mobile=1');
+  // Pocket: the same project (autosaved), the track page, the analyzer effect expanded
+  await wait(2500);
   await page.setViewportSize({ width: 400, height: 860 });
-  await page.waitForFunction(() => window.daw3?.store || document.querySelector('.pk-app, .pk-shell, [class^="pk-"]'), null, { timeout: 30000 });
-  await wait(1500);
+  await page.goto(`${srv.url}/index.html?mobile=1#/track/${encodeURIComponent(ids.track)}`);
+  await wait(5000);
+  await page.evaluate(() => document.querySelectorAll('.modal-backdrop, .pk-sheet-back').forEach((m) => m.remove()));
+  const opened = await page.evaluate(() => {
+    const heads = [...document.querySelectorAll('.pk-fx-head')].filter((b) => /Spectrum|Tuner/.test(b.textContent));
+    heads.forEach((b) => b.click());
+    return heads.length;
+  });
+  await wait(300);
+  await page.evaluate(() => [...document.querySelectorAll('.pk-fx-head')].filter((b) => /Tuner/.test(b.textContent) && !b.closest('.pk-fx').querySelector('.pk-an')).forEach((b) => b.click()));
+  await wait(1200);
+  await page.evaluate(() => document.querySelector('.pk-an')?.scrollIntoView());
+  await wait(800);
+  const pk = await page.evaluate(() => [...document.querySelectorAll('.pk-an canvas')].map((c) => [c.width, c.height]));
+  check(opened >= 1 && pk.length >= 1 && pk.every(([w, hh]) => w > 100 && hh > 100), `Pocket analyzer cards ${JSON.stringify({ opened, pk })}`);
+  await shot('pocket');
   check(errors.length === 0, `no console errors ${JSON.stringify(errors)}`);
 } finally { await browser.close(); srv.close(); }
 console.log(fails ? `${fails} failure(s)` : 'PASS');
