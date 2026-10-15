@@ -9,6 +9,7 @@ const MODULES = [
   ['/src/audio/warp/worklet.js', 'daw3-warp'],
   ['/src/record/capture-processor.js', 'daw3-capture'],
   ['/src/audio/stream/stream-processor.js', 'daw3-stream'],
+  ['/src/audio/fx/dynamics-worklet.js', 'daw3-multiband'],
 ];
 
 const srv = await serveRepo();

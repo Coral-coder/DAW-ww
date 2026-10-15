@@ -12,6 +12,10 @@ the desktop apps share one version.
   render, Setlist, Pocket), its functions show in autocomplete and the building blocks, and a project keeps a
   reference to the prebakes its code uses. Code calling undefined functions offers the saved prebake that defines
   them. Split import maps what the helpers produce (filter envelopes, delay sends, filters, gain, orbit mute / solo).
+- **Dynamics & EQ effects**: Multiband Compressor (3 / 4 Linkwitz-Riley bands, upward + downward with an OTT-style
+  depth), Transient Shaper, De-esser, Expander / Gate (hysteresis, hold, look-ahead, filtered or external key),
+  Dynamic EQ, Linear-Phase EQ and Match EQ (capture a reference track, file or clip) — AudioWorklet / FIR DSP that
+  renders offline too, latency compensated, with transfer-curve, gain-reduction and response-curve cards and presets.
 
 ## [1.0.0] — 2026-10-14
 
