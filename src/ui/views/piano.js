@@ -7,6 +7,7 @@ import { uid, clamp, createRng } from '../../core/util.js';
 import * as T from '../../theory/index.js';
 import { isTyping } from '../keyboard.js';
 import { openGrooveDialog } from '../groove-dialog.js';
+import { DT_CHORDS, parseChordDrag, chordsToNotes } from '../../core/chord-track.js';
 
 // Generators are optional for this view (arpeggiate); load lazily so a missing module can't break it.
 let gen = null;
@@ -1629,6 +1630,22 @@ export function createPianoView(app) {
     e.preventDefault();
     const h0 = S.velH;
     startDrag(e, (_dx, dy) => { S.velH = clamp(h0 - dy, 28, 260); applyLayout(); drawAll(); }, () => save());
+  });
+
+  // ---------------------------------------------------------------- chord pads drop (src/ui/chord-pads.js)
+  const chordDrag = (e) => [...(e.dataTransfer?.types || [])].includes(DT_CHORDS) && cur.pat && !isDrum;
+  scroller.addEventListener('dragover', (e) => { if (!chordDrag(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+  scroller.addEventListener('drop', (e) => {
+    if (!chordDrag(e)) return;
+    e.preventDefault();
+    const payload = parseChordDrag(e.dataTransfer.getData(DT_CHORDS));
+    if (!payload) return;
+    const at = snapFloor(point(e.clientX, e.clientY).beat);
+    const notes = chordsToNotes(payload.chords, at, payload).map((n) => mkNote(n.pitch, n.start, n.dur, n.vel));
+    const end = Math.max(...notes.map((n) => n.start + n.dur));
+    edit('Drop chords', (pat) => { pat.notes.push(...notes); ensureLength(pat, end); });
+    selected = new Set(notes.map((n) => n.id));
+    drawAll();
   });
 
   // ---------------------------------------------------------------- keyboard shortcuts

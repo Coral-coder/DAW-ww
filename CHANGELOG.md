@@ -12,6 +12,12 @@ the desktop apps share one version.
   render, Setlist, Pocket), its functions show in autocomplete and the building blocks, and a project keeps a
   reference to the prebakes its code uses. Code calling undefined functions offers the saved prebake that defines
   them. Split import maps what the helpers produce (filter envelopes, delay sends, filters, gain, orbit mute / solo).
+- **Chord track + chord pads**: a chord lane in Arrange (add / edit / drag / resize chord symbols, detect them from
+  your MIDI), chord pads in the project key with inversions, voicings and voice leading (drag a chord or a
+  progression onto the chord lane, a MIDI clip or the piano roll), and MIDI tracks / clips that follow the chord
+  track non-destructively. **Clip effects** (per-clip effect chains, rendered and latency-compensated with the mix),
+  a **spectral editor** for audio clips (attenuate, remove, heal, isolate — undoable, original kept) and **action
+  macros** (record or compose command sequences, give them a shortcut, run them from the palette, export as JSON).
 
 ## [1.0.0] — 2026-10-14
 

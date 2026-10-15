@@ -182,3 +182,28 @@ test('chordsToNotes + drag payload round trip', () => {
   assert.equal(parseChordDrag('nope'), null);
   assert.equal(parseChordDrag('{"chords":[{"root":0,"type":"zzz"}]}'), null);
 });
+
+test('dropping chords: into a pattern clip (pattern / clip grow) or as a new clip on an empty spot', async () => {
+  const { dropChordsAsNotes } = await import('../src/ui/chord-actions.js');
+  const { Store } = await import('../src/core/store.js');
+  const p = createProject();
+  const t = createTrack({ name: 'Keys', instrument: { type: 'synth', params: {} } });
+  const pat = createPattern(t.id, { length: 4, notes: [] });
+  p.patterns[pat.id] = pat;
+  p.tracks = [t];
+  const clip = createClip(t.id, { patternId: pat.id, start: 8, length: 4 });
+  p.clips = [clip];
+  const store = new Store(p);
+  const app = { store, ui: { get: () => null }, setStatus() {} };
+  const payload = { chords: sequenceChords([{ root: 0, type: 'maj' }, { root: 5, type: 'maj' }], 4), voicing: 'close', inversion: 0, voiceLeading: false, octave: 4 };
+  assert.equal(dropChordsAsNotes(app, payload, { track: t, clip, beat: 10 }), true);
+  const np = store.get().patterns[pat.id];
+  assert.deepEqual([...new Set(np.notes.map((n) => n.start))], [2, 6]);
+  assert.equal(np.length, 12); // 2 + 8 beats, rounded up to whole bars
+  assert.equal(store.get().clips[0].length, 12); // the clip grows to cover the progression
+  dropChordsAsNotes(app, payload, { track: t, clip: null, beat: 32 });
+  const added = store.get().clips.find((c) => c.start === 32);
+  assert.ok(added && added.length === 8 && store.get().patterns[added.patternId].notes.length === 6);
+  store.undo(); // one undo step per drop
+  assert.equal(store.get().clips.length, 1);
+});
