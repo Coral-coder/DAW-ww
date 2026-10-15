@@ -7,7 +7,7 @@ the desktop apps share one version.
 
 ### Added
 - **Rhythm effects**, locked sample-accurately to the song grid (seeks, loops, tempo maps, exports): **Trance Gate**
-  (1–32 drawable steps, attack / release / shape, swing, stereo offset or separate right pattern, 30 patterns),
+  (1–32 drawable steps, attack / release / shape, swing, stereo offset or separate right pattern, 31 patterns),
   **Volume Shaper** (drawable LFO-tool curve over 1/8 note to 4 bars, pumps / gates / swells, optional filter sweep),
   **Beat Repeat** (grid stutter with chance, decay, pitch-down per repeat and a hold-to-stutter button) and
   **Time Shaper** (tape stop / start, synced reverse, half speed — every N bars or on a trigger button).
