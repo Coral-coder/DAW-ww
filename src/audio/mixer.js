@@ -35,12 +35,14 @@ import { EFFECT_DEFS } from './effect-defs.js';
 import { resolveInstrument } from './instruments.js';
 import { sanitizePatch, patchStructureKey, topoOrder, resolveKeyLinks, PATCH_IN, PATCH_OUT } from '../core/patch.js';
 import { computePdc, faderOffsets, alignInserts } from './latency.js';
+import { ClipFxRack, hasClipFx, gateSchedule } from './clip-fx.js';
 import { needsShapedEnvelope, envelopePoints } from '../record/clips.js';
 import { frozenMode, bypassesInserts, bypassesFader, frozenLaneFilter } from '../core/freeze.js';
 import { spanOf } from '../time/tempo-map.js';
 import { WarpPlayer, needsWarpPlayer, unwarpedInSeconds } from './warp/player.js';
 import { MasterAnalysis } from './meters.js';
 import { inputGain, widthMatrix, vcaGainFor, vcaCombinedLane, soloState, sendTap, outputOf } from '../core/mixer-model.js';
+import { ModRunner } from './mod/runner.js';
 
 const TC = 0.012;
 
@@ -81,6 +83,13 @@ function withParams(def, ov, defs) {
   const out = { ...def, params: mergeParamOverrides(def.params, dec) };
   if (en !== undefined) out.enabled = en;
   return out;
+}
+
+/** Automation overrides with modulation values on top (modulation already includes the automated base). */
+function mergeOv(auto, mod) {
+  if (!mod) return auto || null;
+  if (!auto) return mod;
+  return { ...auto, ...mod };
 }
 
 /** Did an override map change enough to be worth an update()? (tiny relative epsilon) */
@@ -201,6 +210,7 @@ export class ChannelStrip {
     this.sendVals = {}; // static send amounts (restored when send automation ends)
     this.fxDefs = new Map(); // fxId -> last static Effect def
     this.fxOv = new Map(); // fxId -> {key: value} automation overrides
+    this.fxMod = new Map(); // fxId -> {key: value} modulation values (mod/runner.js; merged over fxOv)
     this.auto = { volume: false, pan: false, mute: false, vca: false, sends: new Set() }; // AudioParams currently driven by automation
     this.cableOv = new Map(); // cableId -> automated gain (plugboard)
     this.peak = { l: 0, r: 0 };
@@ -209,14 +219,14 @@ export class ChannelStrip {
       this.splitter = ctx.createChannelSplitter(2);
       this.anL = ctx.createAnalyser();
       this.anR = ctx.createAnalyser();
-      this.anL.fftSize = this.anR.fftSize = 1024;
+      this.anL.fftSize = this.anR.fftSize = 2048; // > one 30 fps frame: meter ballistics (dsp/ballistics.js) see every sample
       // PDC-aware: the meter hears the strip when its signal reaches the master (same compensation as the out link)
       this.meterDelay = ctx.createDelay(1);
       this.muteGain.connect(this.meterDelay);
       this.meterDelay.connect(this.splitter);
       this.splitter.connect(this.anL, 0);
       this.splitter.connect(this.anR, 1);
-      this._buf = new Float32Array(1024);
+      this._buf = new Float32Array(2048);
     }
   }
 
@@ -289,7 +299,7 @@ export class ChannelStrip {
     const byId = new Map(list.map((f) => [f.id, f]));
     this.fxDefs = byId;
     for (const e of this.effects) {
-      try { e.fx.update(withParams(byId.get(e.id), this.fxOv.get(e.id), EFFECT_DEFS[e.type])); } catch (err) { this.onError(err); }
+      try { e.fx.update(withParams(byId.get(e.id), mergeOv(this.fxOv.get(e.id), this.fxMod.get(e.id)), EFFECT_DEFS[e.type])); } catch (err) { this.onError(err); }
     }
   }
 
@@ -371,7 +381,8 @@ export class ChannelStrip {
   }
 
   /** Latency (s) of the insert section, input -> post (aligned: the slowest branch / key; see alignment()). */
-  get insertLatency() { return this.alignment().latency; }
+  // (+ the clip-effect rack's padding: every clip / dry path is delayed to its slowest chain — see clip-fx.js)
+  get insertLatency() { if (this.clipFx) this.clipFx.refreshLatency(); return this.alignment().latency + (this.clipFx?.latency || 0); }
 
   /** Put the alignment delays on the cables (MixGraph.updatePdc). -> the plan. */
   applyAlignment(enabled = true) {
@@ -398,9 +409,23 @@ export class ChannelStrip {
       if (ov) this.fxOv.set(e.id, ov); else this.fxOv.delete(e.id);
       const def = this.fxDefs.get(e.id);
       if (!def) continue;
-      try { e.fx.update(withParams(def, ov, EFFECT_DEFS[e.type]), immediate); } catch (err) { this.onError(err); }
+      try { e.fx.update(withParams(def, mergeOv(ov, this.fxMod.get(e.id)), EFFECT_DEFS[e.type]), immediate); } catch (err) { this.onError(err); }
     }
     for (const id of [...this.fxOv.keys()]) if (!this.effects.some((e) => e.id === id)) this.fxOv.delete(id);
+  }
+
+  /** Modulation values for insert fx: {fxId: {key: value}} | null (see mod/runner.js). */
+  setFxMod(map) {
+    for (const e of this.effects) {
+      const m = map?.[e.id] || null;
+      const cur = this.fxMod.get(e.id) || null;
+      if (!m && !cur) continue;
+      if (m) this.fxMod.set(e.id, m); else this.fxMod.delete(e.id);
+      const def = this.fxDefs.get(e.id);
+      if (!def) continue;
+      try { e.fx.update(withParams(def, mergeOv(this.fxOv.get(e.id), m), EFFECT_DEFS[e.type])); } catch (err) { this.onError(err); }
+    }
+    for (const id of [...this.fxMod.keys()]) if (!this.effects.some((e) => e.id === id)) this.fxMod.delete(id);
   }
 
   /** Automation overrides for plugboard cable gains: {cableId: gain} | null (null = back to static). */
@@ -591,9 +616,10 @@ export class ChannelStrip {
     }
   }
 
-  setTempo(bpm) { for (const e of this.effects) e.fx.setTempo(bpm); }
-  syncLfos(time) { for (const e of this.effects) e.fx.sync(time); }
+  setTempo(bpm) { for (const e of this.effects) e.fx.setTempo(bpm); this.clipFx?.setTempo(bpm); }
+  syncLfos(time) { for (const e of this.effects) e.fx.sync(time); this.clipFx?.syncLfos(time); }
   getReduction(fxId) { const e = this.effects.find((x) => x.id === fxId); return e?.fx.getReduction ? e.fx.getReduction() : 0; }
+  getFxProbe(fxId) { return this.effects.find((x) => x.id === fxId)?.fx.probe ?? null; }
 
   /** Peak level per channel since the last call (with decay for smooth meters). */
   getMeter() {
@@ -621,6 +647,7 @@ export class ChannelStrip {
   dispose() {
     for (const e of this.effects) e.fx.dispose();
     this.effects = [];
+    if (this.clipFx) { this.clipFx.dispose(); this.clipFx = null; }
     for (const l of this.sendLinks.values()) l.dispose();
     this.outLink?.dispose();
     if (this.width) { for (const n of [this.width.split, this.width.merge, ...Object.values(this.width.g)]) { try { n.disconnect(); } catch { /* */ } } }
@@ -726,6 +753,7 @@ export class MixGraph {
       e.strip.setSends(track.sends || {}, this.buses, im, taps);
       if (fz) { if (e.instrument || e.code) this._disposeSources(e); } else this._syncSource(e, track);
       this._syncPadOutputs(e, track);
+      this._syncClipFx(e, track, project, fz);
     }
     for (const [id, e] of this.tracks) {
       if (!trackIds.has(id)) { this._disposeSources(e); e.strip.dispose(); this.tracks.delete(id); }
@@ -733,6 +761,17 @@ export class MixGraph {
     this._syncKeys(project);
     this._syncCue(project);
   }
+
+  /** Clip effects (clip-fx.js): a rack of per-clip chains on tracks that have clips with clip fx. */
+  _syncClipFx(e, track, project, frozen) {
+    const clips = frozen ? [] : project.clips.filter((c) => c.trackId === track.id && hasClipFx(c));
+    if (!clips.length) { if (e.strip.clipFx) { e.strip.clipFx.dispose(); e.strip.clipFx = null; } return; }
+    if (!e.strip.clipFx) e.strip.clipFx = new ClipFxRack(e.strip, { onError: this.onError });
+    e.strip.clipFx.sync(clips);
+  }
+
+  /** Where an audio clip's sources play into: its clip-effect chain, else the track input. */
+  _clipDest(e, clip) { return (clip && e.strip.clipFx?.inputFor(clip.id)) || e.strip.input; }
 
   /** Drum multi-out: pads listed in track.padOutputs play straight into their bus (a separate mixer channel). */
   _syncPadOutputs(e, track) {
@@ -884,6 +923,8 @@ export class MixGraph {
         try {
           e.instrument = createInstrument(this.ctx, e.strip.input, def, {
             getSampleBuffer: this.o.getSampleBuffer, getBpm: this.o.getBpm,
+            getWavetable: (id) => this._project?.wavetables?.[id] || null, // wavetable synth: project tables
+            onNote: (t, on) => { if (!this.mod) return; if (on == null) this.mod.allOff(track.id); else this.mod.note(track.id, t, on); }, // envelope modulators
           });
           e.instType = def.type;
           e.instJson = JSON.stringify(def);
@@ -900,7 +941,7 @@ export class MixGraph {
         const json = JSON.stringify(def);
         if (json !== e.instJson) {
           e.instJson = json;
-          try { e.instrument.update(withParams(def, e.instOv, INSTRUMENT_DEFS[e.instrument.type || def.type])); } catch (err) { this.onError(err); }
+          try { e.instrument.update(withParams(def, mergeOv(e.instOv, e.modInst), INSTRUMENT_DEFS[e.instrument.type || def.type])); } catch (err) { this.onError(err); }
         }
       }
     } else if (track.type === 'code') {
@@ -994,7 +1035,7 @@ export class MixGraph {
         const type = e.instrument.type || resolveInstrument(track.instrument).type;
         if (changed(e.instOv || null, ov.inst, INSTRUMENT_DEFS[type]?.params)) {
           e.instOv = ov.inst;
-          try { e.instrument.update(withParams(track.instrument, ov.inst, INSTRUMENT_DEFS[type])); } catch (err) { this.onError(err); }
+          try { e.instrument.update(withParams(track.instrument, mergeOv(ov.inst, e.modInst), INSTRUMENT_DEFS[type])); } catch (err) { this.onError(err); }
         }
       }
     }
@@ -1017,9 +1058,32 @@ export class MixGraph {
       if (e.instOv) {
         e.instOv = null;
         const track = project?.tracks.find((t) => t.id === id);
-        if (e.instrument && track?.instrument) { try { e.instrument.update(track.instrument); } catch (err) { this.onError(err); } }
+        if (e.instrument && track?.instrument) { try { e.instrument.update(e.modInst ? withParams(track.instrument, e.modInst, INSTRUMENT_DEFS[e.instrument.type || track.instrument.type]) : track.instrument); } catch (err) { this.onError(err); } }
       }
     }
+  }
+
+  // ---------------------------------------------------------------- modulation (core/modulation.js, mod/runner.js)
+  /**
+   * Evaluate macros / modulators of every track at context time t and apply them.
+   * opts: { beat (transport beat at t or null), bpm, songAuto (automation lanes play), immediate }
+   */
+  applyModulation(project, t, opts = {}) {
+    (this.mod ||= new ModRunner(this)).tick(project, t, opts);
+  }
+
+  /** Live modulation view of a track for the UI (null when it has no modulation). */
+  modView(trackId) { return this.mod?.view(trackId) || null; }
+
+  /** Instrument param values from modulation ({key: value} | null), merged over the automation overrides. */
+  setModInst(trackId, map) {
+    const e = this.tracks.get(trackId);
+    if (!e) return;
+    e.modInst = map || null;
+    const track = this._project?.tracks.find((t) => t.id === trackId);
+    if (!e.instrument || !track?.instrument) return;
+    const type = e.instrument.type || resolveInstrument(track.instrument).type;
+    try { e.instrument.update(withParams(track.instrument, mergeOv(e.instOv, e.modInst), INSTRUMENT_DEFS[type])); } catch (err) { this.onError(err); }
   }
 
   /** The Strudel-engine code instruments of this graph (see strudel-instrument.js). */
@@ -1050,6 +1114,12 @@ export class MixGraph {
       e.instrument?.trigger(time, ev.pitch, ev.vel, durSec, ev.x ? noteExtra(ev, durSec) : undefined);
     } else if (ev.type === 'code') {
       e.code?.trigger(time, ev.value, Math.max(0.005, ev.durSec ?? ev.dur * spb), ev);
+    } else if (ev.type === 'clipfx') {
+      const rack = e.strip.clipFx;
+      if (!rack) return;
+      const s0 = map && !map.isConstant ? map.secAt(ev.beat) : 0;
+      const timeOf = (b) => (map && !map.isConstant ? map.secAt(b) - s0 : (b - ev.beat) * spb);
+      rack.scheduleWindow(gateSchedule(ev.spans || [], ev.beat, ev.beat + ev.dur, [...rack.chains.keys()], timeOf), time);
     } else if (ev.type === 'audio') {
       if (needsWarpPlayer(ev.clip)) { this._warpPlayer().play(e, ev, time, spb, map); return; }
       if (map && !map.isConstant) { this._playAudioClip(e, unwarpedInSeconds(ev, map), time, 1); return; } // tempo map: in seconds
@@ -1121,7 +1191,7 @@ export class MixGraph {
     const g = this.ctx.createGain();
     this._clipEnvelope(g, clip, ev, time, dur, spb);
     src.connect(g);
-    g.connect(e.strip.input);
+    g.connect(this._clipDest(e, clip));
     src.start(time, offSec, dur + 0.001);
     const rec = { src, g };
     this.sources.add(rec);
@@ -1136,7 +1206,7 @@ export class MixGraph {
     if (dur <= 0.002) return;
     const g = this.ctx.createGain();
     this._clipEnvelope(g, clip, ev, time, dur, spb);
-    g.connect(e.strip.input);
+    g.connect(this._clipDest(e, clip));
     let voice;
     try { voice = this.o.playStream(stream, g, time, offSec, dur + 0.001); } catch (err) { this.onError(err); try { g.disconnect(); } catch { /* */ } return; }
     const rec = { src: voice, g };
@@ -1150,6 +1220,7 @@ export class MixGraph {
     for (const e of this.tracks.values()) {
       try { e.instrument?.allNotesOff(t); } catch (err) { this.onError(err); }
       try { e.code?.allNotesOff(t); } catch (err) { this.onError(err); }
+      e.strip.clipFx?.reset(t);
     }
     this._warp?.clear(); // stopped voices must not be retimed (a later stop() would revive them)
     for (const rec of this.sources) {
@@ -1187,6 +1258,36 @@ export class MixGraph {
     return this.analysis;
   }
 
+  /**
+   * A dedicated AnalyserNode (no smoothing) tapping a strip's post-fader output — 'master' = the master output,
+   * else a track or bus id — for visualizers. Created on first use and re-wired when the strip was rebuilt.
+   */
+  stripAnalyser(id = 'master', { fftSize = 4096, smoothing = 0 } = {}) {
+    let src = this.out;
+    if (id !== 'master') {
+      const s = this.tracks.get(id)?.strip || this.buses.get(id);
+      src = s ? (s.meterDelay || s.output) : null;
+    }
+    if (!src) return null;
+    this.taps ||= new Map();
+    const old = this.taps.get(id);
+    if (old && old.src === src && old.node.fftSize === fftSize) return old.node;
+    if (old) this.releaseStripAnalyser(id);
+    const node = this.ctx.createAnalyser();
+    node.fftSize = fftSize;
+    node.smoothingTimeConstant = smoothing;
+    src.connect(node);
+    this.taps.set(id, { src, node });
+    return node;
+  }
+
+  releaseStripAnalyser(id) {
+    const t = this.taps?.get(id);
+    if (!t) return;
+    try { t.src.disconnect(t.node); } catch { /* strip already disposed */ }
+    this.taps.delete(id);
+  }
+
   /** Gain reduction (dB, <= 0) of a compressor/limiter effect anywhere in the graph. */
   getReduction(fxId) {
     for (const s of this._strips()) {
@@ -1195,8 +1296,18 @@ export class MixGraph {
     return 0;
   }
 
+  /** The live probe object of an effect anywhere in the graph (see createEffect), else null. */
+  getFxProbe(fxId) {
+    for (const s of this._strips()) {
+      if (s.effects.some((e) => e.id === fxId)) return s.getFxProbe(fxId);
+    }
+    return null;
+  }
+
   dispose() {
     try { this.analysis?.dispose(); } catch { /* */ }
+    for (const id of [...(this.taps?.keys() || [])]) this.releaseStripAnalyser(id);
+    try { this.mod?.dispose(); } catch { /* */ }
     for (const e of this.tracks.values()) { this._disposeSources(e); e.strip.dispose(); }
     for (const s of this.buses.values()) s.dispose();
     this.master.dispose();

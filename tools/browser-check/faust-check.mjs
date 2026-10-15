@@ -1,33 +1,11 @@
 #!/usr/bin/env node
 // Faust plugins (AudioWorklet nodes built by @grame/faustwasm): a polyphonic instrument and a stereo effect, realtime
-// and offline. faustwasm loads from jsDelivr; where that is blocked, point FAUSTWASM_DIR at an unpacked
-// `npm pack @grame/faustwasm@<FAUSTWASM_VERSION>` (its `package/` folder) and the CDN URLs are served from it.
-// Without either the check is skipped (exit 0).   node tools/browser-check/faust-check.mjs
-import { readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { join, extname } from 'node:path';
-import { launch, serveRepo, repoRoot } from './browser.mjs';
-
-const ver = /FAUSTWASM_VERSION = '([^']+)'/.exec(await readFile(join(repoRoot, 'src/plugins/faust.js'), 'utf8'))[1];
-const base = `https://cdn.jsdelivr.net/npm/@grame/faustwasm@${ver}`;
-const dir = process.env.FAUSTWASM_DIR;
-if (!dir) {
-  const ok = await fetch(base + '/package.json').then((r) => r.ok, () => false);
-  if (!ok) { console.log(`SKIP  Faust: ${base} unreachable and FAUSTWASM_DIR not set`); process.exit(0); }
-} else if (!existsSync(join(dir, 'dist/esm/index.js'))) { console.log(`SKIP  Faust: ${dir} is not an unpacked faustwasm package`); process.exit(0); }
+// and offline. The compiler comes from the bundled vendor/faustwasm (no network needed); every catalog plugin is
+// covered by faust-catalog-check.mjs.   node tools/browser-check/faust-check.mjs
+import { launch, serveRepo } from './browser.mjs';
 
 const srv = await serveRepo();
-const { browser, context, page } = await launch();
-if (dir) {
-  const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.json': 'application/json' };
-  await context.route(base + '/**', async (route) => {
-    const rel = decodeURIComponent(new URL(route.request().url()).pathname.slice(new URL(base).pathname.length + 1));
-    try {
-      const body = await readFile(join(dir, rel));
-      await route.fulfill({ status: 200, body, headers: { 'content-type': types[extname(rel)] || 'application/octet-stream', 'access-control-allow-origin': '*' } });
-    } catch { await route.fulfill({ status: 404, body: 'not found', headers: { 'access-control-allow-origin': '*' } }); }
-  });
-}
+const { browser, page } = await launch();
 page.on('console', (m) => { if (/faust|error/i.test(m.text())) console.log('  [page]', m.text().slice(0, 200)); });
 let fails = 0;
 const report = (ok, msg) => { if (!ok) fails++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${msg}`); };

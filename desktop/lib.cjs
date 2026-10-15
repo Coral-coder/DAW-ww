@@ -121,6 +121,7 @@ function buildMenuTemplate({ isMac = process.platform === 'darwin', appName = 'd
     { type: 'separator' },
     { label: 'Toggle Browser    (B)', click: cmd('toggle-browser') },
     { label: 'Toggle Assistant    (A)', click: cmd('toggle-assistant') },
+    { label: 'SETI Scope    (Shift+V)', click: cmd('seti-scope') },
     { type: 'separator' },
     { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' },
     ...(isDev ? [{ type: 'separator' }, { role: 'reload' }, { role: 'toggleDevTools' }] : [{ type: 'separator' }, { role: 'toggleDevTools' }]),

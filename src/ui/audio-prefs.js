@@ -6,6 +6,7 @@ import { modal, select, toggle, button } from './components.js';
 import { SAMPLE_RATES, BUFFER_SIZES, normalizeAudioConfig } from '../native/protocol.js';
 import { getNativeClient, nativeAudioApi, nativePluginsApi } from '../native/client.js';
 import { FORMAT_LABELS } from '../native/plugin-db.js';
+import { cleanErrorMessage, classifyFailure } from '../native/plugin-diagnostics.js';
 
 const ms = (frames, sr) => `${((frames / sr) * 1000).toFixed(1)} ms`;
 
@@ -91,7 +92,7 @@ export async function openAudioPrefs(app) {
           const r = await api.calibrate({ outChannel: cfg.outOffset, inChannel: 0 });
           setMsg(r.message, r.ok ? 'info' : 'warn');
           cfg = await api.getConfig();
-        } catch (err) { setMsg(err.message, 'error'); }
+        } catch (err) { setMsg(cleanErrorMessage(err), 'error'); }
         b.disabled = false;
         renderLatency();
       }, { icon: 'wave', cls: 'small', title: 'Play a chirp and time how long it takes to come back in' }));
@@ -116,14 +117,16 @@ export async function openAudioPrefs(app) {
     clear(pluginsEl);
     if (!plugins) return;
     let r = null;
-    try { r = await plugins.list(); } catch { /* */ }
+    let listErr = '';
+    try { r = await plugins.list(); } catch (e) { listErr = cleanErrorMessage(e); }
     const counts = {};
     for (const p of r?.plugins || []) counts[p.format] = (counts[p.format] || 0) + 1;
     pluginsEl.append(
       h('h3', 'Plugins (VST3 / Audio Unit / CLAP)'),
+      listErr ? h('div.plg-error', `Could not read the plugin list: ${listErr}`) : null,
       h('div', r?.scannedAt ? `${r.plugins.length} plugins — ${Object.entries(counts).map(([f, n]) => `${n} ${FORMAT_LABELS[f]}`).join(', ') || 'none'} · scanned ${new Date(r.scannedAt).toLocaleString()}` : 'Not scanned yet.'),
       h('div.aprefs-hint', `Folders: ${[...(r?.folders?.vst3 || []), ...(r?.folders?.clap || [])].join(' · ')} · Audio Units: system registry`),
-      r?.failed?.length ? h('details', h('summary', `${r.failed.length} could not be loaded`), h('ul', ...r.failed.map((f) => h('li', `${f.path.split('/').pop()} — ${f.error}`)))) : null,
+      r?.failed?.length ? h('details', h('summary', `${r.failed.length} could not be loaded`), h('ul', ...r.failed.map((f) => h('li', `${f.path.split(/[\\/]/).pop()} — ${classifyFailure(f).label}: ${f.error}`)))) : null,
       button('Rescan plugins', async (e) => {
         const b = e.currentTarget;
         b.disabled = true;
@@ -131,7 +134,7 @@ export async function openAudioPrefs(app) {
         try {
           const s = await m.scanNativePlugins({ force: true, onProgress: (p) => setMsg(`Scanning ${p.done}/${p.total}: ${String(p.path).split('/').pop()}`) });
           setMsg(`${s.count} plugins found${s.failed.length ? `, ${s.failed.length} failed` : ''}`);
-        } catch (err) { setMsg(err.message, 'error'); }
+        } catch (err) { setMsg(cleanErrorMessage(err), 'error'); }
         b.disabled = false;
         renderPlugins();
       }, { icon: 'search', cls: 'small' }));

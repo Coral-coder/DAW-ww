@@ -1,0 +1,94 @@
+/* ===================== Modulation (macros, modulators, mod matrix, rings) + wavetable editor ===================== */
+
+/* ---- macro row (device header) ---- */
+.dv-macro-row { display: flex; align-items: flex-end; gap: 4px; padding: 2px 8px 4px; border-top: 1px solid var(--line); overflow-x: auto; scrollbar-width: thin; }
+.dv-macro-title { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-3); align-self: center; margin-right: 4px; }
+.mod-macro { position: relative; display: flex; align-items: flex-start; gap: 1px; }
+.mod-macro .knob { width: 54px; }
+.mod-macro .knob-label { max-width: 54px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+.mod-badge { position: absolute; right: 2px; top: 0; font-size: 9px; min-width: 12px; text-align: center; border-radius: 6px; background: var(--accent); color: #fff; line-height: 12px; }
+.mod-badge:empty { display: none; }
+
+/* ---- drag handles / drag-to-modulate ---- */
+.mod-handle { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; color: var(--accent-2);
+  background: color-mix(in srgb, var(--accent-2) 14%, transparent); cursor: grab; flex: none; }
+.mod-handle:hover { background: color-mix(in srgb, var(--accent-2) 32%, transparent); }
+.mod-drag-ghost { position: fixed; z-index: 10000; pointer-events: none; display: flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 12px;
+  background: var(--accent-2); color: #061016; font-size: 11px; font-weight: 600; box-shadow: 0 4px 14px rgba(0,0,0,.35); }
+body.mod-dragging, body.mod-dragging * { cursor: grabbing !important; user-select: none; }
+.mod-drop-ok { outline: 1px dashed color-mix(in srgb, var(--accent-2) 70%, transparent); outline-offset: 1px; border-radius: 6px; }
+.mod-drop-hover { outline: 2px solid var(--accent-2); background: color-mix(in srgb, var(--accent-2) 14%, transparent); }
+
+/* ---- knob modulation ring ---- */
+.knob-mod { fill: none; stroke: var(--accent-2); stroke-width: 2.2; stroke-linecap: round; opacity: .75; }
+.knob-mod-dot { fill: var(--accent-2); }
+.knob.mod-on .knob-value { color: var(--accent-2); }
+
+/* ---- modulation card ---- */
+.dv-mod-card { --card-color: var(--accent-2); }
+.dv-mod-gap { flex: none; width: 10px; }
+.dv-mod-card .dv-card-body { width: 500px; display: flex; flex-direction: column; gap: 6px; }
+.mod-tabs { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; }
+.mod-tab { position: relative; display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 7px 0 4px; border-radius: 5px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--text-2); font-size: 11px; cursor: pointer; overflow: hidden; }
+.mod-tab.on { background: var(--bg-4); color: var(--text); border-color: var(--accent-2); }
+.mod-tab-matrix { padding-left: 7px; }
+.mod-tab-meter { position: absolute; left: 0; bottom: 0; height: 2px; width: calc(var(--v, 0) * 100%); background: var(--accent-2); transition: width .04s linear; }
+.mod-add { width: 24px; height: 24px; }
+.mod-pane { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.mod-empty { color: var(--text-3); font-size: 12px; }
+.mod-empty p { margin: 2px 0 8px; }
+.mod-empty-btns { display: flex; flex-wrap: wrap; gap: 4px; }
+.mod-ed-head { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.mod-ed-head .spacer { flex: 1; }
+.mod-ed-head b { cursor: text; }
+.mod-ed-body { display: flex; gap: 8px; align-items: flex-start; }
+.mod-ed-viz { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.mod-ed-controls { width: 168px; flex: none; display: flex; flex-direction: column; gap: 4px; }
+.mod-field { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-2); }
+.mod-field > span { width: 58px; flex: none; }
+.mod-field select { flex: 1; min-width: 0; height: 22px; }
+.mod-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mod-knobs { display: flex; flex-wrap: wrap; gap: 0; }
+.mod-knobs .knob { width: 48px; }
+.mod-hint { margin: 0; font-size: 11px; color: var(--text-3); }
+.mod-canvas { width: 100%; height: 86px; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; display: block; }
+.mod-mseg { cursor: crosshair; height: 104px; }
+.mod-steps { cursor: crosshair; }
+.mod-mseg-presets { display: flex; gap: 3px; flex-wrap: wrap; }
+.mod-mseg-presets .btn.small { padding: 0 6px; height: 20px; font-size: 10px; }
+.mod-routes { display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--line); padding-top: 4px; }
+.mod-route { display: grid; grid-template-columns: 1fr auto auto auto auto auto; align-items: center; gap: 4px; font-size: 11px; }
+.mod-route .knob { width: 34px; }
+.mod-route .toggle { height: 22px; padding: 0 6px; font-size: 11px; }
+.mod-route .icon-btn { width: 22px; height: 22px; }
+.mod-route-target { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.mod-route-target.missing { color: var(--warn); }
+.mod-k { display: inline-flex; justify-content: center; }
+.mod-matrix { display: flex; flex-direction: column; gap: 3px; overflow: auto; max-height: 190px; }
+.mod-route.full { grid-template-columns: 90px minmax(100px, 1fr) 36px 36px 40px 36px 40px 24px; }
+.mod-route.full select { min-width: 0; width: 100%; height: 22px; font-size: 11px; }
+.mod-matrix-head { color: var(--text-3); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+
+/* ---- wavetable editor ---- */
+.wt-editor { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; min-width: 420px; }
+.wt-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.wt-tabs { display: inline-flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+.wt-tab { height: 22px; padding: 0 9px; font-size: 11px; background: var(--bg); color: var(--text-2); border: 0; cursor: pointer; }
+.wt-tab.on { background: var(--bg-4); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+select.wt-select { height: 22px; max-width: 200px; }
+.wt-menu { width: 22px; height: 22px; }
+.wt-info { font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.wt-views { display: grid; grid-template-columns: 1fr 1.25fr; gap: 6px; }
+.wt-canvas { width: 100%; height: 96px; display: block; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; }
+.wt-3d { cursor: pointer; }
+.wt-tools { display: flex; flex-direction: column; gap: 4px; }
+.wt-tools > .btn { align-self: flex-start; }
+.wt-tools:not(:has(.wt-editbar)) { flex-direction: row; }
+.wt-editbar { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; font-size: 11px; }
+.wt-editbar .spacer { flex: 1; }
+.wt-editbar select { height: 22px; }
+.wt-editor:has(.wt-editbar) .wt-2d { cursor: crosshair; outline: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); }
+.wt-harm-wrap { display: flex; align-items: center; gap: 6px; }
+.wt-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-3); }
+.wt-harm { height: 46px; cursor: ns-resize; }

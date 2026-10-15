@@ -4,6 +4,7 @@ node_modules/
 /tmp/
 /scratch/
 dist/
+!vendor/faustwasm/dist/
 desktop/native/third_party/*/
 desktop/native/build/
 *.whl

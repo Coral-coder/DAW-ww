@@ -8,6 +8,8 @@
 //   { type:'audio', trackId, beat, clip, offset, dur }          offset: beats into the clip (added to clip.offset)
 //   { type:'code',  trackId, beat, dur, value }                 dur in beats (legato applied)
 //   { type:'click', beat, accent, level }                       level 2 = downbeat, 1 = accent group (meter), 0 = other
+//   { type:'clipfx', trackId, beat, dur, spans }                 song mode: per window, MIDI clips with clip fx (clip-fx.js)
+// Song mode note events of tracks / clips following the chord track are conformed here (core/chord-track.js).
 // Times: the tempo map (src/time/tempo-map.js) converts beats to seconds; `annotateTimes(events, map)` adds
 // sec (seconds from beat 0) and durSec (exact duration across tempo ramps) used by the mixer.
 import * as strudel from '../code/strudel.js';
@@ -17,6 +19,8 @@ import { frozenMode, frozenClip } from '../core/freeze.js';
 import { isAudible } from '../core/mixer-model.js';
 import { tempoMapFor } from '../time/tempo-map.js';
 import { trackClips } from '../record/clips.js';
+import { conformNoteEvents } from '../core/chord-track.js';
+import { hasClipFx, clipFxSpans } from './clip-fx.js';
 
 export const EPS = 1e-7;
 const inWin = (x, b0, b1) => x >= b0 - EPS && x < b1 - EPS;
@@ -143,7 +147,8 @@ export function collectEvents(project, b0, b1, opts = {}) {
         if (pat) pushPatternNotes(out, track, pat, 0, 0, -Infinity, Infinity, b0, b1, swing);
       } else {
         // the track's clips with automatic crossfades + the comp of its take lanes (src/record)
-        for (const clip of trackClips(project, track)) {
+        const clips = trackClips(project, track);
+        for (const clip of clips) {
           const cs = clip.start;
           const ce = clip.start + clip.length;
           if (ce <= b0 + EPS || cs >= b1 - EPS) continue; // no overlap with the window
@@ -156,8 +161,16 @@ export function collectEvents(project, b0, b1, opts = {}) {
             }
           } else if (track.type === 'instrument') {
             const pat = project.patterns[clip.patternId];
-            if (pat) pushPatternNotes(out, track, pat, cs, clip.offset || 0, cs, ce, b0, b1, swing);
+            if (!pat) continue;
+            const n0 = out.length;
+            pushPatternNotes(out, track, pat, cs, clip.offset || 0, cs, ce, b0, b1, swing);
+            // chord track following (core/chord-track.js): non-destructive, at each note's onset
+            if ((track.chordFollow || clip.chordFollow) && out.length > n0) conformNoteEvents(project, out, track, clip, n0);
           }
+        }
+        // clip effects on MIDI clips (audio/clip-fx.js): one gate event per window keeps the dry / clip-chain routing
+        if (track.type === 'instrument' && clips.some((c) => c.type !== 'audio' && hasClipFx(c))) {
+          out.push({ type: 'clipfx', trackId: track.id, beat: b0, dur: b1 - b0, spans: clipFxSpans(clips, b0, b1) });
         }
       }
     } catch (e) {

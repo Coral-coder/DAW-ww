@@ -8,6 +8,11 @@ import * as audio from '../../audio/index.js';
 import * as genres from '../../gen/genres.js';
 import * as theory from '../../theory/index.js';
 import { DRUM_MACHINES } from '../../audio/library/drum-machines.js';
+import { fileInput } from '../components.js';
+import { effectPresetEntries } from '../../audio/effect-presets.js';
+import { presetStore } from '../../core/preset-store.js';
+import { DT_PRESET_REF, encodeRef, dropRef, describeKey, exportPresets, importPresetFiles, applyTemplateToTrack, PRESET_FILE_ACCEPT, isPresetFile } from '../preset-apply.js';
+import { saveFxChain, saveTrackTemplate } from '../device-presets.js';
 
 const LS_OPEN = 'daw3-browser-open';
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } };
@@ -554,6 +559,104 @@ export function createBrowserPanel(app) {
     return section('progressions', 'Chord progressions', 'piano', [h('div.br-filter', sel), ...items], { count: list.length });
   }
 
+  // ---------------------------------------------------------------- presets, FX chains & track templates
+  const pstore = presetStore();
+  const refDrag = (ref) => ({ [DT_PRESET_REF]: encodeRef(ref) });
+  async function importPresets(files) {
+    const list = files || await fileInput(PRESET_FILE_ACCEPT, true);
+    if (!list?.length) return;
+    const r = await importPresetFiles(list);
+    toast(r.message, { level: r.ok ? 'success' : 'error' });
+    openState.presets = true; lsSet(LS_OPEN, openState);
+    renderAll();
+  }
+  function buildPresets() {
+    const t = selectedTrack();
+    const fxName = (type) => audio.EFFECT_DEFS?.[type]?.name || type;
+    const starOf = (key) => (pstore.isFavorite(key) ? '★ ' : '');
+    const favMenu = (key) => ({ label: pstore.isFavorite(key) ? 'Remove from favorites' : 'Add to favorites', onClick: () => { pstore.toggleFavorite(key); renderAll(); } });
+    const userMenu = (kind, e, bankKey) => [
+      { label: 'Rename…', icon: 'pencil', onClick: async () => { const n = await promptText('Rename', e.name); if (n) { pstore.rename(kind, e.id, n); renderAll(); } } },
+      { label: 'Export (.daw3preset)…', icon: 'download', onClick: () => exportPresets({ [bankKey]: [e] }, e.name, true) },
+      { label: 'Delete', icon: 'trash', onClick: async () => { if (await confirmDialog('Delete', `Delete “${e.name}”? This cannot be undone.`)) { pstore.remove(kind, e.id); renderAll(); } } },
+    ];
+    const groups = [];
+    // favorites (any kind)
+    const favs = pstore.favorites().map((k) => ({ k, d: describeKey(k) })).filter((x) => x.d && matches(x.d.name, x.d.kind, 'favorite'));
+    groups.push(group('pr:fav', '★ Favorites', favs.map(({ k, d }) => item({
+      key: 'fav:' + k, ic: d.kind === 'instrument' ? 'music' : d.kind === 'template' ? 'save' : 'sliders', label: d.name, meta: d.kind.slice(0, 5).toUpperCase(),
+      title: `${d.name}\nDouble-click: apply to the selected track · drag onto a track or the device chain`, drag: refDrag(d.ref),
+      onDblClick: () => dropRef(app, d.ref, { trackId: t?.id }),
+      onMenu: (e) => contextMenu(e, [{ header: d.name }, favMenu(k)]),
+    }))));
+    // FX chains
+    const chains = pstore.list('chain').filter((c) => matches(c.name, 'fx chain', c.fx.map((f) => fxName(f.type)).join(' ')));
+    groups.push(group('pr:chains', 'FX chains', chains.map((c) => item({
+      key: 'chain:' + c.id, ic: 'layers', label: starOf('chain:' + c.id) + c.name, meta: String(c.fx.length),
+      title: `${c.fx.map((f) => fxName(f.type)).join(' → ')}\nDouble-click: append to the selected track's effects · drag onto a track or the device chain`, drag: refDrag({ kind: 'chain', id: c.id }),
+      onClick: () => setInfo(c.name, c.fx.map((f) => fxName(f.type)).join(' → '), 'Double-click or drag onto a track to insert this chain.'),
+      onDblClick: () => dropRef(app, { kind: 'chain', id: c.id }, { trackId: t?.id }),
+      onMenu: (e) => contextMenu(e, [{ header: c.name }, { label: t ? `Insert on "${t.name}"` : 'Insert on selected track', icon: 'plus', disabled: !t, onClick: () => dropRef(app, { kind: 'chain', id: c.id }, { trackId: t.id }) }, favMenu('chain:' + c.id), '-', ...userMenu('chain', c, 'chains')]),
+      actionsEls: [actBtn('plus', 'Insert on the selected track', () => dropRef(app, { kind: 'chain', id: c.id }, { trackId: t?.id }))],
+    })), chains.length));
+    // track templates
+    const tpls = pstore.list('template').filter((x) => matches(x.name, 'track template', x.track?.instrument?.type || x.track?.type));
+    groups.push(group('pr:tpl', 'Track templates', tpls.map((x) => item({
+      key: 'tpl:' + x.id, ic: 'save', label: starOf('tpl:' + x.id) + x.name, meta: (x.track?.instrument?.type || x.track?.type || '').toUpperCase().slice(0, 5),
+      title: `${x.name} — instrument, ${x.track.fx.length} effect(s), mixer settings${x.track.macros ? ', macros' : ''}\nDouble-click: new track from this template · drag onto the arrangement`, drag: refDrag({ kind: 'tpl', id: x.id }),
+      onDblClick: () => dropRef(app, { kind: 'tpl', id: x.id }),
+      onMenu: (e) => contextMenu(e, [{ header: x.name }, { label: 'New track from template', icon: 'plus', onClick: () => dropRef(app, { kind: 'tpl', id: x.id }) },
+        { label: t ? `Apply to "${t.name}" (keeps its notes)` : 'Apply to selected track', disabled: !t || (t.type !== (x.track.type || 'instrument')), onClick: () => applyTemplateToTrack(app, t.id, x) }, favMenu('tpl:' + x.id), '-', ...userMenu('template', x, 'templates')]),
+      actionsEls: [actBtn('plus', 'New track from this template', () => dropRef(app, { kind: 'tpl', id: x.id }))],
+    })), tpls.length));
+    // user presets (instruments + effects)
+    const ui1 = pstore.list('instrument').filter((u) => matches(u.name, u.type, 'user preset'));
+    const ue = pstore.list('effect').filter((u) => matches(u.name, fxName(u.type), (u.tags || []).join(' '), 'user preset'));
+    groups.push(group('pr:user', 'User presets', [
+      ...ui1.map((u) => item({
+        key: 'inst:user:' + u.id, ic: 'music', label: starOf('inst:user:' + u.id) + u.name, meta: String(u.type).toUpperCase().slice(0, 5), drag: refDrag({ kind: 'inst-user', id: u.id }),
+        title: `${u.name} (${u.type})\nDouble-click: load on the selected track (or a new track) · drag onto a track`,
+        onDblClick: () => dropRef(app, { kind: 'inst-user', id: u.id }, { trackId: t?.id }),
+        onMenu: (e) => contextMenu(e, [{ header: u.name }, favMenu('inst:user:' + u.id), '-', ...userMenu('instrument', u, 'instruments')]),
+      })),
+      ...ue.map((u) => item({
+        key: 'fx:user:' + u.id, ic: 'sliders', label: starOf('fx:user:' + u.id) + u.name, meta: fxName(u.type).slice(0, 10), drag: refDrag({ kind: 'fx-user', id: u.id }),
+        title: `${fxName(u.type)} — ${u.name}\nDouble-click: add to the selected track · drag onto a track or the device chain`,
+        onDblClick: () => dropRef(app, { kind: 'fx-user', id: u.id }, { trackId: t?.id }),
+        onMenu: (e) => contextMenu(e, [{ header: u.name }, favMenu('fx:user:' + u.id), '-', ...userMenu('effect', u, 'effects')]),
+      })),
+    ], ui1.length + ue.length));
+    // factory effect presets, one group per effect
+    let fxTotal = 0;
+    for (const [type, def] of Object.entries(audio.EFFECT_DEFS || {})) {
+      if (def.plugin) continue;
+      const list = effectPresetEntries(type).filter((e) => matches(e.name, def.name, e.tags.join(' '), e.description, 'effect preset'));
+      fxTotal += list.length;
+      groups.push(group('pr:fx:' + type, def.name, list.map((e) => {
+        const ref = { kind: 'fx', type, name: e.name };
+        const key = `fx:${type}:${e.name}`;
+        return item({
+          key: 'fxp:' + key, ic: 'sliders', label: starOf(key) + e.name, meta: e.tags[0] || '', drag: refDrag(ref),
+          title: `${def.name}: ${e.name}${e.description ? ' — ' + e.description : ''}\nTags: ${e.tags.join(', ')}\nDouble-click: add to the selected track · drag onto a track or the device chain`,
+          onClick: () => setInfo(`${def.name}: ${e.name}`, e.description || def.description || '', `Tags: ${e.tags.join(', ') || '—'}. Double-click or drag onto a track.`),
+          onDblClick: () => dropRef(app, ref, { trackId: t?.id }),
+          onMenu: (ev) => contextMenu(ev, [{ header: `${def.name}: ${e.name}` }, { label: t ? `Add to "${t.name}"` : 'Add to selected track', icon: 'plus', disabled: !t, onClick: () => dropRef(app, ref, { trackId: t.id }) }, favMenu(key)]),
+        });
+      }), list.length));
+    }
+    const shown = groups.filter(Boolean);
+    const extra = h('span.br-extra',
+      actBtn('upload', 'Import presets (.daw3preset / .daw3bank)', () => importPresets()),
+      actBtn('download', 'Export all user presets, FX chains and templates (.daw3bank)', () => exportPresets({ instruments: pstore.list('instrument'), effects: pstore.list('effect'), chains: pstore.list('chain'), templates: pstore.list('template') }, 'daW3 presets')),
+      actBtn('save', 'Save the selected track as a template / its effects as an FX chain', (e) => contextMenu(e, [
+        { header: t ? t.name : 'No track selected' },
+        { label: 'Save track as template…', icon: 'save', disabled: !t, onClick: () => saveTrackTemplate(app, t.id) },
+        { label: 'Save its effects as FX chain…', icon: 'layers', disabled: !t?.fx?.length, onClick: () => saveFxChain(app, t.id) },
+      ])));
+    return section('presets', 'Presets, chains & templates', 'sparkles', shown, { count: chains.length + tpls.length + ui1.length + ue.length + fxTotal, extra });
+  }
+  pstore.subscribe(() => renderAll());
+
   // ---------------------------------------------------------------- render
   let lastSig = '';
   function dynamicSig() {
@@ -565,7 +668,7 @@ export function createBrowserPanel(app) {
   }
   function renderAll() {
     const st = bodyEl.scrollTop;
-    const sections = [buildInstruments(), buildMachines(), buildKits(), buildSamples(), buildPatterns(), buildProgressions(), buildGenres(), buildExamples()].filter(Boolean);
+    const sections = [buildInstruments(), buildPresets(), buildMachines(), buildKits(), buildSamples(), buildPatterns(), buildProgressions(), buildGenres(), buildExamples()].filter(Boolean);
     if (!sections.length) sections.push(h('div.br-empty.muted', { style: { padding: '16px' } }, `No results for "${query}".`));
     bodyEl.replaceChildren(...sections);
     bodyEl.scrollTop = st;
@@ -591,9 +694,11 @@ export function createBrowserPanel(app) {
     const files = [...e.dataTransfer.files];
     const audioFiles = files.filter((f) => f.type.startsWith('audio/') || AUDIO_EXT.test(f.name));
     const codeFiles = files.filter((f) => /\.(strudel|str|tidal)$/i.test(f.name));
+    const presetFiles = files.filter(isPresetFile);
+    if (presetFiles.length) await importPresets(presetFiles);
     if (audioFiles.length) { await actions.importSamples(audioFiles); openState.samples = true; lsSet(LS_OPEN, openState); renderAll(); }
     for (const f of codeFiles) await actions.importStrudel(f);
-    if (!audioFiles.length && !codeFiles.length) toast('Drop audio files (wav, mp3, ogg, flac…) or .strudel files', { level: 'warn' });
+    if (!audioFiles.length && !codeFiles.length && !presetFiles.length) toast('Drop audio files (wav, mp3, ogg, flac…) or .strudel files', { level: 'warn' });
   });
 
   loadOptional().then((o) => { opt = o; renderAll(); });

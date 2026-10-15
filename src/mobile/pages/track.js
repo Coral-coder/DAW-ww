@@ -2,7 +2,10 @@
 import { h, icon } from '../../ui/dom.js';
 import { INSTRUMENT_DEFS } from '../../audio/defs.js';
 import { resolveInstrumentDef } from '../../audio/presets.js';
-import { EFFECT_DEFS, EFFECT_CATEGORIES } from '../../audio/effect-defs.js';
+import { EFFECT_DEFS, EFFECT_CATEGORIES, resolveEffectParams } from '../../audio/effect-defs.js';
+import { mountAnalyzer, SCOPE_VIEWS } from '../../ui/scopes/index.js';
+import { presetSheet, fxPresetSheet } from '../preset-sheets.js';
+import { effectPresetEntries } from '../../audio/effect-presets.js';
 import { patternsForTrack, createEffect, DRUM_PADS } from '../../core/model.js';
 import { openPadSheet } from '../pad-sheet.js';
 import { editedPads } from '../pad-logic.js';
@@ -12,6 +15,7 @@ import { actionSheet, onLongPress, haptic, bigButton, promptSheet } from '../tou
 import { dragReorder, reorder } from '../reorder.js';
 import { openAutomationSheet, pickAutomationTarget } from '../auto-lane.js';
 import { laneLabel } from '../../ui/automation-targets.js';
+import { macroTargets, usesMacros } from '../macros.js';
 
 const TILE_TYPES = new Set(['number', 'enum', 'bool']);
 const MAIN_COUNT = 8;
@@ -38,7 +42,8 @@ export function createTrackPage(app, nav) {
     const p = store.get();
     return [t.id, t.type, t.instrument?.type, t.instrument?.preset, t.instrument?.params?.kit, (t.fx || []).map((f) => `${f.id}:${f.type}:${f.enabled !== false}`).join(','), p.buses.map((b) => b.id).join(','),
       patternsForTrack(p, t.id).map((x) => x.id).join(','), t.activePatternId, showAll, [...open].join(','), t.arm,
-      JSON.stringify(t.instrument?.params?.pads || {}), (t.automation || []).map((l) => `${l.id}:${l.target}:${l.points?.length}:${l.enabled}:${!!l.overridden}`).join(',')].join('|');
+      JSON.stringify(t.instrument?.params?.pads || {}), (t.automation || []).map((l) => `${l.id}:${l.target}:${l.points?.length}:${l.enabled}:${!!l.overridden}`).join(','),
+      usesMacros(t) ? (t.mod.macros || []).map((m) => m.name).join(',') : ''].join('|');
   }
 
   function render() {
@@ -63,6 +68,8 @@ export function createTrackPage(app, nav) {
       const shown = showAll ? defs : main.slice(0, MAIN_COUNT);
       const more = bigButton(showAll ? 'Fewer controls' : `All controls (${defs.length})`, () => { showAll = !showAll; render(); }, { ic: 'sliders', cls: 'ghost' });
       body.appendChild(h('div.pk-card', h('div.pk-label', 'Sound controls — drag sideways or tap'), tileGrid(shown.map((d) => instTarget(app, t.id, d))), defs.length > MAIN_COUNT ? more : null));
+      // macro knobs (mapped on the desktop layout's device panel)
+      if (usesMacros(t)) body.appendChild(h('div.pk-card', h('div.pk-label', 'Macros'), tileGrid(macroTargets(app, t.id))));
       if (isDrums(t)) {
         const edited = editedPads(t);
         const pads = h('div.pk-padgrid', ...DRUM_PADS.slice(0, 12).map((pad) => {
@@ -90,7 +97,7 @@ export function createTrackPage(app, nav) {
     const addFx = bigButton('Add effect', () => actionSheet('Add effect', EFFECT_CATEGORIES.map((c) => {
       const list = Object.entries(EFFECT_DEFS).filter(([, d]) => d.category === c && !d.plugin);
       return list.length ? { label: c, submenu: list.map(([type, d]) => ({ label: d.name, onClick: () => { const fx = createEffect(type, {}); open.add(fx.id); actions.updateTrack(t.id, (tt) => { tt.fx.push(fx); }, `Add ${d.name}`); } })) } : null;
-    }).filter(Boolean)), { ic: 'plus', cls: 'ghost' });
+    }).filter(Boolean).concat(['-', { label: 'From preset or FX chain…', icon: 'search', onClick: () => presetSheet(app, { kind: 'effect-add', trackId: t.id, onAdded: (fx) => { if (fx) { open.add(fx.id); render(); } } }) }])), { ic: 'plus', cls: 'ghost' });
     body.appendChild(h('div.pk-card', h('div.pk-label', (t.fx || []).length > 1 ? 'Effects (drag ≡ to reorder)' : 'Effects'), fxWrap, addFx));
 
     // automation lanes of this track
@@ -140,16 +147,27 @@ export function createTrackPage(app, nav) {
     const headBtn = h('button.pk-fx-head', { type: 'button' }, h('span.pk-fx-name', def?.name || f.type), h('span.pk-fx-cat', def?.category || ''), icon(isOpen ? 'chevronDown' : 'chevronRight', 18));
     headBtn.addEventListener('click', () => { haptic(5); if (open.has(f.id)) open.delete(f.id); else open.add(f.id); render(); });
     onLongPress(headBtn, () => actionSheet(def?.name || f.type, [
+      { label: 'Presets…', icon: 'search', disabled: !effectPresetEntries(f.type).length, onClick: () => fxPresetSheet(app, t.id, f.id) },
       { label: 'Move up', disabled: i === 0, onClick: () => actions.updateTrack(t.id, (tt) => { const k = tt.fx.findIndex((x) => x.id === f.id); if (k > 0) [tt.fx[k - 1], tt.fx[k]] = [tt.fx[k], tt.fx[k - 1]]; }, 'Reorder effects') },
       { label: 'Move down', disabled: i === t.fx.length - 1, onClick: () => actions.updateTrack(t.id, (tt) => { const k = tt.fx.findIndex((x) => x.id === f.id); if (k >= 0 && k < tt.fx.length - 1) [tt.fx[k + 1], tt.fx[k]] = [tt.fx[k], tt.fx[k + 1]]; }, 'Reorder effects') },
       { label: 'Remove effect', icon: 'trash', onClick: () => actions.updateTrack(t.id, (tt) => { tt.fx = tt.fx.filter((x) => x.id !== f.id); }, `Remove ${def?.name || f.type}`) },
     ]));
     const grip = h('span.pk-grip', { 'aria-label': 'Drag to reorder', 'data-noswipe': '' }, '≡');
     const card = h(`div.pk-fx${f.enabled === false ? '.off' : ''}`, h('div.pk-fx-top', grip, headBtn, onBtn));
+    if (isOpen && def?.category === 'Analysis' && SCOPE_VIEWS[f.type]) {
+      // analyzer display (same drawing code as the desktop card, compact); stops itself when the card is rebuilt
+      const v = mountAnalyzer(f.type, {
+        compact: true,
+        getProbe: () => engine.getFxProbe?.(f.id) ?? null,
+        getParams: () => resolveEffectParams(track()?.fx?.find((x) => x.id === f.id) || f),
+      });
+      card.appendChild(h(`div.pk-an${f.type === 'spectrogram' || f.type === 'tuner' ? '.an-tall' : ''}`, { 'data-noswipe': '' }, v.el));
+    }
     if (isOpen && def) {
       const defs = def.params.filter((d) => TILE_TYPES.has(d.type));
       const main = defs.filter((d) => !d.advanced);
       card.appendChild(tileGrid((showAll ? defs : main).map((d) => fxTarget(app, t.id, f.id, d))));
+      if (effectPresetEntries(f.type).length) card.appendChild(bigButton('Presets', () => fxPresetSheet(app, t.id, f.id), { ic: 'search', cls: 'ghost' }));
     }
     return card;
   }

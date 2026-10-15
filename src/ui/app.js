@@ -11,6 +11,7 @@ import { installKeyboard } from './keyboard.js';
 import { installAutomationRecorder } from './automation-recorder.js';
 import { installEngineUi } from './engine-ui.js';
 import { installPrebake } from './prebake-ui.js';
+import { installSetiScope } from './visualizers/seti/launch.js';
 
 export const VIEWS = [
   { id: 'arrange', label: 'Arrange', icon: 'timeline', key: '1', module: './views/arrange.js', factory: 'createArrangeView', help: 'Timeline: place pattern & audio clips into a full song.' },
@@ -75,6 +76,7 @@ export function createCore() {
 
   app.actions = createActions(app);
   installPrebake(app); // prebake helper libraries (user + project), evaluated before every code evaluation
+  installSetiScope(app); // SETI Scope visualizer: app.openSetiScope + the optional idle screensaver
   import('./plugins-dialog.js').then((m) => m.installPluginUi(app)).catch((e) => console.warn('[plugins] UI', e)); // SoundFont / Faust / WAM plugins
   return app;
 }
@@ -191,6 +193,8 @@ export async function createApp(rootEl) {
   installAutomationRecorder(app);
   const engineUi = installEngineUi(app, status); // health meter, panic, sample rate, freeze, recovery / history
   import('../control/index.js').then((m) => m.installControl(app)).catch((e) => console.warn('[control]', e)); // MIDI, surfaces, sync, palette
+  // chord track / pads, clip inspector, spectral editor, action macros (src/ui/workflow.js)
+  import('./workflow.js').then((m) => m.installWorkflow(app)).catch((e) => console.warn('[workflow]', e));
 
   await showView(ui.get('view'));
   app.panels = {

@@ -26,6 +26,7 @@ import { grooveFor } from '../gen/groove.js';
 import { keyPrefersFlats, keyRootName } from '../theory/keys.js';
 import { resolveInstrumentDef } from '../audio/presets.js';
 import { strudelPatchCode } from '../audio/strudel-patches.js';
+import { parsePattern, fitSteps } from '../audio/fx/rhythm-dsp.js';
 
 const EPS = 1e-6;
 const SHARP = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b'];
@@ -368,6 +369,28 @@ export function patternExpr(pattern, { kind, bpb, spell, key = null, indent = ''
 function fxParam(fx, key, def) {
   const v = fx.params?.[key];
   return v === undefined || v === null ? def : v;
+}
+
+// Rhythm effects (src/audio/fx/defs/rhythm.js) process the track's audio on the song grid; Strudel has no
+// equivalent control, so the code keeps them as a comment (a trance gate also gets the closest .struct() rhythm).
+const RHYTHM_FX = { trancegate: 'Trance Gate', volshaper: 'Volume Shaper', beatrepeat: 'Beat Repeat', timeshaper: 'Time Shaper' };
+const STEP_BEATS = { '1/4': 1, '1/8': 0.5, '1/16': 0.25, '1/32': 0.125 };
+
+/** "// rhythm FX …" comment line for a track's enabled rhythm effects ('' when there are none). */
+export function rhythmFxComment(track) {
+  const parts = [];
+  for (const f of track.fx || []) {
+    if (f.enabled === false || !RHYTHM_FX[f.type]) continue;
+    let s = RHYTHM_FX[f.type];
+    if (f.type === 'trancegate') {
+      const n = Math.max(1, Math.min(32, Math.round(Number(f.params?.steps) || 16)));
+      const lv = fitSteps(parsePattern(f.params?.pattern) || [1], n);
+      const stepBeats = STEP_BEATS[f.params?.division || '1/16'];
+      if (stepBeats && Math.abs(n * stepBeats - 4) < 1e-9) s += ` ≈ .struct("${lv.map((v) => (v > 0 ? 'x' : '~')).join(' ')}")`;
+    }
+    parts.push(s);
+  }
+  return parts.length ? `// daW³ rhythm FX (not expressible as code): ${parts.join(', ')}\n` : '';
 }
 
 /** Track instrument -> Strudel sound / bank call. */
@@ -996,13 +1019,13 @@ export function songToCode(project, opts = {}) {
     if (arranged) {
       const entries = info.entries.map((e) => e.text);
       body = !entries.length ? `${muted ? '_' : ''}${label}: silence` : arrangeCall(entries, `${muted ? '_' : ''}${label}: `);
-      push(`// ${title}\n`);
+      push(`// ${title}\n${rhythmFxComment(track)}`);
     } else {
       const pat = project.patterns?.[track.activePatternId];
       const r = pat ? render(pat, info.kind, track.id) : null;
       const expr = r ? r.expr : `${isDrums ? 's' : 'note'}("~")`;
       body = `${muted ? '_' : ''}${label}: ${wrapChain(formatExpr(expr, '', 100 - label.length - 2), label.length + 2)}`;
-      push(`\n// —— ${title} ——\n`);
+      push(`\n// —— ${title} ——\n${rhythmFxComment(track)}`);
     }
     body = withTail(body, tail);
     push(`${body}\n`);

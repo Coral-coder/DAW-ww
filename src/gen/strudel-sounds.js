@@ -20,6 +20,17 @@ export const PRESET_STRUDEL = {
   'supersaw-pad': 'sd-supersaw-pad', 'warm-pad': 'sd-warm-pad', 'synthwave-pad': 'sd-warm-pad', 'detuned-pad': 'sd-warm-pad', 'dark-pad': 'sd-dark-pad',
   'glass-pad': 'sd-glass-pad', 'ambient-pad': 'sd-ambient-pad', 'juno-strings': 'sd-juno-strings', strings: 'sd-strings', 'string-pad': 'sd-synth-strings',
   'choir-pad': 'sd-choir', 'whistle-lead': 'sd-soft-lead', 'noise-sweep': 'sd-noise-sweep', riser: 'sd-riser', laser: 'sd-laser',
+  // the wider palette (src/audio/presets-extra.js -> src/audio/strudel-patches-extra.js)
+  'distorted-808': 'sd-distorted-808', 'rubber-bass': 'sd-rubber-bass', 'garage-bass': 'sd-garage-bass', 'neuro-bass': 'sd-neuro-bass',
+  'growl-bass': 'sd-neuro-bass', 'jungle-sub': 'sd-sub-bass', 'pulse-bass': 'sd-saw-bass', 'fm-slap-bass': 'sd-slap-bass', 'fm-sub-pluck': 'sd-fm-bass',
+  'organ-bass': 'sd-house-organ', 'future-lead': 'sd-future-lead', 'gfunk-whine': 'sd-gfunk-whine', theremin: 'sd-theremin', 'pwm-lead': 'sd-pwm-lead',
+  'psy-lead': 'sd-psy-lead', 'hardstyle-lead': 'sd-supersaw-lead', 'chip-pulse-lead': 'sd-chip-lead', 'soft-square-lead': 'sd-soft-lead',
+  'lofi-sine-lead': 'sd-soft-lead', 'ocarina-lead': 'sd-ocarina', 'organ-gospel': 'sd-gospel-organ', 'organ-jazz': 'sd-organ', 'organ-church': 'sd-church-organ',
+  'organ-house': 'sd-house-organ', 'fm-dx-piano': 'sd-dx-piano', wurli: 'sd-wurli', 'dark-rhodes': 'sd-rhodes', 'analog-pad': 'sd-analog-pad',
+  'shimmer-pad': 'sd-shimmer-pad', 'sweep-pad': 'sd-sweep-pad', 'choir-ooh': 'sd-voice-oohs', 'cinematic-swell': 'sd-tremolo-strings', 'lofi-tape-pad': 'sd-warm-pad',
+  'nylon-pluck': 'sd-nylon', 'tropical-pluck': 'sd-tropical-pluck', 'stab-90s': 'sd-house-stab', 'deep-chord': 'sd-house-stab', 'dub-techno-chord': 'sd-dub-chord',
+  'arp-square': 'sd-square-arp', 'arp-fm-glass': 'sd-glass-arp', 'fm-pluck': 'sd-glass-arp', 'arp-acid': 'sd-acid-lead', 'pizz-synth': 'sd-pizzicato',
+  downlifter: 'sd-downlifter', 'impact-boom': 'sd-impact', siren: 'sd-siren',
 };
 /** GM instrument (soundfont / multisample defs) -> Strudel patch. Unlisted GM instruments keep their samples. */
 export const GM_STRUDEL = {

@@ -17,6 +17,7 @@
 //                        so the result is sample-identical to a latency-free graph)
 //
 // All values are seconds, rounded to whole frames at `sampleRate` so DelayNodes never interpolate.
+import { familyLatencyFrames } from './fx/latency.js';
 
 /**
  * Latencies measured in Chromium 141 (offline render, impulse in -> peak out, 44.1 / 48 / 96 kHz) and derived from
@@ -25,6 +26,8 @@
  *   - WaveShaperNode oversample '2x' / '4x': linear-phase up/down-sampling kernels (frames at the base rate)
  *   - explicit DelayNode look-ahead (gate 4 ms, tape 12 ms base delay)
  */
+import { dynamicsLatencyFrames } from './fx/dynamics-latency.js';
+
 export const COMPRESSOR_LOOKAHEAD = 0.006;
 export const OVERSAMPLE_FRAMES = { none: 0, '2x': 129, '4x': 193 };
 
@@ -51,7 +54,7 @@ export function effectLatencyFrames(def, sampleRate = 44100) {
     case 'saturator': return OVERSAMPLE_FRAMES['2x'];
     // glue compressor + limiter (two pre-delays) + 4x-oversampled clipper (measured: one frame less)
     case 'mastering': return 2 * comp + OVERSAMPLE_FRAMES['4x'] - 1;
-    default: return 0;
+    default: return dynamicsLatencyFrames(def, sampleRate) ?? familyLatencyFrames(def, sampleRate, OVERSAMPLE_FRAMES) ?? 0; // effect families (src/audio/fx): look-ahead, linear-phase FIR, pitch, oversampling
   }
 }
 

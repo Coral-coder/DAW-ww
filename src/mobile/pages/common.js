@@ -2,7 +2,8 @@
 import { h, icon } from '../../ui/dom.js';
 import { PRESETS, DRUM_KITS } from '../../audio/index.js';
 import { PRESET_CATEGORIES } from '../../audio/presets.js';
-import { actionSheet, openSheet, haptic, chips } from '../touch.js';
+import { actionSheet, haptic } from '../touch.js';
+import { presetSheet } from '../preset-sheets.js';
 
 export const isDrums = (t) => t?.instrument?.type === 'drums' || t?.instrument?.type === 'drumsampler';
 export const isMelodic = (t) => t?.type === 'instrument' && !isDrums(t);
@@ -50,43 +51,13 @@ export function addTrackSheet(app, after) {
 }
 
 /**
- * Sound browser sheet: search + category chips + a long scrollable list (incl. Strudel sounds); tapping a sound
- * applies it and plays a preview note.
+ * Sound browser sheet: search, All / Favorites / Recent / User, category chips and a long scrollable list (incl.
+ * Strudel sounds and user presets); tapping a sound applies it and plays a preview note (src/mobile/preset-sheets.js).
  */
 export function soundBrowser(app, trackId) {
-  const { store, actions, engine } = app;
-  const track = () => store.get().tracks.find((t) => t.id === trackId);
-  const t0 = track();
+  const t0 = app.store.get().tracks.find((t) => t.id === trackId);
   if (!t0) return;
-  const drums = isDrums(t0);
-  let cat = drums ? 'Kits' : (PRESETS[t0.instrument?.preset]?.category || 'All');
-  let q = '';
-  const search = h('input.pk-input', { type: 'search', placeholder: drums ? 'Search kits' : 'Search sounds', enterkeyhint: 'search' });
-  const list = h('div.pk-list');
-  const catChips = drums ? null : chips([{ value: 'All', label: 'All' }, ...PRESET_CATEGORIES.map((c) => ({ value: c, label: c }))], cat, (v) => { cat = v; render(); }, { cls: 'scroll' });
-  const apply = (id) => {
-    haptic(8);
-    if (drums) actions.updateTrack(trackId, (t) => { const params = { ...(t.instrument.params || {}), kit: id }; delete params.machine; t.instrument = { type: 'drums', preset: id, params }; }, `Kit: ${DRUM_KITS[id]?.name}`);
-    else { const pr = PRESETS[id]; actions.updateTrack(trackId, (t) => { t.instrument = { type: pr.instrument.type, preset: id, params: {} }; }, `Sound: ${pr.name}`); }
-    setTimeout(() => engine.previewNote(trackId, drums ? 36 : 60, 0.85, 1).catch(() => {}), 60);
-    render();
-  };
-  function render() {
-    const cur = track()?.instrument;
-    const all = drums ? Object.entries(DRUM_KITS).map(([id, k]) => ({ id, name: k.name, sub: 'Drum kit' })) : Object.entries(PRESETS).map(([id, pr]) => ({ id, name: pr.name, sub: pr.category, cat: pr.category, roles: pr.roles }));
-    const ql = q.toLowerCase();
-    const rows = all.filter((r) => (drums || cat === 'All' || r.cat === cat) && (!ql || r.name.toLowerCase().includes(ql) || String(r.sub).toLowerCase().includes(ql)));
-    list.replaceChildren(...rows.map((r) => {
-      const on = drums ? (cur?.params?.kit || cur?.preset) === r.id : cur?.preset === r.id;
-      const b = h(`button.pk-row-btn${on ? '.on' : ''}`, { type: 'button' }, h('span.pk-row-name', r.name), h('span.pk-row-sub', [r.sub, ...(r.roles || []).slice(0, 2)].join(' · ')), on ? h('span.pk-act-check', '✓') : null);
-      b.addEventListener('click', () => apply(r.id));
-      return b;
-    }));
-    if (!rows.length) list.appendChild(h('p.pk-p.muted', 'No sounds match.'));
-  }
-  search.addEventListener('input', () => { q = search.value; render(); });
-  render();
-  openSheet({ title: drums ? 'Drum kit' : 'Sound', body: [search, catChips, list].filter(Boolean), tall: true, cls: 'pk-browser' });
+  presetSheet(app, { kind: 'instrument', trackId, startCategory: PRESETS[t0.instrument?.preset]?.category || '' });
 }
 
 export function emptyState(title, text, ...buttons) {

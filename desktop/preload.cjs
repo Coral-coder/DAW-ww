@@ -6,7 +6,10 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 // Native audio engine + plugin hosting (present when the app ships the native layer).
 let caps = {};
 try { caps = ipcRenderer.sendSync('daw3:native-caps') || {}; } catch { caps = {}; }
-const call = (method, ...args) => ipcRenderer.invoke('daw3:native', method, args);
+// Electron prefixes errors thrown in the main process ("Error invoking remote method 'daw3:native': Error: …"): the
+// page gets the plain message
+const cleanError = (e) => new Error(String(e?.message || e).replace(/^Error invoking remote method '[^']*':\s*/, '').replace(/^(?:[A-Z][A-Za-z]*)?Error:\s*/, ''));
+const call = (method, ...args) => ipcRenderer.invoke('daw3:native', method, args).catch((e) => { throw cleanError(e); });
 const onNativeEvent = (cb) => {
   const listener = (_e, ev) => cb(ev);
   ipcRenderer.on('daw3:native-event', listener);
@@ -31,6 +34,13 @@ const audio = caps.audio ? {
 const plugins = caps.plugins ? {
   scan: (opts) => call('plugins.scan', opts || {}),
   list: () => call('plugins.list'),
+  /** Rescan one bundle -> { ok, error, count, failed, warnings } */
+  retry: (format, path) => call('plugins.retry', { format: String(format || ''), path: String(path || '') }),
+  /** -> { log, at, ok, arch, quarantined } */
+  scanLog: (format, path) => call('plugins.scanLog', { format: String(format || ''), path: String(path || '') }),
+  /** Plugin manager preferences: { favorites: [key], hidden: [key], blocked: [{ format, path, key, name }] } */
+  getPrefs: () => call('plugins.getPrefs'),
+  setPrefs: (prefs) => call('plugins.setPrefs', prefs || {}),
   load: (opts) => call('plugins.load', opts || {}),
   unload: (inst) => call('plugins.unload', inst),
   info: (inst) => call('plugins.info', inst),

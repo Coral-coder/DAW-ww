@@ -48,6 +48,7 @@ export function openPalette(app, entries) {
     if (!e) return;
     close();
     remember(e.id);
+    app.macros?.notePaletteRun?.(e); // macro recording (src/ui/macros-ui.js): menu entries are not commands
     try { e.run(); } catch (err) { console.error('[palette]', err); app.toast?.(`Could not run "${e.label}": ${err.message}`, { level: 'error' }); }
   }
   function close() {

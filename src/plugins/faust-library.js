@@ -118,12 +118,12 @@ process = pm.clarinetModel(pm.f2l(freq), pressure, stiff, bell) : fi.dcblocker :
     description: 'Additive drawbar organ (16′ 8′ 5⅓′ 4′ 2⅔′ 2′) with key click, percussion and a stereo vibrato/chorus.',
     code: `${HEAD}declare name "Tonewheel Organ";
 declare license "MIT";
-${VOICE}db1 = hslider("[1]16'[style:knob]", 0.8, 0, 1, 0.01);
-db2 = hslider("[2]8'[style:knob]", 1, 0, 1, 0.01);
-db3 = hslider("[3]5 1/3'[style:knob]", 0.6, 0, 1, 0.01);
-db4 = hslider("[4]4'[style:knob]", 0.3, 0, 1, 0.01);
-db5 = hslider("[5]2 2/3'[style:knob]", 0.2, 0, 1, 0.01);
-db6 = hslider("[6]2'[style:knob]", 0.2, 0, 1, 0.01);
+${VOICE}db1 = hslider("[1]16′[style:knob]", 0.8, 0, 1, 0.01);
+db2 = hslider("[2]8′[style:knob]", 1, 0, 1, 0.01);
+db3 = hslider("[3]5 1/3′[style:knob]", 0.6, 0, 1, 0.01);
+db4 = hslider("[4]4′[style:knob]", 0.3, 0, 1, 0.01);
+db5 = hslider("[5]2 2/3′[style:knob]", 0.2, 0, 1, 0.01);
+db6 = hslider("[6]2′[style:knob]", 0.2, 0, 1, 0.01);
 perc = hslider("[7]Percussion[style:knob]", 0.4, 0, 1, 0.01);
 click = hslider("[8]Click[style:knob]", 0.3, 0, 1, 0.01);
 tone = db1 * os.osc(freq * 0.5) + db2 * os.osc(freq) + db3 * os.osc(freq * 1.5) + db4 * os.osc(freq * 2) + db5 * os.osc(freq * 3) + db6 * os.osc(freq * 4);

@@ -13,6 +13,7 @@ import { EFFECT_DEFS, resolveEffectParams, divisionToBeats } from './effect-defs
 import { clamp, dbToGain, createRng } from '../core/util.js';
 import { pluginEffectBuilder, PLUGIN_EFFECT_TYPES } from './plugin-fx.js';
 import { effectLatencyFrames, lookaheadTime, COMPRESSOR_LOOKAHEAD } from './latency.js';
+import { FX_BUILDER_FAMILIES } from './fx/builders/index.js';
 
 const TC = 0.015; // smoothing time-constant for parameter changes
 
@@ -302,6 +303,22 @@ function makeSpaceImpulse(ctx, decay, size, damping, character) {
   return buf;
 }
 
+/** Post-EQ analyser for the EQ cards, created on first read (never in offline renders): {analyser, sampleRate}. */
+const eqProbes = new WeakMap();
+function eqProbe(ctx, out) {
+  if (isOffline(ctx) || !ctx.createAnalyser) return null;
+  let pr = eqProbes.get(out);
+  if (!pr) {
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 4096;
+    analyser.smoothingTimeConstant = 0.8;
+    out.connect(analyser);
+    pr = { analyser, sampleRate: ctx.sampleRate };
+    eqProbes.set(out, pr);
+  }
+  return pr;
+}
+
 // ------------------------------------------------------------------------------ shell
 function createShell(ctx) {
   const input = ctx.createGain();
@@ -335,6 +352,7 @@ const BUILDERS = {
     const out = ctx.createGain();
     sh.fxIn.connect(low); low.connect(mid); mid.connect(high); high.connect(out); out.connect(sh.wet);
     return {
+      get probe() { return eqProbe(ctx, out); }, // live spectrum for the EQ card (src/ui/fx-ui/eq.js)
       apply(p, im) {
         setP(low.frequency, p.lowFreq, ctx, im); setP(low.gain, p.low, ctx, im);
         setP(mid.frequency, p.midFreq, ctx, im); setP(mid.gain, p.mid, ctx, im); setP(mid.Q, p.midQ, ctx, im);
@@ -361,6 +379,7 @@ const BUILDERS = {
       prev.connect(out);
     };
     return {
+      get probe() { return eqProbe(ctx, out); }, // live spectrum for the EQ card (src/ui/fx-ui/eq.js)
       apply(p, im) {
         const on = [];
         bands.forEach((b, i) => {
@@ -1218,6 +1237,10 @@ function syncLfo(lfo, p, env, time, offset = 0) {
   lfo.start(t, beat / cycle + offset);
 }
 
+// Effect families from src/audio/fx/builders get the shared helpers (no import cycle back into this module).
+const FX_HELPERS = { isOffline, setP, stereoGain, cachedBuffer, shapeBuffer, lfoRate, makeCurve, driveFn, makeImpulse, makeSpaceImpulse, createMidSide, syncLfo, clamp, dbToGain, createRng, divisionToBeats };
+for (const family of FX_BUILDER_FAMILIES) Object.assign(BUILDERS, family(FX_HELPERS));
+
 // ------------------------------------------------------------------------------ factory
 /**
  * @param {BaseAudioContext} ctx
@@ -1305,6 +1328,10 @@ export function createEffect(ctx, effectDef, opts = {}) {
     setTempo(bpm) { try { impl.setTempo?.(bpm); fallbackFx?.setTempo(bpm); } catch (e) { console.warn('[fx] setTempo', e); } },
     sync(time) { try { impl.sync?.(time); fallbackFx?.sync(time); } catch (e) { console.warn('[fx] sync', e); } },
     getReduction: impl.getReduction ? () => impl.getReduction() : undefined,
+    /** Offline renders: resolves once every message posted to the effect's worklet has arrived (worklet builders). */
+    flush: impl.flush ? () => impl.flush() : undefined,
+    /** Live data a builder exposes for its custom UI (analyzers, step position…), else null. */
+    get probe() { return impl.probe ?? null; },
     /** Sidechain key input (ducker only): connect the key signal here. */
     keyInput: impl.keyInput || null,
     /** Plugin effects (faust/wam): load promise (true/false), error message and live plugin. */
@@ -1323,6 +1350,7 @@ export function createEffect(ctx, effectDef, opts = {}) {
     },
   };
   if (!fx.getReduction) delete fx.getReduction;
+  if (!fx.flush) delete fx.flush;
   fx.update(effectDef, true);
   fx.sync();
   // Plugin effects with params.fallback = {type, params} (generated songs): if the plugin can't load (no network,

@@ -69,6 +69,7 @@ export function snapshotTargets(project, opts = {}) {
       for (const [k, v] of Object.entries(flattenParams(res.params))) put(t.id, `inst:${k}`, v);
     }
     fxOf(t.id, t.fx);
+    (t.mod?.macros || []).forEach((m, i) => put(t.id, `macro:${i}`, m?.value ?? 0)); // macro knobs (core/modulation.js)
     if (t.patch?.enabled) for (const c of t.patch.cables || []) put(t.id, `cable:${c.id}`, c.gain ?? 1);
   }
   for (const b of project?.buses || []) {

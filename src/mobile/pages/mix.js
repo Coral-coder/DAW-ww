@@ -10,6 +10,12 @@ import { dragReorder } from '../reorder.js';
 import { mixStrips, visibleStripIds, reorderVisible, folderAfterMove, lufsReadout, VCA_MAX } from '../mix-core.js';
 import { applyLinkedEdit, toggleSolo, ensureMixer, setTrackFolder, removeFolder, removeVca, mixerOf } from '../../core/mixer-model.js';
 import { isFrozen } from '../../core/freeze.js';
+import { LOUDNESS_PRESETS } from '../../audio/dsp/loudness.js';
+import { checkTarget } from '../../audio/dsp/loudness-stats.js';
+
+/** Delivery target chosen in the desktop Loudness panel (same browser), else Spotify. */
+const loudTarget = () => { let id = 'spotify'; try { id = JSON.parse(localStorage.getItem('daw3-loudness') || '{}').target || id; } catch { /* */ } return LOUDNESS_PRESETS.find((x) => x.id === id) || LOUDNESS_PRESETS[0]; };
+const fmtLu = (x) => (x != null && Number.isFinite(x) ? x.toFixed(1) : '—');
 
 const VCA_DEF = { key: 'vca', label: 'VCA', type: 'number', min: 0, max: VCA_MAX, step: 0.01, default: 1, format: (v) => (v <= 0.0001 ? '−∞ dB' : `${(20 * Math.log10(v)).toFixed(1)} dB`) };
 const initials = (s) => String(s || '?').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -164,8 +170,14 @@ export function createMixPage(app, nav) {
       const a = analysis();
       const m = a?.read();
       const r = lufsReadout(m);
-      vals.replaceChildren(...[['Momentary', r.momentary, 'LUFS'], ['Short-term', r.short, 'LUFS'], ['Integrated', r.integrated, 'LUFS'], ['Range (LRA)', r.lra, 'LU'], ['True peak', r.peak, 'dBTP']]
+      vals.replaceChildren(...[['Momentary', r.momentary, 'LUFS'], ['Short-term', r.short, 'LUFS'], ['Integrated', r.integrated, 'LUFS'], ['Range (LRA)', r.lra, 'LU'], ['True peak', r.peak, 'dBTP'],
+        ['PLR', fmtLu(m?.plr), 'LU'], ['PSR', fmtLu(m?.psr), 'LU'], ['DR', m?.dr != null ? String(Math.round(m.dr)) : '—', '']]
         .map(([l, v, u]) => h(`div.pk-lufs-cell${u === 'dBTP' && r.hot ? '.hot' : ''}`, h('span.pk-label', l), h('b', v), h('small', u))));
+      if (m) {
+        const tg = loudTarget();
+        const c = checkTarget(m, tg);
+        if (c.status !== 'none') vals.append(h(`div.pk-lufs-cell.pk-lufs-target${c.status === 'pass' ? '' : '.hot'}`, h('span.pk-label', tg.label), h('b', c.status === 'pass' ? '✓ Pass' : 'Adjust'), h('small', c.message)));
+      }
       if (!a) vals.append(h('p.pk-p', 'Press play to measure.'));
       setTimeout(tick, 250);
     };

@@ -11,6 +11,7 @@ import { DRUM_KITS } from './kits.js';
 import { PluginInstrument, isPluginType } from './plugin-instrument.js';
 import { DrumSamplerInstrument, usesDrumSampler } from './library/drum-sampler.js';
 import { StrudelVoice } from './strudel-voice.js';
+import { WavetableInstrument } from './wavetable/engine.js';
 
 export { PRESETS, PRESET_CATEGORIES, INSTRUMENT_DEFS, getParamDefaults, DRUM_KITS };
 
@@ -21,10 +22,11 @@ export const INSTRUMENT_TYPES = [
   { type: 'drums', label: 'Drum Machine', description: '16 synthesized pads, 20 kits, per-pad tune/decay/tone or samples' },
   { type: 'sampler', label: 'Sampler', description: 'Pitched / sliced playback of a project sample with ADSR and filter' },
   { type: 'drumsampler', label: 'Sampled Drum Machine', description: 'Real samples of 35 classic drum machines (TR-808/909, LinnDrum, SP-12, MPC60…) — synth kit fallback offline' },
+  { type: 'wavetable', label: 'Wavetable Synth', description: '2 morphing wavetable oscillators (56 factory tables, WAV / Serum import, resynthesis), warp modes, 16-voice unison, sub + noise, multimode filter, 3 envelopes, 4 LFOs, mod matrix' },
   { type: 'strudel', label: 'Strudel Sound', description: 'Strudel\'s own audio engine (superdough): its synths, samples and GM soundfonts with filter envelopes, FM, vowel, room & delay — the fallback preset plays if it can\'t load' },
 ];
 
-const ENGINES = { synth: SynthInstrument, fm: FMInstrument, organ: OrganInstrument, drums: DrumInstrument, sampler: SamplerInstrument, drumsampler: DrumSamplerInstrument, strudel: StrudelVoice };
+const ENGINES = { synth: SynthInstrument, fm: FMInstrument, organ: OrganInstrument, drums: DrumInstrument, sampler: SamplerInstrument, drumsampler: DrumSamplerInstrument, strudel: StrudelVoice, wavetable: WavetableInstrument };
 /** Built-in preset a 'strudel' instrument falls back to when superdough / its sound can't load. */
 export function strudelFallbackPreset(def) {
   const id = def?.fallbackPreset || PRESETS[def?.preset]?.fallbackPreset;
@@ -112,6 +114,10 @@ export class Instrument {
     }, () => false);
   }
   trigger(time, pitch, vel, durSec, extra) {
+    if (this.opts.onNote) {
+      const t = Math.max(Number(time) || 0, this.ctx.currentTime);
+      try { this.opts.onNote(t, true); this.opts.onNote(t + Math.max(0.005, Number(durSec) || 0.25), false); } catch (e) { warn(e); }
+    }
     try {
       // flam: a soft grace stroke, then the main stroke 16 ms later (any engine; used on drum fills)
       if (extra?.flam > 0) {
@@ -123,9 +129,20 @@ export class Instrument {
       this.engine.trigger(time, pitch, vel, durSec, extra || {});
     } catch (e) { warn(e); }
   }
-  noteOn(pitch, vel, time) { try { this.engine.noteOn(pitch, vel, time); } catch (e) { warn(e); } }
-  noteOff(pitch, time) { try { this.engine.noteOff(pitch, time); } catch (e) { warn(e); } }
-  allNotesOff(time) { try { this.engine.allNotesOff(time); } catch (e) { warn(e); } }
+  noteOn(pitch, vel, time) {
+    (this._liveHeld ||= new Set()).add(pitch);
+    try { this.opts.onNote?.(Math.max(Number(time) || 0, this.ctx.currentTime), true); } catch (e) { warn(e); }
+    try { this.engine.noteOn(pitch, vel, time); } catch (e) { warn(e); }
+  }
+  noteOff(pitch, time) {
+    if (this._liveHeld?.delete(pitch)) { try { this.opts.onNote?.(Math.max(Number(time) || 0, this.ctx.currentTime), false); } catch (e) { warn(e); } }
+    try { this.engine.noteOff(pitch, time); } catch (e) { warn(e); }
+  }
+  allNotesOff(time) {
+    this._liveHeld?.clear();
+    try { this.opts.onNote?.(time, null); } catch (e) { warn(e); }
+    try { this.engine.allNotesOff(time); } catch (e) { warn(e); }
+  }
   /** Plugin instruments (soundfont/faust/wam): resolves true when playable, false on failure. Built-ins: null. */
   get ready() { return this._fallbackReady || (this.engine?.ready ?? null); }
   /** Processing latency (s): the def's manual `latency` (samples) or what the engine / plugin reports (PDC). */

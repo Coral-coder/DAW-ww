@@ -7,6 +7,7 @@ import { EXPORT_FORMATS, EXPORT_SAMPLE_RATES, DITHER_OPTIONS, EXPORT_DEFAULTS, B
 import { LOUDNESS_PRESETS } from '../audio/dsp/loudness.js';
 import { downloadBlob } from '../io/project-file.js';
 import { groupSelection } from '../core/mixer-model.js';
+import { analysisView, reportFiles, REPORT_FILE_OPTIONS } from './export-analysis.js';
 
 const LS = 'daw3-export';
 const load = () => { try { return { ...EXPORT_DEFAULTS, ...JSON.parse(localStorage.getItem(LS) || '{}') }; } catch { return { ...EXPORT_DEFAULTS }; } };
@@ -112,6 +113,9 @@ export async function openExportDialog(app, { stems = false } = {}) {
         o.stems !== 'none' ? row('Stem names', text(o.stemTemplate, (v) => { o.stemTemplate = v; save(o); updSummary(); }, '{project} - {n} {stem}')) : null,
         h('div.xp-hint', 'Tokens: {project} {title} {artist} {stem} {n} {bpm} {key} {date} {time} {sr} {bits} {lufs} {range}'),
       ),
+      h('div.xp-section', h('h3', 'Analysis report'),
+        row('Report', sel(REPORT_FILE_OPTIONS, o.reportFile || 'none', (v) => set('reportFile', v), 'After the render the dialog shows loudness, true peak, PLR / PSR, DR, clips, DC offset, loudness over time and the spectrum; it can also be saved next to the export')),
+      ),
       summary, preview,
     );
     updSummary();
@@ -172,10 +176,12 @@ export async function openExportDialog(app, { stems = false } = {}) {
       if (files.length > 1) {
         const { writeZip } = await import('../io/interchange/zip.js');
         const base = formatFileName(o.nameTemplate, { project: p, title: o.title, artist: o.artist });
-        const zip = await writeZip([...files.map((f) => ({ name: f.name, data: new Uint8Array(f.data), compress: false })), { name: 'export-report.txt', data: res.report.text }]);
+        const extra = reportFiles(res.report, 'export', o.reportFile === 'json' || o.reportFile === 'both' ? 'json' : 'none');
+        const zip = await writeZip([...files.map((f) => ({ name: f.name, data: new Uint8Array(f.data), compress: false })), { name: 'export-report.txt', data: res.report.text }, ...extra.map((f) => ({ name: f.name, data: f.data }))]);
         downloadBlob(new Blob([zip], { type: 'application/zip' }), `${base}.zip`);
       } else if (files.length) {
         downloadBlob(new Blob([files[0].data], { type: files[0].mime }), files[0].name);
+        for (const f of reportFiles(res.report, files[0].name.replace(/\.[^.]+$/, ''), o.reportFile || 'none')) downloadBlob(new Blob([f.data], { type: f.mime }), f.name);
       }
       app.lastExport = res; // (tests / automation)
       showReport(res);
@@ -196,12 +202,18 @@ export async function openExportDialog(app, { stems = false } = {}) {
     const tbl = (rows) => h('table.xp-report', rows.map(([k, v]) => h('tr', h('td', k), h('td', v))));
     preview.append(h('h3', 'Export report'));
     if (rep.mix) preview.append(h('div.xp-file', rep.mix.name), tbl(rep.mix.rows));
+    if (rep.mix?.analysis) preview.append(analysisView(preview, rep.mix.analysis, { targetLufs: o.normalize === 'lufs' ? Number(o.target) : null }));
     if (rep.stems.length) {
       preview.append(h('table.xp-report.stems', h('tr', h('th', 'Stem'), h('th', 'LUFS'), h('th', 'dBTP')),
         rep.stems.map((s) => h('tr', h('td', s.name), h('td', Number.isFinite(s.measure.integrated) ? s.measure.integrated.toFixed(1) : '−∞'), h('td', Number.isFinite(s.measure.truePeakDb) ? s.measure.truePeakDb.toFixed(1) : '−∞')))));
     }
     requestAnimationFrame(() => preview.scrollIntoView({ block: 'end' }));
-    preview.append(button('Copy report', () => navigator.clipboard?.writeText(rep.text).then(() => toast('Report copied')), { cls: 'small' }));
+    const base = (rep.mix?.name || 'export').replace(/\.[^.]+$/, '');
+    const saveAs = (kind) => { for (const f of reportFiles(rep, base, kind)) downloadBlob(new Blob([f.data], { type: f.mime }), f.name); };
+    preview.append(h('div.xp-report-actions',
+      button('Copy report', () => navigator.clipboard?.writeText(rep.text).then(() => toast('Report copied')), { cls: 'small' }),
+      button('Save report (.txt)', () => saveAs('txt'), { cls: 'small' }),
+      rep.json ? button('Save report (.json)', () => saveAs('json'), { cls: 'small' }) : null));
   }
 
   refresh();

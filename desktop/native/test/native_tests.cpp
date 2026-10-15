@@ -26,6 +26,9 @@ static int unsetenv(const char* k) { return _putenv_s(k, ""); }
 #else
 #include <unistd.h>
 #endif
+#ifdef __APPLE__
+#include <sys/xattr.h>
+#endif
 
 // .vstpreset helpers (header-only, shared with the VST3 host)
 #include "../src/host/vst3_common.h"
@@ -670,6 +673,36 @@ static void testScanFolders() {
 #endif
 }
 
+/** A binary that does not load reports the loader's own text (dlerror / LoadLibrary / CFError), plus the
+ *  quarantine fix on macOS when the bundle carries com.apple.quarantine. */
+static void testLoadErrors() {
+  const std::string dir = tempDir("load-errors");
+  const std::string bad = dir + "/Broken.clap";
+  writeFile(bad, {'n', 'o', 't', ' ', 'a', ' ', 'p', 'l', 'u', 'g', 'i', 'n'});
+  auto c = makeClapFormat();
+  std::vector<PluginDesc> out;
+  std::string err;
+  CHECK(!c->describe(bad, out, err));
+  const std::string prefix = "Could not load the CLAP binary: ";
+  CHECK(err.compare(0, prefix.size(), prefix) == 0);
+  CHECK(err.size() > prefix.size() + 3);  // the loader's message, not just our prefix
+  CHECK(err.find("quarantine") == std::string::npos);
+#ifdef __APPLE__
+  const char q[] = "0081;5f000000;Safari;";
+  CHECK(setxattr(bad.c_str(), "com.apple.quarantine", q, sizeof q - 1, 0, 0) == 0);
+  err.clear();
+  CHECK(!c->describe(bad, out, err));
+  CHECK(err.find("xattr -dr com.apple.quarantine \"" + bad + "\"") != std::string::npos);
+  CHECK(err.find("Privacy & Security") != std::string::npos);
+#endif
+  // VST3: an empty bundle has no binary; a bundle whose binary is junk reports the loader's text too
+  auto v = makeVst3Format();
+  err.clear();
+  out.clear();
+  CHECK(!v->describe(dir + "/Missing.vst3", out, err));
+  CHECK(!err.empty());
+}
+
 #ifdef __APPLE__
 void testAu();  // test_au.mm
 #endif
@@ -683,6 +716,7 @@ int main(int argc, char** argv) {
   run("engine: loopback ping capture", testEnginePing);
   run("engine: sample-rate / buffer renegotiation (null backend)", testEngineRenegotiate);
   run("plugin folders", testScanFolders);
+  run("plugin load errors: loader text + quarantine fix", testLoadErrors);
   if (!clap.empty()) run("clap: gain + tone test plugins", [&] { testClap(clap); });
   if (!vst3.empty()) run("vst3: gain test plugin", [&] { testVst3(vst3); });
   if (!clap.empty()) run("clap: sample-accurate params, sidechain bus, multi-out", [&] { testClapBuses(clap); });

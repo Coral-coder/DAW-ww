@@ -6,6 +6,9 @@ import { modal, tabs, button, select } from './components.js';
 import { CATALOG, KIND_LABELS, catalogCategories, searchCatalog, setNativeEntries } from '../plugins/catalog.js';
 import { nativePluginsApi } from '../native/client.js';
 import { catalogEntries } from '../native/plugin-db.js';
+import { catalogPlugins } from '../native/plugin-prefs.js';
+import { cleanErrorMessage } from '../native/plugin-diagnostics.js';
+import { renderNativeTab } from './native-plugins-tab.js';
 import { FAUST_TEMPLATE } from '../plugins/faust-library.js';
 import { onStatus, shortUrl } from '../plugins/status.js';
 import { setPluginDialogOpener } from './plugin-device.js';
@@ -26,14 +29,16 @@ const entryInfo = (e) => ({
   library: e.source?.library, instrument: e.source?.instrument, experimental: !!e.experimental, description: e.description,
 });
 
-/** Mac app: load the native plugin database into the catalog (scans once on first launch). */
+/** Desktop app: load the native plugin database into the catalog (hidden / blocked plugins left out, favourites
+ *  first). Resolves with the list, rejects with a clean message when the audio server cannot answer. */
 export function refreshNativeCatalog() {
   const api = nativePluginsApi();
   if (!api) return Promise.resolve(false);
-  return api.list().then((r) => { setNativeEntries(catalogEntries(r)); return r; }).catch(() => false);
+  return api.list().then((r) => { setNativeEntries(catalogEntries({ plugins: catalogPlugins(r.plugins, r.prefs) })); return r; },
+    (e) => { throw new Error(`Native plugins unavailable: ${cleanErrorMessage(e)}`); });
 }
 
-/** Rescan the plugin folders (progress via onProgress({done, total, path})). */
+/** Rescan the plugin folders (progress via onProgress({done, total, path})). force: false = only new / changed bundles. */
 export async function scanNativePlugins({ force = false, onProgress } = {}) {
   const api = nativePluginsApi();
   if (!api) return null;
@@ -42,15 +47,35 @@ export async function scanNativePlugins({ force = false, onProgress } = {}) {
     const r = await api.scan({ force });
     await refreshNativeCatalog();
     return r;
+  } catch (e) {
+    throw new Error(`Plugin scan failed: ${cleanErrorMessage(e)}`);
   } finally { off(); }
+}
+
+/** Quick, cached rescan (new / updated plugins appear; unchanged bundles are not loaded again). One at a time. */
+let backgroundScan = null;
+export function rescanNativeInBackground(app, { quiet = false } = {}) {
+  if (!nativePluginsApi()) return Promise.resolve(null);
+  if (backgroundScan) return backgroundScan;
+  backgroundScan = scanNativePlugins({ force: false }).then((s) => {
+    if (s?.added?.length && !quiet) app.toast(s.added.length === 1 ? `New plugin: ${s.added[0]}` : `Found ${s.added.length} new VST3 / AU / CLAP plugins`, { level: 'success' });
+    return s;
+  }, (e) => { app.toast(e.message, { level: 'error', timeout: 8000 }); throw e; }).finally(() => { backgroundScan = null; });
+  return backgroundScan;
 }
 
 export function installPluginUi(app) {
   setPluginDialogOpener((opts) => openPluginsDialog(app, opts));
   const napi = nativePluginsApi();
   if (napi) {
-    refreshNativeCatalog().then((r) => { if (r && !r.scannedAt) scanNativePlugins().then((s) => s && app.toast(`Found ${s.count} VST3 / AU / CLAP plugins`, { level: 'success' })).catch(() => {}); });
-    napi.onEvent((ev) => { if (ev?.event === 'plugins-changed') refreshNativeCatalog(); });
+    // first launch: full scan; afterwards an incremental one, so newly installed plugins show up by themselves
+    refreshNativeCatalog().then((r) => {
+      if (r && !r.scannedAt) {
+        scanNativePlugins().then((s) => s && app.toast(`Found ${s.count} VST3 / AU / CLAP plugins${s.failed.length ? ` (${s.failed.length} could not be loaded: see Plugins › Native)` : ''}`, { level: s.failed.length ? 'warn' : 'success', timeout: 7000 }),
+          (e) => app.toast(e.message, { level: 'error', timeout: 8000 }));
+      } else if (r) rescanNativeInBackground(app).catch(() => { /* toasted */ });
+    }, (e) => app.toast(e.message, { level: 'error', timeout: 8000 }));
+    napi.onEvent((ev) => { if (ev?.event === 'plugins-changed' || ev?.event === 'plugin-prefs') refreshNativeCatalog().catch(() => { /* reported by the caller that changed it */ }); });
   }
   // friendly toasts for plugin load failures (live) and render problems
   const toasted = new Map();
@@ -166,10 +191,10 @@ export function openPluginsDialog(app, opts = {}) {
         const label = scanBtn.querySelector('span');
         try {
           const r = await scanNativePlugins({ force: true, onProgress: (p) => { if (label) label.textContent = `Scanning ${p.done}/${p.total}…`; } });
-          setMsg(`${r.count} native plugins${r.failed.length ? ` · ${r.failed.length} could not be loaded (${r.failed.slice(0, 3).map((f) => f.path.split('/').pop()).join(', ')}${r.failed.length > 3 ? '…' : ''})` : ''}`, r.failed.length ? 'warn' : 'info');
+          setMsg(`${r.count} native plugins${r.failed.length ? ` · ${r.failed.length} could not be loaded (${r.failed.slice(0, 3).map((f) => f.path.split(/[\\/]/).pop()).join(', ')}${r.failed.length > 3 ? '…' : ''}) — see the Native tab` : ''}`, r.failed.length ? 'warn' : 'info');
           refreshCats();
           draw();
-        } catch (e) { setMsg(String(e?.message || e), 'error'); }
+        } catch (e) { setMsg(cleanErrorMessage(e), 'error'); app.toast(cleanErrorMessage(e), { level: 'error', timeout: 8000 }); }
         finally { scanBtn.disabled = false; if (label) label.textContent = 'Scan plugins'; }
       }, { icon: 'search', cls: 'small', title: 'Look for VST3, Audio Unit and CLAP plugins in the standard macOS plugin folders' });
     }
@@ -352,8 +377,10 @@ export function openPluginsDialog(app, opts = {}) {
   }
 
   // ------------------------------------------------------------------ shell
+  const native = nativePluginsApi();
   const tabsEl = tabs([
     { id: 'catalog', label: 'Catalog', icon: 'layers', render: renderCatalog },
+    ...(native ? [{ id: 'native', label: 'Native', icon: 'plug', render: () => renderNativeTab({ app, setMsg, actionsFor: (entry) => actionButtons(entryInfo(entry), { close: () => dlg.close() }) }) }] : []),
     { id: 'link', label: 'From GitHub link', icon: 'download', render: renderLink },
     { id: 'faust', label: 'Faust editor', icon: 'code', render: renderFaust },
   ], opts.tab || 'catalog', () => setMsg(''));
@@ -366,5 +393,7 @@ export function openPluginsDialog(app, opts = {}) {
     onClose: () => { runtime().then((rt) => rt.stopPreview()).catch(() => {}); },
   });
   body.addEventListener('keydown', (e) => { if (e.target.matches('input, textarea')) e.stopPropagation(); });
+  // newly installed plugins appear without a manual scan (cached: unchanged bundles are not reloaded)
+  if (native) rescanNativeInBackground(app).catch((e) => setMsg(e.message, 'error'));
   return dlg;
 }

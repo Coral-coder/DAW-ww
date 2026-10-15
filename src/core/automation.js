@@ -3,6 +3,7 @@
 //   AutomationLane { id, target, points:[{beat, value}], enabled }
 //   target: 'volume' | 'pan' | 'mute' | 'send:<busId>' | 'inst:<paramKey>' | 'fx:<fxId>:<paramKey>'
 //           | 'fxen:<fxId>' (effect on/bypass, step lane) | 'cable:<cableId>' (plugboard cable gain)
+//           | 'macro:<0-7>' (a track's macro knob 0..1, core/modulation.js)
 //   inst / fx param keys may be nested: 'inst:pads.<padKey>.<param>' (drum pads), 'inst:values.<address>' /
 //   'fx:<fxId>:values.<address>' (Faust plugin controls). enum / bool params are encoded as numbers
 //   (option index / 0|1, see encodeParam / decodeParam) and play as steps.
@@ -34,6 +35,7 @@ export function parseTarget(target) {
   if (kind === 'inst' && rest) return { kind: 'inst', key: rest };
   if (kind === 'fxen' && rest) return { kind: 'fxen', fxId: rest, key: 'enabled' };
   if (kind === 'cable' && rest) return { kind: 'cable', cableId: rest, key: rest };
+  if (kind === 'macro' && /^[0-7]$/.test(rest)) return { kind: 'macro', index: Number(rest), key: rest };
   if (kind === 'fx') {
     const j = rest.indexOf(':');
     if (j > 0 && j < rest.length - 1) return { kind: 'fx', fxId: rest.slice(0, j), key: rest.slice(j + 1) };
@@ -50,6 +52,7 @@ export const targetString = {
   send: (busId) => `send:${busId}`,
   inst: (key) => `inst:${key}`,
   fx: (fxId, key) => `fx:${fxId}:${key}`,
+  macro: (i) => `macro:${i}`,
 };
 
 export function createAutomationLane(target, points = [], opts = {}) {
@@ -159,7 +162,7 @@ export function automationOwner(project, id) {
   return project.tracks?.find((t) => t.id === id) || project.buses?.find((b) => b.id === id) || project.mixer?.vcas?.find((v) => v.id === id) || null;
 }
 
-const CONTROL_KINDS = new Set(['inst', 'fx', 'fxen', 'cable']);
+const CONTROL_KINDS = new Set(['inst', 'fx', 'fxen', 'cable', 'macro']);
 /** Does the project contain inst:/fx:/fxen:/cable: automation that needs control-rate evaluation? */
 export function hasControlAutomation(project) {
   return automationOwners(project).some((o) => activeLanes(o).some((l) => CONTROL_KINDS.has(parseTarget(l.target).kind)));
