@@ -12,6 +12,11 @@ the desktop apps share one version.
   render, Setlist, Pocket), its functions show in autocomplete and the building blocks, and a project keeps a
   reference to the prebakes its code uses. Code calling undefined functions offers the saved prebake that defines
   them. Split import maps what the helpers produce (filter envelopes, delay sends, filters, gain, orbit mute / solo).
+- **SETI Scope**: a fullscreen visualizer styled after the classic radio-telescope screensaver — a rotating 3D
+  power × frequency × time plot (WebGL, canvas fallback) with panels of real analysis of the song (strongest spectral
+  spike + note, pitch drift, a Gaussian fitted to the loudness, beat / BPM, rhythmic triplets, detected key). Opens
+  from the main / View menu, the command palette (Shift+V), the transport, the mixer's master strip and Pocket's
+  menu; master or any track / bus as the source; CRT and Retro 640×480 modes; optional idle screensaver.
 
 ## [1.0.0] — 2026-10-14
 

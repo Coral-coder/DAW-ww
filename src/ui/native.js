@@ -42,6 +42,7 @@ export function installNative(app) {
     help: () => actions.showHelp(),
     about: () => actions.showAbout(),
     'audio-prefs': () => import('./audio-prefs.js').then((m) => m.openAudioPrefs(app)),
+    'seti-scope': () => import('./visualizers/seti/launch.js').then((m) => m.toggleSetiScope(app)),
   };
   nat.onCommand((cmd, payload) => {
     const fn = handlers[cmd];

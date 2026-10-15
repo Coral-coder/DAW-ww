@@ -50,6 +50,7 @@ export function replaceChildren(el, ...children) {
 const ICONS = {
   snow: '<path d="M12 2v20M4.9 6l14.2 12M4.9 18L19.1 6"/><path d="M9.5 3.5L12 6l2.5-2.5M9.5 20.5L12 18l2.5 2.5"/>',
   gauge: '<path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4-6"/>',
+  dish: '<path d="M4 10a8 8 0 0 0 10 10z"/><path d="M9 15l6-6"/><path d="M15 9h.01"/><path d="M17 4a3 3 0 0 1 3 3M17 1a6 6 0 0 1 6 6"/><path d="M8 20l-2 3h8l-2-3"/>',
   history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/>',
   play: '<path d="M7 5l12 7-12 7z" fill="currentColor" stroke="none"/>',
   pause: '<path d="M7 5h3v14H7zM14 5h3v14h-3z" fill="currentColor" stroke="none"/>',
