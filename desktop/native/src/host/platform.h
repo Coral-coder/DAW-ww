@@ -17,6 +17,9 @@
 #else
 #include <dlfcn.h>
 #endif
+#ifdef __APPLE__
+#include <sys/xattr.h>
+#endif
 
 namespace daw3 {
 
@@ -94,6 +97,30 @@ inline std::string envVar(const char* name) {
   return v ? std::string(v) : std::string();
 }
 #endif
+
+/** True when macOS Gatekeeper's quarantine flag (com.apple.quarantine) is set on `path` (always false elsewhere). */
+inline bool isQuarantined(const std::string& path) {
+#ifdef __APPLE__
+  return !path.empty() && getxattr(path.c_str(), "com.apple.quarantine", nullptr, 0, 0, 0) >= 0;
+#else
+  (void)path;
+  return false;
+#endif
+}
+
+/** The fix to show next to a load error of a quarantined plugin bundle ("" when it is not quarantined). */
+inline std::string quarantineNote(const std::string& bundle, const std::string& binary = std::string()) {
+  if (!isQuarantined(bundle) && (binary.empty() || !isQuarantined(binary))) return std::string();
+  return " - macOS has quarantined this plugin (downloaded, not notarized). Allow it in System Settings > Privacy & Security, "
+         "or run: xattr -dr com.apple.quarantine \"" + bundle + "\"";
+}
+
+/** Load error of a plugin binary (the loader's own text) with the macOS quarantine fix appended when it applies. */
+inline std::string loadError(const std::string& what, const std::string& bundle, const std::string& binary, const std::string& detail) {
+  std::string e = "Could not load the " + what + " binary";
+  if (!detail.empty()) e += ": " + detail;
+  return e + quarantineNote(bundle, binary);
+}
 
 /** Splits an environment path list ($CLAP_PATH, $DAW3_PRESET_DIRS) on ':' (POSIX) or ';' (Windows). */
 inline std::vector<std::string> splitPathList(const std::string& s) {

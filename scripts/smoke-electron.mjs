@@ -5,12 +5,16 @@
 // song has more than 5 tracks, the native audio bridge answered, and a catalog Faust effect loads from the compiler
 // bundled in the package (live and offline, no network needed). Saves a screenshot.
 //
-//   node scripts/smoke-electron.mjs [--app <path to the executable>] [--out <dir>] [--port 9333] [--timeout 120]
+//   node scripts/smoke-electron.mjs [--app <path to the executable>] [--out <dir>] [--port 9333] [--timeout 120] [--test-plugins <dir>]
+//
+// --test-plugins: a folder with the built daW3TestGain.vst3 / .clap (desktop/native/build). They are installed in the
+// user plug-in folders (removed again afterwards) and must be found, load and process audio; macOS adds a quarantined
+// copy (the quarantine fix must be shown, also in Plugins › Native) and an Intel-only copy (Rosetta plugin host).
 //
 // Without --app the executable is found in dist/ (mac-arm64 / mac / win-unpacked / win-arm64-unpacked /
 // linux-unpacked). Needs playwright-core (npm i --no-save playwright-core). Linux: run under xvfb-run.
 import { spawn, execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync, rmSync, cpSync, renameSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -46,6 +50,54 @@ function loadPlaywright() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log(`[smoke ${label}]`, ...a);
+
+// --test-plugins <dir with daW3TestGain.vst3 / .clap>: install the built test plugins in the user plug-in folders
+// before launch (the first-launch scan must find them), then scan, load and process audio through each one. macOS
+// also gets a quarantined copy (the quarantine fix must be reported) and an Intel-only (x86_64) copy (Rosetta host).
+const testPluginsDir = args['test-plugins'] && args['test-plugins'] !== true ? path.resolve(String(args['test-plugins'])) : null;
+const installed = [];
+function userPluginDirs() {
+  const home = os.homedir();
+  if (process.platform === 'darwin') return { vst3: path.join(home, 'Library/Audio/Plug-Ins/VST3'), clap: path.join(home, 'Library/Audio/Plug-Ins/CLAP') };
+  if (process.platform === 'win32') {
+    const base = path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'Programs', 'Common');
+    return { vst3: path.join(base, 'VST3'), clap: path.join(base, 'CLAP') };
+  }
+  return { vst3: path.join(home, '.vst3'), clap: path.join(home, '.clap') };
+}
+function installTestPlugins() {
+  const dirs = userPluginDirs();
+  const put = (src, dir, name) => {
+    mkdirSync(dir, { recursive: true });
+    const dst = path.join(dir, name);
+    rmSync(dst, { recursive: true, force: true });
+    cpSync(src, dst, { recursive: true });
+    installed.push(dst);
+    return dst;
+  };
+  const out = { vst3: put(path.join(testPluginsDir, 'daW3TestGain.vst3'), dirs.vst3, 'daW3TestGain.vst3'), clap: put(path.join(testPluginsDir, 'daW3TestGain.clap'), dirs.clap, 'daW3TestGain.clap') };
+  if (process.platform === 'darwin') {
+    // a downloaded, non-notarized copy: Gatekeeper's quarantine flag on the bundle and its binary
+    out.quarantined = put(path.join(testPluginsDir, 'daW3TestGain.clap'), dirs.clap, 'daW3TestGainQuarantined.clap');
+    const flag = `0081;${Math.floor(Date.now() / 1000).toString(16)};Safari;`;
+    execFileSync('/usr/bin/find', [out.quarantined, '-exec', '/usr/bin/xattr', '-w', 'com.apple.quarantine', flag, '{}', ';']);
+    // an Intel-only copy (x86_64 slice only), as many older plugins ship: scanned + served by the Rosetta host
+    const intel = path.join(os.tmpdir(), `daw3-smoke-intel-${process.pid}`, 'daW3TestGainIntel.vst3');
+    rmSync(path.dirname(intel), { recursive: true, force: true });
+    mkdirSync(path.dirname(intel), { recursive: true });
+    cpSync(path.join(testPluginsDir, 'daW3TestGain.vst3'), intel, { recursive: true });
+    const bin = path.join(intel, 'Contents', 'MacOS', 'daW3TestGain');
+    try {
+      execFileSync('/usr/bin/lipo', [bin, '-thin', 'x86_64', '-output', `${bin}.x64`]);
+      renameSync(`${bin}.x64`, bin);
+      try { execFileSync('/usr/bin/codesign', ['-f', '-s', '-', intel], { stdio: 'ignore' }); } catch { /* unsigned is fine under Rosetta */ }
+      out.intelSrc = intel;
+    } catch (e) { log(`no Intel-only copy (${String(e.message).split('\n')[0]})`); }
+  }
+  log('installed test plugins', JSON.stringify(out));
+  return out;
+}
+const testPlugins = testPluginsDir ? installTestPlugins() : null;
 
 const exe = path.resolve(String(args.app && args.app !== true ? args.app : findApp()));
 const userData = path.join(os.tmpdir(), `daw3-smoke-${process.pid}`);
@@ -181,6 +233,76 @@ try {
   });
   const fz = result.checks.faust;
   if (fz.error || fz.source !== 'bundled' || !fz.live || !fz.offline || !(fz.rms > 0.001)) throw new Error(`Faust effect: ${JSON.stringify(fz)}`);
+  // 6. native plugin hosting: the test plugins are found, load, and process audio (offline render of a constant)
+  if (testPlugins) {
+    const run = (intel) => page.evaluate(async ({ installed, intel }) => {
+      const api = window.daw3Native.plugins;
+      const out = { loaded: [], failed: [], warnings: [] };
+      const r = await api.scan({ force: false });
+      const list = await api.list();
+      out.count = r.count;
+      out.hostArch = list.hostArch;
+      out.failed = list.failed.map((f) => ({ path: f.path, error: f.error, quarantined: f.quarantined, arch: f.arch }));
+      out.warnings = list.warnings || [];
+      const want = intel ? [['vst3', intel]] : [['vst3', installed.vst3], ['clap', installed.clap]];
+      for (const [format, p] of want) {
+        const d = list.plugins.find((x) => x.format === format && x.path === p && /Gain/.test(x.name));
+        if (!d) { out.loaded.push({ format, path: p, error: 'not found by the scan' }); continue; }
+        try {
+          const info = await api.load({ key: d.key, sampleRate: 48000 });
+          const frames = 4800;
+          const res = await api.render({ inst: info.inst, frames, input: new Float32Array(frames * 2).fill(0.5) });
+          const v = res.output[frames - 100];
+          await api.unload(info.inst);
+          out.loaded.push({ format, name: d.name, arch: d.arch, value: v, ok: Math.abs(v - 0.5) < 1e-4 });
+        } catch (e) { out.loaded.push({ format, name: d.name, arch: d.arch, error: String(e.message || e) }); }
+      }
+      return out;
+    }, { installed: testPlugins, intel });
+    const res = await run(null);
+    result.checks.plugins = res;
+    const bad = res.loaded.filter((x) => !x.ok);
+    if (bad.length) throw new Error(`native plugins did not load / process: ${JSON.stringify(bad)}`);
+    const unexpected = res.failed.filter((f) => [testPlugins.vst3, testPlugins.clap].includes(f.path));
+    if (unexpected.length) throw new Error(`test plugins reported as failed: ${JSON.stringify(unexpected)}`);
+    if (testPlugins.quarantined) {
+      // the quarantined copy is reported with the fix, whether macOS refused to load it or not
+      const q = res.failed.find((f) => f.path === testPlugins.quarantined) || res.warnings.find((w) => w.path === testPlugins.quarantined);
+      if (!q?.quarantined && !/xattr -dr com\.apple\.quarantine/.test(q?.message || q?.error || '')) throw new Error(`the quarantined plugin copy was not reported as quarantined: ${JSON.stringify(q || null)}`);
+      // and the Plugins dialog's Native tab shows it
+      const shown = await page.evaluate(async () => {
+        const m = await import('./src/ui/plugins-dialog.js');
+        m.openPluginsDialog(window.daw3, { tab: 'native' });
+        const sel = document.querySelector('.nplg-tab select:nth-of-type(2)');
+        if (sel) { sel.value = 'problems'; sel.dispatchEvent(new Event('change')); }
+        for (let i = 0; i < 100; i++) {
+          const t = document.querySelector('.nplg-tab')?.innerText || '';
+          if (/com\.apple\.quarantine/.test(t)) return true;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        return document.querySelector('.nplg-tab')?.innerText?.slice(0, 2000) || 'no Native tab';
+      });
+      await page.screenshot({ path: path.join(outDir, `smoke-${label}-plugins.png`) });
+      await page.keyboard.press('Escape');
+      if (shown !== true) throw new Error(`the Native tab does not show the quarantine fix: ${shown}`);
+    }
+    if (testPlugins.intelSrc) {
+      const rosetta = (() => { try { execFileSync('/usr/bin/arch', ['-x86_64', '/usr/bin/true'], { stdio: 'ignore' }); return true; } catch { return false; } })();
+      const dst = path.join(userPluginDirs().vst3, 'daW3TestGainIntel.vst3');
+      rmSync(testPlugins.vst3, { recursive: true, force: true }); // the universal copy would win the duplicate-key tie
+      cpSync(testPlugins.intelSrc, dst, { recursive: true });
+      installed.push(dst);
+      const ri = await run(dst);
+      result.checks.intelPlugin = { rosetta, ...ri };
+      const one = ri.loaded[0] || {};
+      const f = ri.failed.find((x) => x.path === dst);
+      if (ri.hostArch === 'arm64') {
+        if (rosetta && !(one.ok && one.arch === 'x86_64')) throw new Error(`Intel-only plugin did not run in the Rosetta host: ${JSON.stringify(ri)}`);
+        if (!rosetta && !(f && /Rosetta/.test(f.error))) throw new Error(`Intel-only plugin without Rosetta was not explained: ${JSON.stringify(ri)}`);
+      } else if (!one.ok) throw new Error(`x86_64 plugin failed in an x86_64 host: ${JSON.stringify(ri)}`);
+    }
+    log('plugins OK', JSON.stringify(result.checks.plugins.loaded), testPlugins.intelSrc ? JSON.stringify(result.checks.intelPlugin?.loaded) : '');
+  }
 
   // what the screenshot shows, in words (for the CI log)
   result.checks.visible = await page.evaluate(() => ({
@@ -209,5 +331,7 @@ try {
   writeFileSync(path.join(outDir, `smoke-${label}.json`), JSON.stringify({ ...result, appLog: appLog.slice(-8000) }, null, 2));
   try { await browser?.close(); } catch { /* */ }
   killApp();
+  // leave the user plug-in folders as they were (the plugin host may still hold a file open for a moment on Windows)
+  if (installed.length) { await sleep(1500); for (const p of installed) { try { rmSync(p, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 }); } catch (e) { log(`could not remove ${p}: ${e.message}`); } } }
 }
 process.exit(result.ok ? 0 : 1);

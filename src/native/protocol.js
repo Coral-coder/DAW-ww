@@ -110,9 +110,17 @@ export const METHODS = {
     if (!isObj(o) || !isInt(o.inst) || !isInt(o.frames) || o.frames < 0 || o.frames > 48000 * 60 * 60) return '{inst, frames, events} expected';
     if (o.events != null && !Array.isArray(o.events)) return 'events must be an array';
     if (o.params != null && !Array.isArray(o.params)) return 'params must be an array of [frame, paramId, value]';
+    if (o.input != null && (!(o.input instanceof Float32Array) || o.input.length < o.frames || o.input.length > o.frames * 8)) return 'input must be a planar Float32Array (channels × frames)';
     return null;
   },
+  'plugins.retry': (a) => (isBundleRef(a?.[0]) ? null : '{format, path} expected'),
+  'plugins.scanLog': (a) => (isBundleRef(a?.[0]) ? null : '{format, path} expected'),
+  'plugins.getPrefs': () => null,
+  'plugins.setPrefs': (a) => (isObj(a?.[0]) && JSON.stringify(a[0]).length < 2_000_000 ? null : 'preferences object expected'),
 };
+
+/** { format, path } of a plugin bundle (AU: the registry, path 'all'). */
+const isBundleRef = (o) => isObj(o) && ['vst3', 'clap', 'au'].includes(o.format) && isStr(o.path) && o.path.length > 0 && o.path.length < 4096;
 
 /** A preset name the server may turn into a file name (no separators, no dot files). */
 export const PRESET_NAME = /^(?!\.)[\p{L}\p{N} _\-.()'&+,#]{1,96}$/u;
