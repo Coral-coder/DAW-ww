@@ -1,7 +1,355 @@
-// Character effect definitions. Receives the ParamDef helpers from effect-defs.js and returns
-// { type: { name, category, description, params, presets? } } entries merged into EFFECT_DEFS.
-// presets (optional) = { 'Preset name': { paramKey: value, ... } } — same shape as EFFECT_PRESETS.
-// eslint-disable-next-line no-unused-vars
-export default function characterDefs({ num, enm, bool, lfoParams, DIVISION_OPTIONS }) {
-  return {};
+// Character effect definitions: pitch & voice (pitch shifter / harmonizer, vocoder, formant shifter), frequency shifter,
+// ring modulator, resonator, envelope filter, Distortion+, mid/side tool and Haas widener. Receives the ParamDef
+// helpers from effect-defs.js and returns { type: { name, category, description, params, presets? } } entries merged
+// into EFFECT_DEFS. presets = { 'Preset name': { paramKey: value, ... } } — same shape as EFFECT_PRESETS.
+// DSP: src/audio/fx/dsp (pitch.js, lpc.js, voice.js, character.js); builders in ../builders/character.js.
+
+const KEYS = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
+export const KEY_OPTIONS = KEYS.map((label, value) => ({ value, label }));
+export const SCALE_OPTIONS = [
+  { value: 'major', label: 'Major' }, { value: 'minor', label: 'Natural Minor' }, { value: 'dorian', label: 'Dorian' },
+  { value: 'phrygian', label: 'Phrygian' }, { value: 'lydian', label: 'Lydian' }, { value: 'mixolydian', label: 'Mixolydian' },
+  { value: 'harmonicMinor', label: 'Harmonic Minor' }, { value: 'pentatonic', label: 'Major Pentatonic' },
+  { value: 'minorPentatonic', label: 'Minor Pentatonic' }, { value: 'blues', label: 'Blues' },
+];
+export const CHORD_OPTIONS = [
+  { value: 'single', label: 'Single note' }, { value: 'octave', label: 'Octave' }, { value: 'fifth', label: 'Fifth' },
+  { value: 'power', label: 'Power (1-5-8)' }, { value: 'major', label: 'Major' }, { value: 'minor', label: 'Minor' },
+  { value: 'sus2', label: 'Sus2' }, { value: 'sus4', label: 'Sus4' }, { value: 'maj7', label: 'Major 7' },
+  { value: 'min7', label: 'Minor 7' }, { value: 'dom7', label: 'Dominant 7' }, { value: 'min9', label: 'Minor 9' },
+  { value: 'add9', label: 'Add 9' }, { value: 'dim', label: 'Diminished' }, { value: 'aug', label: 'Augmented' },
+];
+export const DIST_SHAPES = [
+  { value: 'soft', label: 'Soft Clip' }, { value: 'hard', label: 'Hard Clip' }, { value: 'tube', label: 'Asymmetric Tube' },
+  { value: 'halfrect', label: 'Half-wave Rectify' }, { value: 'fullrect', label: 'Full-wave Rectify' },
+  { value: 'sinefold', label: 'Sine Fold' }, { value: 'wavefold', label: 'Wavefolder' }, { value: 'fuzz', label: 'Fuzz' },
+  { value: 'cubic', label: 'Cubic (gentle)' },
+];
+
+export default function characterDefs({ num, enm, bool, lfoParams }) {
+  const mix = (def) => num('mix', 'Mix', 0, 1, def, { step: 0.01, section: 'Output' });
+  const outDb = () => num('output', 'Output', -24, 24, 0, { step: 0.1, unit: 'dB', section: 'Output' });
+  const hz = (key, label, min, max, def, o = {}) => num(key, label, min, max, def, { step: 1, unit: 'Hz', curve: 'log', ...o });
+  const st = (key, label, def, o = {}) => num(key, label, -24, 24, def, { step: 1, unit: 'st', ...o });
+  const note = (key, label, def, o = {}) => num(key, label, 24, 96, def, { step: 1, ...o }); // MIDI note (60 = C4)
+
+  return {
+    // ------------------------------------------------------------------------- Pitch & Voice
+    pitchShift: {
+      name: 'Pitch Shifter', category: 'Pitch & Voice',
+      description: 'Pitch shifter / harmonizer: ±24 semitones plus cents, two extra harmony voices (in semitones, or in scale steps of a key that follow the sung note), optional formant preservation. Quality mode is smoother; Low adds less latency.',
+      params: [
+        st('semis', 'Pitch', 0, { section: 'Voice 1' }),
+        num('cents', 'Fine', -100, 100, 0, { step: 1, unit: 'ct', section: 'Voice 1' }),
+        num('level1', 'Level', 0, 1, 1, { step: 0.01, section: 'Voice 1' }),
+        enm('harmony', 'Intervals', [{ value: 'chromatic', label: 'Semitones' }, { value: 'scale', label: 'Scale steps' }], 'chromatic', { section: 'Harmony' }),
+        enm('key', 'Key', KEY_OPTIONS, 0, { section: 'Harmony' }),
+        enm('scale', 'Scale', SCALE_OPTIONS, 'major', { section: 'Harmony' }),
+        bool('v2On', 'On', false, { section: 'Voice 2' }),
+        st('v2Int', 'Interval', 4, { section: 'Voice 2' }),
+        num('v2Level', 'Level', 0, 1, 0.7, { step: 0.01, section: 'Voice 2' }),
+        num('v2Pan', 'Pan', -1, 1, -0.4, { step: 0.01, section: 'Voice 2' }),
+        bool('v3On', 'On', false, { section: 'Voice 3' }),
+        st('v3Int', 'Interval', 7, { section: 'Voice 3' }),
+        num('v3Level', 'Level', 0, 1, 0.6, { step: 0.01, section: 'Voice 3' }),
+        num('v3Pan', 'Pan', -1, 1, 0.4, { step: 0.01, section: 'Voice 3' }),
+        bool('formant', 'Preserve Formants', false, { section: 'Quality' }),
+        enm('latency', 'Latency Mode', [{ value: 'low', label: 'Low latency' }, { value: 'quality', label: 'Quality' }], 'quality', { section: 'Quality' }),
+        mix(1),
+      ],
+      presets: {
+        'Octave Down': { semis: -12, formant: false, mix: 1 },
+        'Octave Up': { semis: 12, mix: 1 },
+        'Sub Octave Blend': { semis: -12, level1: 0.8, mix: 0.45 },
+        'Fifth Up Blend': { semis: 7, mix: 0.4 },
+        'Detune Doubler': { semis: 0, cents: 9, mix: 0.5, latency: 'low' },
+        'Wide Doubler': { semis: 0, cents: -7, level1: 0.7, v2On: true, v2Int: 0, v2Level: 0.6, v2Pan: 0.9, mix: 0.5 },
+        'Chipmunk': { semis: 7, mix: 1 },
+        'Deep Voice (Formants Kept)': { semis: -5, formant: true, mix: 1 },
+        'Higher Voice (Formants Kept)': { semis: 4, formant: true, mix: 1 },
+        'Major Thirds Harmony': { semis: 0, level1: 0, harmony: 'scale', key: 0, scale: 'major', v2On: true, v2Int: 2, v2Level: 0.7, v2Pan: -0.4, mix: 0.45 },
+        'Thirds & Fifths Choir': { semis: 0, level1: 0, harmony: 'scale', key: 0, scale: 'major', v2On: true, v2Int: 2, v2Pan: -0.5, v3On: true, v3Int: 4, v3Pan: 0.5, formant: true, mix: 0.5 },
+        'Minor Harmony Below': { semis: 0, level1: 0, harmony: 'scale', key: 9, scale: 'minor', v2On: true, v2Int: -2, v2Level: 0.7, v2Pan: -0.3, v3On: true, v3Int: -4, v3Level: 0.5, v3Pan: 0.3, mix: 0.45 },
+        'Power Chord': { semis: 0, level1: 0, v2On: true, v2Int: 7, v2Level: 0.7, v2Pan: -0.3, v3On: true, v3Int: 12, v3Level: 0.5, v3Pan: 0.3, mix: 0.5 },
+        'Octaves Stack': { semis: -12, level1: 0.6, v2On: true, v2Int: 12, v2Level: 0.5, v2Pan: 0, mix: 0.5 },
+        'Two Octaves Down': { semis: -24, mix: 1 },
+      },
+    },
+
+    vocoder: {
+      name: 'Vocoder', category: 'Pitch & Voice',
+      description: 'Channel vocoder: this track (the voice) shapes a carrier — the built-in synth playing a note or chord, or another track as sidechain carrier. 8–32 bands, formant shift and unvoiced / noise blend for intelligible consonants.',
+      params: [
+        enm('carrier', 'Carrier', [{ value: 'internal', label: 'Built-in synth' }, { value: 'sidechain', label: 'Sidechain track' }], 'internal', { section: 'Carrier' }),
+        { key: 'sourceTrackId', label: 'Carrier Track', type: 'track', default: '', section: 'Carrier', description: 'Sidechain carrier: a synth / pad track whose sound is shaped by this one (Carrier = Sidechain track)' },
+        enm('wave', 'Wave', [{ value: 'saw', label: 'Saw' }, { value: 'pulse', label: 'Pulse' }, { value: 'supersaw', label: 'Supersaw' }, { value: 'noise', label: 'Noise' }], 'saw', { section: 'Carrier' }),
+        note('note', 'Note', 48, { section: 'Carrier' }),
+        enm('chord', 'Chord', CHORD_OPTIONS, 'minor', { section: 'Carrier' }),
+        num('detune', 'Detune', 0, 50, 10, { step: 0.1, unit: 'ct', section: 'Carrier', advanced: true }),
+        enm('bands', 'Bands', [8, 12, 16, 20, 24, 32].map((v) => ({ value: v, label: String(v) })), 16, { section: 'Bands' }),
+        hz('lo', 'Lowest Band', 40, 1000, 100, { section: 'Bands', advanced: true }),
+        hz('hi', 'Highest Band', 2000, 16000, 8000, { section: 'Bands', advanced: true }),
+        num('bw', 'Band Width', 0.5, 3, 1, { step: 0.01, section: 'Bands', advanced: true }),
+        num('formant', 'Formant Shift', -12, 12, 0, { step: 0.1, unit: 'st', section: 'Bands' }),
+        num('attack', 'Attack', 0.0005, 0.2, 0.004, { step: 0.0005, unit: 's', curve: 'log', section: 'Envelope' }),
+        num('release', 'Release', 0.005, 1, 0.06, { step: 0.001, unit: 's', curve: 'log', section: 'Envelope' }),
+        num('noise', 'Noise Blend', 0, 1, 0.05, { step: 0.01, section: 'Unvoiced' }),
+        num('sibilance', 'Unvoiced', 0, 1, 0.35, { step: 0.01, section: 'Unvoiced' }),
+        num('emphasis', 'High Boost', 0, 1, 0.4, { step: 0.01, section: 'Unvoiced', advanced: true }),
+        num('spread', 'Stereo', 0, 1, 0.5, { step: 0.01, section: 'Output' }),
+        outDb(),
+        mix(1),
+      ],
+      presets: {
+        'Classic Robot': { wave: 'saw', note: 45, chord: 'single', bands: 16, release: 0.05, sibilance: 0.35 },
+        'Minor Choir': { wave: 'supersaw', note: 48, chord: 'minor', bands: 20, detune: 14, release: 0.08, spread: 0.8 },
+        'Major Pad Voice': { wave: 'supersaw', note: 48, chord: 'maj7', bands: 24, detune: 12, release: 0.12, spread: 0.9 },
+        'Daft Talkbox': { wave: 'pulse', note: 43, chord: 'single', bands: 32, attack: 0.002, release: 0.03, emphasis: 0.6, sibilance: 0.4 },
+        'Lo-Fi 8 Band': { wave: 'saw', note: 50, chord: 'fifth', bands: 8, release: 0.07, sibilance: 0.15, spread: 0.3 },
+        'Whisper': { wave: 'noise', bands: 24, release: 0.04, sibilance: 0.6, noise: 1 },
+        'Deep Machine': { wave: 'saw', note: 36, chord: 'octave', bands: 16, formant: -4, release: 0.06 },
+        'Chipmunk Bot': { wave: 'pulse', note: 60, chord: 'single', bands: 16, formant: 5, release: 0.04 },
+        'Sidechain Synth Carrier': { carrier: 'sidechain', bands: 20, release: 0.06, sibilance: 0.4 },
+        'Ethereal Strings': { wave: 'supersaw', note: 55, chord: 'sus2', bands: 32, detune: 20, attack: 0.02, release: 0.25, spread: 1 },
+        'Hard Robot (Fast)': { wave: 'pulse', note: 40, chord: 'power', bands: 12, attack: 0.001, release: 0.015, sibilance: 0.2 },
+        'Dark Minor 9': { wave: 'saw', note: 41, chord: 'min9', bands: 24, formant: -2, release: 0.1, spread: 0.7 },
+      },
+    },
+
+    formantShift: {
+      name: 'Formant Shifter', category: 'Pitch & Voice',
+      description: 'Moves the formants (the vowel / body resonances) without changing the pitch — bigger or smaller voices and instruments. Optional pitch shift keeps the formants in place.',
+      params: [
+        num('shift', 'Formant', -12, 12, 0, { step: 0.1, unit: 'st', section: 'Formant' }),
+        st('pitch', 'Pitch', 0, { section: 'Formant' }),
+        outDb(),
+        mix(1),
+      ],
+      presets: {
+        'Bigger (−3)': { shift: -3 },
+        'Giant (−7)': { shift: -7 },
+        'Smaller (+3)': { shift: 3 },
+        'Tiny (+7)': { shift: 7 },
+        'Child Voice': { shift: 4, pitch: 5 },
+        'Deep Narrator': { shift: -4, pitch: -3 },
+        'Monster': { shift: -9, pitch: -7 },
+        'Helium': { shift: 9 },
+        'Gender Up': { shift: 3, pitch: 4 },
+        'Gender Down': { shift: -3, pitch: -4 },
+        'Subtle Thicken': { shift: -1.5, mix: 0.5 },
+        'Alien Duet': { shift: 6, pitch: -5, mix: 0.6 },
+      },
+    },
+
+    // ------------------------------------------------------------------------- Modulation
+    freqShift: {
+      name: 'Frequency Shifter', category: 'Modulation',
+      description: 'Hilbert-transform frequency shifter: moves every partial by the same number of Hz (up, down or both sides), for metallic, inharmonic tones or — with tiny shifts and feedback — endless barber-pole phasing.',
+      params: [
+        num('shift', 'Shift', -2000, 2000, 5, { step: 0.1, unit: 'Hz', section: 'Shift' }),
+        num('fine', 'Fine', -10, 10, 0, { step: 0.01, unit: 'Hz', section: 'Shift', advanced: true }),
+        enm('direction', 'Direction', [{ value: 'up', label: 'Up' }, { value: 'down', label: 'Down' }, { value: 'both', label: 'Both (L up, R down)' }], 'up', { section: 'Shift' }),
+        num('feedback', 'Feedback', 0, 0.95, 0, { step: 0.01, section: 'Shift' }),
+        num('lfoDepth', 'LFO Depth', 0, 1000, 0, { step: 0.1, unit: 'Hz', section: 'LFO' }),
+        ...lfoParams({ rate: 0.2, sync: false, division: '1/1' }),
+        mix(0.5),
+      ],
+      presets: {
+        'Barber-Pole Phaser': { shift: 0.3, direction: 'up', feedback: 0.5, mix: 0.5 },
+        'Falling Barber-Pole': { shift: -0.4, direction: 'up', feedback: 0.55, mix: 0.5 },
+        'Slow Stereo Swirl': { shift: 0.8, direction: 'both', feedback: 0.3, mix: 0.5 },
+        'Metallic Ring': { shift: 180, direction: 'up', mix: 1 },
+        'Robotic Detune': { shift: 12, direction: 'both', mix: 0.6 },
+        'Dalek': { shift: 30, direction: 'down', feedback: 0.2, mix: 1 },
+        'Shepard Spiral': { shift: 3, direction: 'up', feedback: 0.85, mix: 0.6 },
+        'Bell Drums': { shift: 230, direction: 'up', feedback: 0.35, mix: 0.6 },
+        'LFO Sweep': { shift: 0, direction: 'up', lfoDepth: 300, sync: true, division: '2/1', mix: 0.7 },
+        'Wobble Shift (1/4)': { shift: 50, direction: 'both', lfoDepth: 40, sync: true, division: '1/4', mix: 0.6 },
+        'Sub Shift Down': { shift: -60, direction: 'down', mix: 1 },
+        'Alien Radio': { shift: 700, direction: 'down', feedback: 0.5, lfoDepth: 120, rate: 0.35, mix: 0.7 },
+      },
+    },
+
+    ringMod: {
+      name: 'Ring Modulator', category: 'Modulation',
+      description: 'Multiplies the signal by a carrier (sine, square, triangle, saw) at a frequency or a note — bell-like, metallic or tremolo-to-AM tones. LFO sweeps the carrier pitch.',
+      params: [
+        enm('wave', 'Carrier', [{ value: 'sine', label: 'Sine' }, { value: 'square', label: 'Square' }, { value: 'triangle', label: 'Triangle' }, { value: 'sawtooth', label: 'Saw' }], 'sine', { section: 'Carrier' }),
+        enm('tracking', 'Tuning', [{ value: 'hz', label: 'Frequency' }, { value: 'note', label: 'Note' }], 'hz', { section: 'Carrier' }),
+        num('freq', 'Frequency', 0.5, 5000, 440, { step: 0.1, unit: 'Hz', curve: 'log', section: 'Carrier' }),
+        note('note', 'Note', 57, { section: 'Carrier' }),
+        num('fine', 'Fine', -100, 100, 0, { step: 1, unit: 'ct', section: 'Carrier', advanced: true }),
+        num('am', 'Ring ↔ AM', 0, 1, 0, { step: 0.01, section: 'Carrier' }),
+        num('spread', 'Stereo Detune', 0, 50, 0, { step: 0.1, unit: 'Hz', section: 'Carrier', advanced: true }),
+        num('lfoDepth', 'LFO Depth', 0, 24, 0, { step: 0.1, unit: 'st', section: 'LFO' }),
+        ...lfoParams({ rate: 0.5, sync: false, division: '1/2' }),
+        mix(0.5),
+      ],
+      presets: {
+        'Classic Ring 440': { wave: 'sine', tracking: 'hz', freq: 440, mix: 0.6 },
+        'Bell Tones': { wave: 'sine', tracking: 'note', note: 72, mix: 0.5 },
+        'Low Growl': { wave: 'sine', tracking: 'hz', freq: 45, mix: 0.7 },
+        'Square Robot': { wave: 'square', tracking: 'hz', freq: 120, mix: 0.6 },
+        'Tremolo AM': { wave: 'sine', tracking: 'hz', freq: 6, am: 1, mix: 1 },
+        'Helicopter': { wave: 'square', tracking: 'hz', freq: 14, am: 0.6, mix: 1 },
+        'Sci-Fi Sweep': { wave: 'sine', tracking: 'hz', freq: 300, lfoDepth: 12, sync: true, division: '1/1', mix: 0.6 },
+        'Wobbly Ring': { wave: 'triangle', tracking: 'hz', freq: 220, lfoDepth: 2, rate: 3, mix: 0.5 },
+        'Stereo Beating': { wave: 'sine', tracking: 'hz', freq: 600, spread: 3, mix: 0.5 },
+        'Fifth Above (Note)': { wave: 'sine', tracking: 'note', note: 64, am: 0.3, mix: 0.4 },
+        'Saw Grit': { wave: 'sawtooth', tracking: 'hz', freq: 90, am: 0.4, mix: 0.5 },
+        'Radio Static': { wave: 'square', tracking: 'hz', freq: 2200, lfoDepth: 5, rate: 7, mix: 0.4 },
+      },
+    },
+
+    // ------------------------------------------------------------------------- EQ & Filter
+    resonator: {
+      name: 'Resonator', category: 'EQ & Filter',
+      description: 'Tuned comb-filter resonator: rings at a note or chord with adjustable decay and brightness — turns drums, noise and textures into pitched, string-like tones.',
+      params: [
+        note('note', 'Note', 48, { section: 'Tuning' }),
+        enm('chord', 'Chord', CHORD_OPTIONS, 'minor', { section: 'Tuning' }),
+        num('tune', 'Fine', -100, 100, 0, { step: 1, unit: 'ct', section: 'Tuning' }),
+        num('decay', 'Decay', 0.02, 20, 1.2, { step: 0.01, unit: 's', curve: 'log', section: 'Resonance' }),
+        num('bright', 'Brightness', 0, 1, 0.6, { step: 0.01, section: 'Resonance' }),
+        enm('type', 'Type', [{ value: 'comb', label: 'Comb (all harmonics)' }, { value: 'odd', label: 'Odd harmonics' }], 'comb', { section: 'Resonance' }),
+        num('spread', 'Stereo', 0, 1, 0.5, { step: 0.01, section: 'Output' }),
+        outDb(),
+        mix(0.5),
+      ],
+      presets: {
+        'Minor Chord Drums': { note: 45, chord: 'minor', decay: 1.2, bright: 0.6, mix: 0.5 },
+        'Major 7 Shimmer': { note: 48, chord: 'maj7', decay: 2.5, bright: 0.75, spread: 0.8, mix: 0.45 },
+        'Single String': { note: 40, chord: 'single', decay: 3, bright: 0.5, mix: 0.6 },
+        'Octave Drone': { note: 36, chord: 'octave', decay: 6, bright: 0.4, mix: 0.5 },
+        'Power Ring': { note: 40, chord: 'power', decay: 1.5, bright: 0.65, mix: 0.5 },
+        'Short Metallic': { note: 67, chord: 'single', decay: 0.25, bright: 0.85, mix: 0.4 },
+        'Hollow Clarinet': { note: 50, chord: 'single', type: 'odd', decay: 1.5, bright: 0.45, mix: 0.6 },
+        'Sus4 Pad': { note: 50, chord: 'sus4', decay: 4, bright: 0.55, spread: 1, mix: 0.45 },
+        'Dark Min7 Haze': { note: 38, chord: 'min7', decay: 5, bright: 0.2, mix: 0.5 },
+        'Bright Pluck Kit': { note: 57, chord: 'fifth', decay: 0.6, bright: 0.9, mix: 0.4 },
+        'Diminished Horror': { note: 46, chord: 'dim', decay: 3, bright: 0.5, mix: 0.5 },
+        'Odd Bell Chord': { note: 55, chord: 'add9', type: 'odd', decay: 2, bright: 0.8, mix: 0.45 },
+      },
+    },
+
+    autoWah: {
+      name: 'Envelope Filter', category: 'EQ & Filter',
+      description: 'Auto-wah: an envelope follower opens a resonant filter as you play harder. Sensitivity, attack / release, sweep range (up or down) and low-, band- or high-pass.',
+      params: [
+        num('sens', 'Sensitivity', -24, 36, 6, { step: 0.1, unit: 'dB', section: 'Envelope' }),
+        num('attack', 'Attack', 0.0005, 0.2, 0.004, { step: 0.0005, unit: 's', curve: 'log', section: 'Envelope' }),
+        num('release', 'Release', 0.01, 2, 0.15, { step: 0.005, unit: 's', curve: 'log', section: 'Envelope' }),
+        enm('type', 'Filter', [{ value: 'lowpass', label: 'Low-pass' }, { value: 'bandpass', label: 'Band-pass' }, { value: 'highpass', label: 'High-pass' }], 'lowpass', { section: 'Filter' }),
+        hz('cutoff', 'Base Freq', 40, 5000, 250, { section: 'Filter' }),
+        num('range', 'Range', -6, 8, 4, { step: 0.01, unit: 'oct', section: 'Filter' }),
+        num('q', 'Resonance', 0.5, 20, 5, { step: 0.01, curve: 'log', section: 'Filter' }),
+        mix(1),
+      ],
+      presets: {
+        'Funk Wah': { type: 'bandpass', cutoff: 350, range: 3.5, q: 6, sens: 8, attack: 0.003, release: 0.12 },
+        'Quack Bass': { type: 'lowpass', cutoff: 180, range: 3.2, q: 8, sens: 10, attack: 0.002, release: 0.1 },
+        'Slow Bloom': { type: 'lowpass', cutoff: 200, range: 5, q: 3, sens: 6, attack: 0.08, release: 0.6 },
+        'Reverse Wah (Down)': { type: 'lowpass', cutoff: 3000, range: -4, q: 5, sens: 8, release: 0.2 },
+        'Synth Pluck Filter': { type: 'lowpass', cutoff: 300, range: 5.5, q: 4, sens: 4, attack: 0.001, release: 0.25 },
+        'Talking Guitar': { type: 'bandpass', cutoff: 500, range: 2.5, q: 9, sens: 12, attack: 0.005, release: 0.08 },
+        'Hi-Pass Snap': { type: 'highpass', cutoff: 80, range: 4, q: 3, sens: 6, attack: 0.001, release: 0.15 },
+        'Subtle Touch': { type: 'lowpass', cutoff: 800, range: 2, q: 1.5, sens: 3, release: 0.2, mix: 0.6 },
+        'Squelch': { type: 'lowpass', cutoff: 150, range: 6, q: 15, sens: 14, attack: 0.001, release: 0.07 },
+        'Drum Envelope Sweep': { type: 'bandpass', cutoff: 400, range: 3, q: 4, sens: 0, attack: 0.001, release: 0.3, mix: 0.7 },
+      },
+    },
+
+    // ------------------------------------------------------------------------- Distortion
+    distortionPlus: {
+      name: 'Distortion+', category: 'Distortion',
+      description: 'Extended distortion: rectifiers, sine and multi-stage wavefolding, asymmetric tube, fuzz; bias for even harmonics, downsampling aliasing, pre / post filters and 2x / 4x oversampling.',
+      params: [
+        enm('shape', 'Shape', DIST_SHAPES, 'tube', { section: 'Drive' }),
+        num('drive', 'Drive', 0, 48, 12, { step: 0.1, unit: 'dB', section: 'Drive' }),
+        num('bias', 'Asymmetry', -0.5, 0.5, 0, { step: 0.01, section: 'Drive' }),
+        num('stages', 'Fold Stages', 1, 6, 2, { step: 1, section: 'Drive', advanced: true }),
+        num('downsample', 'Downsample', 1, 32, 1, { step: 1, unit: 'x', section: 'Digital' }),
+        enm('oversample', 'Oversampling', [{ value: 'none', label: 'Off' }, { value: '2x', label: '2x' }, { value: '4x', label: '4x' }], '2x', { section: 'Digital' }),
+        hz('preHp', 'Pre Low Cut', 20, 2000, 20, { section: 'Filters' }),
+        hz('preLp', 'Pre High Cut', 1000, 20000, 20000, { section: 'Filters', advanced: true }),
+        hz('postHp', 'Post Low Cut', 20, 2000, 20, { section: 'Filters', advanced: true }),
+        hz('tone', 'Post High Cut', 1000, 20000, 12000, { section: 'Filters' }),
+        outDb(),
+        mix(1),
+      ],
+      presets: {
+        'Warm Tube': { shape: 'tube', drive: 10, bias: 0.1, tone: 9000, output: -2 },
+        'Crunch': { shape: 'soft', drive: 20, preHp: 120, tone: 7000, output: -4 },
+        'Fuzz Face': { shape: 'fuzz', drive: 30, bias: 0.15, preHp: 80, tone: 5000, output: -6 },
+        'Octave Fuzz (Full Rect)': { shape: 'fullrect', drive: 18, preHp: 150, tone: 6000, output: -4 },
+        'Half-Wave Buzz': { shape: 'halfrect', drive: 14, tone: 8000, postHp: 40, output: -2 },
+        'Sine Fold': { shape: 'sinefold', drive: 12, tone: 12000, output: -3 },
+        'West Coast Folder': { shape: 'wavefold', drive: 14, stages: 3, tone: 10000, output: -4 },
+        'Deep Folds': { shape: 'wavefold', drive: 24, stages: 5, tone: 8000, output: -6 },
+        'Bit Alias': { shape: 'hard', drive: 6, downsample: 8, oversample: 'none', tone: 16000, output: -2 },
+        'Lo-Fi Radio': { shape: 'soft', drive: 16, downsample: 3, preHp: 400, preLp: 4000, tone: 3500, output: -2 },
+        'Hard Clipper': { shape: 'hard', drive: 18, oversample: '4x', tone: 14000, output: -6 },
+        'Bass Grit (Parallel)': { shape: 'tube', drive: 24, preHp: 250, tone: 6000, mix: 0.4 },
+        'Gentle Glue': { shape: 'cubic', drive: 6, tone: 16000, output: -1, mix: 0.7 },
+        'Broken Speaker': { shape: 'fuzz', drive: 36, bias: 0.4, preHp: 300, preLp: 3000, tone: 2500, output: -8 },
+        'Aliased Fold': { shape: 'sinefold', drive: 20, downsample: 4, oversample: 'none', output: -4 },
+      },
+    },
+
+    // ------------------------------------------------------------------------- Stereo
+    msTool: {
+      name: 'Mid/Side', category: 'Stereo',
+      description: 'Mid/side toolbox: separate mid and side gains, solo either one, low-cut the sides, encode L/R to M/S or decode M/S back, swap channels and check mono compatibility.',
+      params: [
+        enm('mode', 'Mode', [{ value: 'lr', label: 'Stereo (L/R in & out)' }, { value: 'encode', label: 'Encode L/R → M/S' }, { value: 'decode', label: 'Decode M/S → L/R' }], 'lr', { section: 'Matrix' }),
+        num('mid', 'Mid', -36, 12, 0, { step: 0.1, unit: 'dB', section: 'Gain' }),
+        num('side', 'Side', -36, 12, 0, { step: 0.1, unit: 'dB', section: 'Gain' }),
+        enm('solo', 'Solo', [{ value: 'off', label: 'Off' }, { value: 'mid', label: 'Mid' }, { value: 'side', label: 'Side' }], 'off', { section: 'Gain' }),
+        hz('sideHp', 'Side Low Cut', 20, 1000, 20, { section: 'Gain' }),
+        bool('mono', 'Mono Check', false, { section: 'Monitor' }),
+        bool('swap', 'Swap L/R', false, { section: 'Monitor', advanced: true }),
+        outDb(),
+      ],
+      presets: {
+        'Wider (+3 dB Side)': { side: 3 },
+        'Narrower (−6 dB Side)': { side: -6 },
+        'Mono Bass < 150 Hz': { sideHp: 150 },
+        'Club-Safe Low End': { sideHp: 200, side: 1 },
+        'Focus Center': { mid: 2, side: -3 },
+        'Solo Mid': { solo: 'mid' },
+        'Solo Side': { solo: 'side' },
+        'Mono Check': { mono: true },
+        'Encode to M/S': { mode: 'encode' },
+        'Decode M/S': { mode: 'decode' },
+        'Swap Channels': { swap: true },
+        'Ambience Lift': { side: 4, sideHp: 300, mid: -1 },
+      },
+    },
+
+    haas: {
+      name: 'Haas Widener', category: 'Stereo',
+      description: 'Precedence-effect widener: delays one side by 1–40 ms. The mono guard keeps the lows un-delayed (no bass comb filtering in mono); balance re-centres the image.',
+      params: [
+        enm('side', 'Delay Side', [{ value: 'left', label: 'Left' }, { value: 'right', label: 'Right' }], 'right', { section: 'Haas' }),
+        num('delay', 'Delay', 1, 40, 12, { step: 0.1, unit: 'ms', curve: 'log', section: 'Haas' }),
+        num('level', 'Delayed Level', -12, 0, -1, { step: 0.1, unit: 'dB', section: 'Haas' }),
+        bool('guard', 'Mono Guard', true, { section: 'Mono' }),
+        hz('guardFreq', 'Guard Below', 60, 1500, 250, { section: 'Mono' }),
+        num('balance', 'Balance', -1, 1, 0, { step: 0.01, section: 'Output' }),
+        mix(1),
+      ],
+      presets: {
+        'Subtle Width (8 ms)': { delay: 8, level: -1.5, balance: 0.08 },
+        'Wide Guitar (15 ms)': { delay: 15, level: -1, balance: 0.12 },
+        'Huge (25 ms)': { delay: 25, level: -2, balance: 0.15 },
+        'Left Lean (12 ms)': { side: 'left', delay: 12, level: -1, balance: -0.1 },
+        'Vocal Double Feel': { delay: 18, level: -4, guardFreq: 400, mix: 0.6 },
+        'Synth Pad Spread': { delay: 22, level: -1.5, guardFreq: 300, balance: 0.12 },
+        'Mono-Safe Bass Widen': { delay: 10, level: -3, guardFreq: 600, mix: 0.7 },
+        'Short Room Width (3 ms)': { delay: 3, level: -2, guard: true, guardFreq: 1000 },
+        'Hard Haas (No Guard)': { delay: 20, level: 0, guard: false, balance: 0.15 },
+        'Gentle Shimmer Spread': { delay: 6, level: -3, guardFreq: 1500, mix: 0.5 },
+      },
+    },
+  };
 }

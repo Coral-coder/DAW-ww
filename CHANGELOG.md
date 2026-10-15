@@ -12,6 +12,11 @@ the desktop apps share one version.
   render, Setlist, Pocket), its functions show in autocomplete and the building blocks, and a project keeps a
   reference to the prebakes its code uses. Code calling undefined functions offers the saved prebake that defines
   them. Split import maps what the helpers produce (filter envelopes, delay sends, filters, gain, orbit mute / solo).
+- **Space, voice & character effects** (AudioWorklet DSP, rendered identically offline): Algorithmic Reverb (room /
+  hall / plate / chamber / spring, freeze), Shimmer Reverb, Tape, Multitap (tap editor) and Granular Delay; Pitch
+  Shifter / Harmonizer (scale-aware voices, formant preservation, latency-compensated), Vocoder (built-in carrier or
+  sidechain track), Formant Shifter; Frequency Shifter, Ring Modulator, Resonator, Envelope Filter, Distortion+,
+  Mid/Side tool and Haas Widener (correlation meter) — 10–16 presets each.
 
 ## [1.0.0] — 2026-10-14
 
