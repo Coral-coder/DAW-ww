@@ -28,6 +28,10 @@ the desktop apps share one version.
   track non-destructively. **Clip effects** (per-clip effect chains, rendered and latency-compensated with the mix),
   a **spectral editor** for audio clips (attenuate, remove, heal, isolate — undoable, original kept) and **action
   macros** (record or compose command sequences, give them a shortcut, run them from the palette, export as JSON).
+- **Dynamics & EQ effects**: Multiband Compressor (3 / 4 Linkwitz-Riley bands, upward + downward with an OTT-style
+  depth), Transient Shaper, De-esser, Expander / Gate (hysteresis, hold, look-ahead, filtered or external key),
+  Dynamic EQ, Linear-Phase EQ and Match EQ (capture a reference track, file or clip) — AudioWorklet / FIR DSP that
+  renders offline too, latency compensated, with transfer-curve, gain-reduction and response-curve cards and presets.
 
 ### Fixed
 - **Faust plugins load without the internet**: the Faust compiler now ships with the app (web, Pocket and desktop)

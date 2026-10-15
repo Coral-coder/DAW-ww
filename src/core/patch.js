@@ -429,7 +429,7 @@ export function findDrumTrack(project, excludeId) {
 }
 
 /** Effect types with a sidechain key input (param `sourceTrackId`: a track or bus id, '' = none / internal). */
-export const KEYED_FX = new Set(['ducker', 'compressor', 'gate', 'native', 'spectrum']); // native: plugins with a sidechain input bus; spectrum: compare trace
+export const KEYED_FX = new Set(['ducker', 'compressor', 'gate', 'native', 'spectrum', 'expander', 'matcheq']); // native: plugins with a sidechain input bus; spectrum: compare trace; matcheq: reference track for spectrum capture
 
 /** All sidechain key requests of the project: [{ ownerKind, ownerId, fxId, sourceTrackId }] (source: track or bus id). */
 export function keyRequests(project) {

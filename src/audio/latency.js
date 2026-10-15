@@ -25,6 +25,8 @@
  *   - WaveShaperNode oversample '2x' / '4x': linear-phase up/down-sampling kernels (frames at the base rate)
  *   - explicit DelayNode look-ahead (gate 4 ms, tape 12 ms base delay)
  */
+import { dynamicsLatencyFrames } from './fx/dynamics-latency.js';
+
 export const COMPRESSOR_LOOKAHEAD = 0.006;
 export const OVERSAMPLE_FRAMES = { none: 0, '2x': 129, '4x': 193 };
 
@@ -51,7 +53,8 @@ export function effectLatencyFrames(def, sampleRate = 44100) {
     case 'saturator': return OVERSAMPLE_FRAMES['2x'];
     // glue compressor + limiter (two pre-delays) + 4x-oversampled clipper (measured: one frame less)
     case 'mastering': return 2 * comp + OVERSAMPLE_FRAMES['4x'] - 1;
-    default: return 0;
+    default: return dynamicsLatencyFrames(def, sampleRate) ?? 0; // multiband / expander look-ahead, linear-phase FIR
+
   }
 }
 
