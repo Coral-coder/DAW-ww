@@ -373,7 +373,7 @@ export function createMixerView(app) {
         const fx = createEffect(type, params || {});
         store.transact(`Add ${EFFECT_DEFS?.[type]?.name || type}`, (p) => { getFxOwner(p)?.fx.push(fx); });
         openChain(kind, id, fx.id);
-      });
+      }, { app, ownerId: id }); // + FX chains / preset browser for this channel
     });
     list.appendChild(add);
     if (patched) {

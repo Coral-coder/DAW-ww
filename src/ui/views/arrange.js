@@ -21,6 +21,7 @@ import { openGrooveDialog } from '../groove-dialog.js';
 import { sourceTimeFn } from '../../audio/warp/markers.js';
 import { createArrangeRec } from './arrange-rec.js';
 import { splitClipAt } from '../../record/clips.js';
+import { DT_PRESET_REF, decodeRef, dropRef, isPresetFile, importPresetFiles } from '../preset-apply.js';
 
 // ----------------------------------------------------------------------------- constants
 const RULER_H = 22;
@@ -2495,7 +2496,7 @@ export function createArrangeView(app) {
   });
 
   // ------------------------------------------------------------------ drag & drop (browser panel + OS files)
-  const acceptsDrop = (dt) => { const ty = [...(dt?.types || [])]; return ty.includes(DT_SAMPLE) || ty.includes(DT_PRESET) || ty.includes('Files'); };
+  const acceptsDrop = (dt) => { const ty = [...(dt?.types || [])]; return ty.includes(DT_SAMPLE) || ty.includes(DT_PRESET) || ty.includes(DT_PRESET_REF) || ty.includes('Files'); };
   body.addEventListener('dragover', (e) => {
     if (!acceptsDrop(e.dataTransfer)) return;
     e.preventDefault();
@@ -2519,6 +2520,8 @@ export function createArrangeView(app) {
     const dt = e.dataTransfer;
     const sid = dt.getData(DT_SAMPLE);
     if (sid) { await actions.placeSample(sid, { trackId: track?.type === 'audio' ? track.id : undefined, start: beat }); return; }
+    // presets / FX chains / templates (src/ui/preset-apply.js): onto a track lane = apply to that track, else new track
+    if ([...(dt.types || [])].includes(DT_PRESET_REF)) { dropRef(app, decodeRef(dt), { trackId: track?.id }); return; }
     const pid = dt.getData(DT_PRESET);
     if (pid) { actions.addTrack(pid); return; }
     const files = [...(dt.files || [])];
@@ -2531,6 +2534,8 @@ export function createArrangeView(app) {
     const midi = files.filter((f) => /\.(mid|midi)$/i.test(f.name));
     const code = files.filter((f) => /\.(strudel|str|js|txt|tidal)$/i.test(f.name));
     const json = files.filter((f) => /\.(json|daw3)$/i.test(f.name));
+    const presetFiles = files.filter(isPresetFile);
+    if (presetFiles.length) { const r = await importPresetFiles(presetFiles); toast(r.message, { level: r.ok ? 'success' : 'error' }); }
     if (audio.length) {
       const added = await actions.importSamples(audio);
       if (added?.[0]) await actions.placeSample(added[0].id, { trackId: track?.type === 'audio' ? track.id : undefined, start: beat });
@@ -2539,7 +2544,7 @@ export function createArrangeView(app) {
     for (const f of code) await actions.importStrudel(f);
     for (const f of midi) await actions.importMidiFile(f);
     if (json.length) await actions.openProject(json[0]);
-    if (!audio.length && !code.length && !midi.length && !json.length) toast('Unsupported file type. Drop audio, .strudel/.js code, MIDI or project files.', { level: 'warn' });
+    if (!audio.length && !code.length && !midi.length && !json.length && !presetFiles.length) toast('Unsupported file type. Drop audio, .strudel/.js code, MIDI or project files.', { level: 'warn' });
   }
 
   // ------------------------------------------------------------------ keyboard

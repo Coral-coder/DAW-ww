@@ -12,6 +12,11 @@ the desktop apps share one version.
   render, Setlist, Pocket), its functions show in autocomplete and the building blocks, and a project keeps a
   reference to the prebakes its code uses. Code calling undefined functions offers the saved prebake that defines
   them. Split import maps what the helpers produce (filter envelopes, delay sends, filters, gain, orbit mute / solo).
+- **Presets**: 10–17 tagged factory presets for every effect, about 110 new instrument sounds (synth, FM, organ,
+  Strudel), and a preset browser with search, categories / tags, favorites, recently used and audition on select.
+  User presets, FX chains and track templates can be saved, dragged onto tracks and shared as .daw3preset / .daw3bank
+  files. Every device has A/B compare, eight snapshots with morphing, and randomize (subtle, wild or within preset
+  tags; right-click a knob to lock it). Pocket gets the same search and favorites for sounds and effect presets.
 
 ## [1.0.0] — 2026-10-14
 

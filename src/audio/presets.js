@@ -3,6 +3,7 @@
 import { getParamDefaults, sanitizeParams, INSTRUMENT_DEFS } from './defs.js';
 import { DRUM_KITS } from './kits.js';
 import { STRUDEL_PATCHES } from './strudel-patches.js';
+import { EXTRA_PRESETS, EXTRA_LEVEL_DB } from './presets-extra.js';
 
 // osc 2's def default is +7 ct (a detuned layer for the init patch); presets state their tuning explicitly
 const synth = (params) => ({ type: 'synth', params: { osc2Fine: 0, ...params } });
@@ -481,7 +482,9 @@ const LEVEL_DB = {
   'sub-bass': -1.6, '808-bass': -3, 'reese-bass': -4.8, 'acid-bass': -1.4, 'pluck-bass': 9.7, 'fm-bass': 3.2, 'wobble-bass': -2.4, 'moog-bass': 3.2, 'finger-bass': 13.4, 'saw-bass': -1.1, 'dub-bass': 3.4, 'upright-bass': 21.7, 'chip-bass': 5.3, 'synthwave-bass': 7, 'supersaw-lead': -1.2, 'square-lead': 6.5, 'saw-lead': -3.2, 'fm-bell-lead': 0.5, 'chip-lead': 3.5, 'acid-lead': -3.7, 'sync-lead': -5.4, 'whistle-lead': 1.8, 'guitar-lead': -4.8, 'brass-lead': 2.2, 'flute': 5.2, 'trance-lead': 0.8, 'hoover': -2.5, 'electric-piano': -3.6, 'fm-epiano': -4.1, 'grand-piano': -6.1, 'organ-drawbar': 0.6, 'organ-rock': -1.3, 'clav': -9.1, 'vibraphone': 1.9, 'marimba': 1, 'bell': -1.9, 'celesta': 1.7, 'harpsichord': -7.1, 'music-box': 2.9, 'lofi-keys': -4.5, 'warm-pad': 7.4, 'string-pad': 5.4, 'choir-pad': 2.4, 'ambient-pad': 5.9, 'dark-pad': -5.8, 'glass-pad': -0.7, 'supersaw-pad': 1, 'strings': 8.4, 'brass-section': -1.4, 'synthwave-pad': 2.2, 'pluck': 3.3, 'house-stab': 4.3, 'future-chords': 3.5, 'guitar-clean': -7.6, 'guitar-dist': -4, 'power-chord': -3.5, 'harp': -6, 'koto': -6.8, 'steel-drum': 3.5, 'kalimba': 1.1, 'arp-pluck': -3, 'arp-saw': 7, 'riser': 5.4, 'noise-sweep': 31, 'laser': 4.2, 'detuned-pad': -0.6, 'rave-stab': -7.2, 'tine-bass': 3.6, 'fm-brass': -6, 'juno-strings': -1.3,
 };
 for (const [id, m] of Object.entries(MIX)) if (PRESETS[id]) Object.assign(PRESETS[id].instrument.params, m);
-for (const [id, db] of Object.entries(LEVEL_DB)) {
+// more built-in presets (src/audio/presets-extra.js: their own mix trims; loudness trims below)
+for (const [id, pr] of Object.entries(EXTRA_PRESETS)) if (!PRESETS[id]) PRESETS[id] = pr;
+for (const [id, db] of [...Object.entries(LEVEL_DB), ...Object.entries(EXTRA_LEVEL_DB)]) {
   const pp = PRESETS[id]?.instrument.params;
   if (pp) pp.gain = Math.round(Math.min(2, Math.max(0.02, (pp.gain ?? 0.8) * 10 ** (db / 20))) * 1000) / 1000;
 }

@@ -14,6 +14,18 @@ export const PRESET_IDS = {
   arp: ['arp-pluck', 'arp-saw'],
   fx: ['riser', 'noise-sweep', 'laser'],
 };
+// The wider preset palette (src/audio/presets-extra.js): valid choices for genre tables, the assistant and setlist sound
+// swaps. Appended so the original lists — and every genre's existing picks — stay exactly as they were.
+const MORE_PRESET_IDS = {
+  bass: ['distorted-808', 'rubber-bass', 'organ-bass', 'fm-slap-bass', 'neuro-bass', 'garage-bass', 'techno-rumble', 'pulse-bass', 'jungle-sub', 'growl-bass', 'fm-sub-pluck', 'mellow-bass', 'cello-synth'],
+  lead: ['future-lead', 'lofi-sine-lead', 'gfunk-whine', 'pwm-lead', 'fm-lead', 'ocarina-lead', 'theremin', 'psy-lead', 'hardstyle-lead', 'chip-pulse-lead', 'soft-square-lead', 'sync-scream', 'sitar-pluck', 'french-horn', 'solo-violin'],
+  keys: ['organ-gospel', 'organ-jazz', 'organ-church', 'organ-bubble', 'organ-house', 'fm-dx-piano', 'fm-clav', 'wurli', 'toy-piano', 'dark-rhodes'],
+  pad: ['analog-pad', 'evolving-pad', 'shimmer-pad', 'fm-glass-pad', 'organ-pad', 'lofi-tape-pad', 'sweep-pad', 'choir-ooh', 'cinematic-swell', 'air-pad'],
+  chords: ['nylon-pluck', 'tropical-pluck', 'stab-90s', 'deep-chord', 'dub-techno-chord', 'banjo-pluck', 'synth-brass-stab', 'muted-guitar', 'jazz-guitar', 'twelve-string', 'funk-guitar'],
+  arp: ['fm-pluck', 'arp-square', 'arp-fm-glass', 'arp-gated', 'arp-sine-blip', 'arp-acid', 'arp-pwm', 'pizz-synth'],
+  fx: ['downlifter', 'impact-boom', 'fm-zap', 'scifi-drone', 'vinyl-noise', 'siren', 'fm-timpani'],
+};
+for (const [role, ids] of Object.entries(MORE_PRESET_IDS)) PRESET_IDS[role].push(...ids);
 export const ALL_PRESET_IDS = Object.values(PRESET_IDS).flat();
 
 export const ROLES = ['drums', 'bass', 'chords', 'pad', 'lead', 'arp', 'fx'];

@@ -10,6 +10,8 @@
 // Gains are loudness-matched to the fallback preset on a standard role phrase (gated, K-weighted-ish loudness of
 // offline renders in Chromium; supersaw measured as its worklet-free 3-saw stand-in) so mix.js level tables carry over.
 
+import { EXTRA_STRUDEL_PATCHES } from './strudel-patches-extra.js';
+
 /** Strudel sound names offered by the patch editor (superdough synths, noise, ZZFX, sample maps, GM soundfonts). */
 export const STRUDEL_SYNTHS = ['sawtooth', 'square', 'triangle', 'sine', 'supersaw', 'pulse', 'white', 'pink', 'brown', 'crackle',
   'zzfx', 'z_sine', 'z_sawtooth', 'z_triangle', 'z_square', 'z_tan', 'z_noise'];
@@ -188,6 +190,8 @@ export const STRUDEL_PATCHES = [
   P('sd-zzfx-zap', 'ZZFX Blip', 'fx', ['fx'], ['chiptune', 'experimental'],
     { s: 'z_square', attack: 0.001, decay: 0.15, sustain: 0, release: 0.05, ...echo(0.25, 0.4), gain: 0.949 }, 'laser'),
 ];
+
+STRUDEL_PATCHES.push(...EXTRA_STRUDEL_PATCHES); // more patches: src/audio/strudel-patches-extra.js
 
 export const STRUDEL_PATCH_MAP = Object.fromEntries(STRUDEL_PATCHES.map((p) => [p.id, p]));
 export const isStrudelPatch = (id) => Object.prototype.hasOwnProperty.call(STRUDEL_PATCH_MAP, id);

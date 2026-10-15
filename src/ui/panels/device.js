@@ -13,59 +13,25 @@ import { isPatchActive, patchFxOrder } from '../../core/patch.js';
 import { DRUM_MACHINES } from '../../audio/library/drum-machines.js';
 import { pluginInstrumentEditor, pluginEffectEditor, openPluginDialog } from '../plugin-device.js';
 import { FX_UI } from '../fx-ui/index.js';
+import { FACTORY_EFFECT_PRESETS, effectPresetMap, effectPresetEntries } from '../../audio/effect-presets.js';
+// preset browser, A/B, snapshots, randomize locks, user presets / chains / templates (src/ui/device-presets.js)
+import { fxPresetControls, instrumentPresetControls, installLockMenu, markLocks, isLocked, insDevKey, randomizeInstrumentWithin, saveFxChain, saveTrackTemplate } from '../device-presets.js';
+import { openPresetBrowser } from '../preset-browser.js';
+import { presetStore } from '../../core/preset-store.js';
+import { hasRef, decodeRef, dropRef, insertChain } from '../preset-apply.js';
 
 // ============================================================================ effect presets
-/** Presets of an effect type: the curated table below, else the def's own `presets` (src/audio/fx/defs). */
-export function effectPresets(type) { return EFFECT_PRESETS[type] || EFFECT_DEFS?.[type]?.presets || null; }
-
-/** Small curated starting points per effect type (merged over the defaults). */
-export const EFFECT_PRESETS = {
-  reverb: {
-    'Small Room': { decay: 0.7, size: 0.25, predelay: 0.005, damping: 0.6, mix: 0.18 },
-    'Plate': { decay: 1.6, size: 0.5, predelay: 0.015, damping: 0.3, mix: 0.25 },
-    'Hall': { decay: 3.2, size: 0.8, predelay: 0.025, damping: 0.45, mix: 0.3 },
-    'Huge': { decay: 8, size: 1, predelay: 0.04, damping: 0.35, mix: 0.45 },
-    'Send (100% wet)': { mix: 1 },
-  },
-  delay: {
-    'Slapback': { sync: false, time: 0.09, feedback: 0.1, mix: 0.25 },
-    '1/8 dotted ping-pong': { sync: true, division: '1/8D', feedback: 0.4, pingpong: true, mix: 0.3 },
-    '1/4 dub': { sync: true, division: '1/4', feedback: 0.62, highcut: 2800, lowcut: 250, mix: 0.35 },
-    '1/16 shimmer': { sync: true, division: '1/16', feedback: 0.5, pingpong: true, mix: 0.2 },
-  },
-  compressor: {
-    'Gentle glue': { threshold: -14, ratio: 2, attack: 0.03, release: 0.2, makeup: 2 },
-    'Punchy drums': { threshold: -20, ratio: 4, attack: 0.012, release: 0.08, makeup: 5 },
-    'Vocal leveler': { threshold: -22, ratio: 3.5, attack: 0.005, release: 0.15, makeup: 6 },
-    'Squash (parallel)': { threshold: -35, ratio: 12, attack: 0.002, release: 0.1, makeup: 12, mix: 0.4 },
-  },
-  limiter: { 'Safe': { gain: 0, threshold: -1, ceiling: -0.3 }, 'Loud': { gain: 6, threshold: -3, ceiling: -0.3 }, 'Club': { gain: 9, threshold: -4, release: 0.05, ceiling: -0.2 } },
-  distortion: { 'Warm': { type: 'soft', drive: 8, tone: 6000, mix: 0.6 }, 'Crunch': { type: 'tube', drive: 20, tone: 5000 }, 'Destroy': { type: 'fuzz', drive: 40, tone: 3500, output: -8 }, 'Fold': { type: 'foldback', drive: 24, mix: 0.7 } },
-  saturator: { 'Subtle': { type: 'warm', drive: 3 }, 'Warm': { type: 'warm', drive: 8 }, 'Hot tube': { type: 'tube', drive: 15, output: -4 } },
-  tape: { 'Subtle': { drive: 2, wow: 0.1, flutter: 0.05 }, 'Cassette': { drive: 6, tone: 6000, wow: 0.4, flutter: 0.3 }, 'Warped': { drive: 8, tone: 4500, wow: 0.9, wowRate: 0.4, flutter: 0.5 } },
-  bitcrusher: { '12-bit sampler': { bits: 12, downsample: 2, mix: 1 }, '8-bit': { bits: 8, downsample: 4, mix: 1 }, 'Destroyed': { bits: 4, downsample: 12, mix: 0.8 } },
-  chorus: { 'Subtle': { depth: 0.3, mix: 0.3 }, 'Wide': { depth: 0.6, mix: 0.5, spread: 1 }, 'Huge': { depth: 0.9, rate: 0.4, mix: 0.6 } },
-  flanger: { 'Jet': { depth: 0.8, feedback: 0.7, rate: 0.15 }, 'Metallic': { depth: 0.5, feedback: -0.85, rate: 0.5 } },
-  phaser: { 'Slow swirl': { rate: 0.2, depth: 2.5, stages: 6 }, 'Funky': { sync: true, division: '1/4', depth: 3, feedback: 0.6 } },
-  filter: {
-    'Wobble 1/8': { type: 'lowpass', cutoff: 600, resonance: 6, depth: 3, sync: true, division: '1/8' },
-    'Slow sweep': { type: 'lowpass', cutoff: 900, resonance: 4, depth: 2.5, sync: true, division: '2/1' },
-    'Telephone': { type: 'bandpass', cutoff: 1500, resonance: 2, depth: 0 },
-    'Hi-pass build': { type: 'highpass', cutoff: 300, resonance: 3, depth: 0 },
-  },
-  eq3: { 'Smile': { low: 4, mid: -3, high: 4 }, 'Warm': { low: 2, high: -3 }, 'Telephone': { low: -24, mid: 6, high: -24 }, 'Cut lows': { low: -18 } },
-  tremolo: { 'Gentle 1/8': { sync: true, division: '1/8', depth: 0.4 }, 'Chop 1/16': { sync: true, division: '1/16', depth: 1, shape: 'square' }, 'Stereo': { stereo: true, depth: 0.6 } },
-  autopan: { 'Subtle': { depth: 0.4, sync: true, division: '1/2' }, 'Wide 1/4': { depth: 1, sync: true, division: '1/4' } },
-  widener: { 'Subtle': { width: 1.2 }, 'Wide': { width: 1.6, monoBelow: 150 }, 'Huge': { width: 2, monoBelow: 200 }, 'Mono': { width: 0 } },
-  pump: { 'Classic 1/4': { division: '1/4', depth: 0.8, shape: 'classic' }, 'Gentle': { division: '1/4', depth: 0.4, shape: 'smooth' }, 'Hard 1/8': { division: '1/8', depth: 1, shape: 'hard' } },
-  gate: { 'Tight': { threshold: -30, release: 0.04 }, 'Chop': { threshold: -20, range: -80, release: 0.02 } },
-  utility: { 'Mono': { mono: true }, '-6 dB': { gain: -6 }, 'Phase flip': { invert: true } },
-};
+// Factory effect presets live in src/audio/effect-presets.js (tags + descriptions); effect families can carry their
+// own `presets` on the def (src/audio/fx/defs) — effectPresetEntries() merges both.
+/** Legacy flat view { type: { name: params } } of the factory table (kept for existing importers). */
+export const EFFECT_PRESETS = Object.fromEntries(Object.keys(FACTORY_EFFECT_PRESETS).map((t) => [t, effectPresetMap(t)]));
+/** Presets of an effect type as { name: params }: the curated table, else the def's own `presets`. */
+export function effectPresets(type) { return effectPresetMap(type); }
 
 const CAT_ICONS = { 'EQ & Filter': 'sliders', Dynamics: 'volume', Distortion: 'sparkles', 'Delay & Reverb': 'layers', Modulation: 'wave', Stereo: 'headphones', Utility: 'wand' };
 
 /** Open the grouped "add effect" menu at pos; calls onPick(type, params). Shared with the mixer. */
-export function showEffectMenu(pos, onPick) {
+export function showEffectMenu(pos, onPick, opts = {}) {
   const types = Object.keys(EFFECT_DEFS || {}).filter((t) => !EFFECT_DEFS[t].plugin);
   const cats = [...new Set([...(EFFECT_CATEGORIES || []), ...types.map((t) => EFFECT_DEFS[t].category || 'Other')])]
     .filter((c) => types.some((t) => (EFFECT_DEFS[t].category || 'Other') === c));
@@ -81,15 +47,27 @@ export function showEffectMenu(pos, onPick) {
     });
   }
   items.push({ label: 'Plugin effect (Faust / WAM)…', icon: 'plug', onClick: () => openPluginDialog({ tab: 'catalog', type: 'effect', onPickEffect: onPick }) });
-  const withPresets = types.filter((t) => effectPresets(t));
+  const withPresets = types.filter((t) => effectPresetEntries(t).length);
   if (withPresets.length) {
     items.push('-', {
       label: 'From preset', icon: 'sparkles',
       submenu: withPresets.map((t) => ({
         label: `${EFFECT_DEFS[t].name} `,
-        submenu: Object.entries(effectPresets(t)).map(([n, params]) => ({ label: n, onClick: () => onPick(t, { ...params }) })),
+        submenu: effectPresetEntries(t).map((e) => ({ label: e.name, onClick: () => { presetStore().touch(`fx:${t}:${e.name}`); onPick(t, { ...e.params }); } })),
       })),
     });
+  }
+  // FX chains + the searchable preset browser (callers that know the target channel pass opts.ownerId / app)
+  if (opts.app && opts.ownerId) {
+    const chains = presetStore().list('chain');
+    items.push(
+      { label: 'Browse presets & chains…', icon: 'search', onClick: () => openPresetBrowser(opts.app, { kind: 'effect-add', anchor: { clientX: pos.clientX, clientY: pos.clientY }, ownerId: opts.ownerId }) },
+      { label: 'FX chain', icon: 'layers', submenu: [
+        ...chains.map((c) => ({ label: `${c.name} (${c.fx.length})`, onClick: () => insertChain(opts.app, opts.ownerId, c, { key: `chain:${c.id}` }) })),
+        ...(chains.length ? ['-'] : []),
+        { label: 'Save this chain as FX chain…', icon: 'save', onClick: () => saveFxChain(opts.app, opts.ownerId) },
+      ] },
+    );
   }
   const menu = contextMenu({ clientX: pos.clientX, clientY: pos.clientY, preventDefault() {} }, items);
   for (const it of menu.querySelectorAll('.ctx-item')) {
@@ -100,12 +78,9 @@ export function showEffectMenu(pos, onPick) {
 }
 
 // ============================================================================ helpers
-const USER_PRESET_KEY = 'daw3-user-presets';
+/** Instrument user presets { id: entry } (localStorage 'daw3-user-presets', managed by src/core/preset-store.js). */
 function loadUserPresets() {
-  try { return JSON.parse(localStorage.getItem(USER_PRESET_KEY) || '{}') || {}; } catch { return {}; }
-}
-function saveUserPresets(all) {
-  try { localStorage.setItem(USER_PRESET_KEY, JSON.stringify(all)); return true; } catch { return false; }
+  return Object.fromEntries(presetStore().list('instrument').map(({ id, ...e }) => [id, e]));
 }
 
 const instDefs = (type) => INSTRUMENT_DEFS?.[type] || null;
@@ -152,6 +127,7 @@ const DRAWBAR_COLORS = ['#8b4a2b', '#8b4a2b', '#f2f2f2', '#f2f2f2', '#222', '#f2
 // ============================================================================ panel
 export function createDevicePanel(app) {
   const { store, ui, engine, actions } = app;
+  installLockMenu(app); // right-click a knob: "Lock from randomize"
 
   let resolveFn = null;
   import('../../audio/instruments.js').then((m) => { resolveFn = m.resolveInstrument || null; lastSig = ''; render(); }).catch(() => {});
@@ -311,6 +287,7 @@ export function createDevicePanel(app) {
     chain.appendChild(addEffectCard(tgt));
     chain.scrollLeft = scroll;
     for (const c of cards) c.update?.(ctx);
+    markLocks(chain);
     updateGrLoop();
   }
 
@@ -401,7 +378,7 @@ export function createDevicePanel(app) {
       parts.push(back);
     }
 
-    let presetSel = null, modDot = null;
+    let presetSel = null, modDot = null, presetTools = null;
     if (ins && instDefs(ins.type)?.plugin) {
       parts.push(
         button('Load plugin…', () => openPluginDialog({ tab: 'catalog', type: 'instrument', trackId: tgt.id }), { icon: 'plug', cls: 'small', title: 'Choose a SoundFont, Faust or Web Audio Module instrument for this track' }),
@@ -430,11 +407,13 @@ export function createDevicePanel(app) {
       };
       modDot = h('button.dv-mod', { type: 'button', title: 'Edited — your changes override the preset. Click to revert to the preset.' }, '● edited');
       modDot.addEventListener('click', () => editIns(tgt, 'Revert to preset', (i) => { delete i.edited; i.params = i.type === 'drums' ? { kit: i.params.kit || i.preset, ...(i.params.machine ? { machine: i.params.machine } : {}) } : i.type === 'drumsampler' ? { machine: i.params.machine } : i.type === 'sampler' && i.params.sampleId ? { sampleId: i.params.sampleId } : {}; }));
+      presetTools = instrumentPresetControls(app, { trackId: tgt.id });
       parts.push(
         h('div.dv-preset-group',
           iconButton('chevronRight', () => step(-1), 'Previous preset', 'dv-prev'),
           presetSel,
           iconButton('chevronRight', () => step(1), 'Next preset', 'dv-next')),
+        ...presetTools.els,
         modDot,
         prio(iconButton('dice', (e) => randomize(tgt, ins, e.shiftKey ? 0.9 : 0.4), 'Randomize — mutate the main parameters within musical ranges (Shift-click: wilder). Ctrl+Z undoes.'), 5),
         prio(iconButton('save', () => saveUserPreset(tgt), 'Save these settings as a user preset (stored in this browser)'), 4),
@@ -457,7 +436,7 @@ export function createDevicePanel(app) {
     if (tgt.kind === 'track' && isPatchActive(tgt.track)) {
       parts.push(button('Plugboard', () => { actions.selectTrack(tgt.id); app.showView('patch'); }, { icon: 'plug', cls: 'small dv-plugboard', title: 'This channel is routed on the Plugboard — open it (7)' }));
     }
-    parts.push(button('Effect', (e) => showEffectMenu(e, (type, params) => addEffect(tgt, type, params)), { icon: 'plus', cls: 'small', title: 'Add an insert effect to the end of the chain' }));
+    parts.push(button('Effect', (e) => showEffectMenu(e, (type, params) => addEffect(tgt, type, params), { app, ownerId: tgt.id }), { icon: 'plus', cls: 'small', title: 'Add an insert effect to the end of the chain' }));
     const el = h('div.dv-header-row', parts);
     priorityOverflow(el, { title: 'More device actions (hidden to fit)' }); // priority+ instead of a scrollbar
     return {
@@ -465,6 +444,7 @@ export function createDevicePanel(app) {
       update(c) {
         if (!c.ins || !presetSel) return;
         const tr = c.tgt.track;
+        presetTools?.update();
         const edited = instrumentEdited(tr.instrument); // only after the user's own edits (not generator setup)
         modDot.classList.toggle('hidden', !edited || (!tr.instrument.preset && !lastUserPreset.get(tr.id)));
         nameEl.textContent = c.tgt.name;
@@ -499,6 +479,7 @@ export function createDevicePanel(app) {
     if (!v) { editTarget(tgt, 'Init instrument', (t) => { t.instrument = { type: ins.type, preset: null, params: {} }; }); return; }
     const pr = PRESETS[v];
     if (!pr) return;
+    presetStore().touch(`inst:${v}`);
     editTarget(tgt, `Preset: ${pr.name}`, (t) => {
       const keepSample = t.instrument?.type === 'sampler' && pr.instrument.type === 'sampler' ? t.instrument.params?.sampleId : null;
       t.instrument = { type: pr.instrument.type, preset: v, params: keepSample ? { sampleId: keepSample } : {} };
@@ -518,14 +499,18 @@ export function createDevicePanel(app) {
       { label: 'Revert to preset (clear my edits)', disabled: !ins.preset, onClick: () => editIns(tgt, 'Revert to preset', (i) => { delete i.edited; i.params = i.type === 'drums' ? { kit: i.params.kit || i.preset, ...(i.params.machine ? { machine: i.params.machine } : {}) } : i.type === 'drumsampler' ? { machine: i.params.machine } : i.type === 'sampler' && i.params.sampleId ? { sampleId: i.params.sampleId } : {}; }) },
       { label: 'Randomize (subtle)', icon: 'dice', onClick: () => randomize(tgt, ins, 0.25) },
       { label: 'Randomize (wild)', icon: 'dice', onClick: () => randomize(tgt, ins, 0.9) },
+      { label: 'Randomize within category', icon: 'dice', disabled: !PRESETS[ins.preset]?.category, onClick: () => randomizeInstrumentWithin(app, tgt.id, PRESETS[ins.preset]?.category) },
       '-',
       { label: 'Load plugin instrument…', icon: 'plug', onClick: () => openPluginDialog({ tab: 'catalog', type: 'instrument', trackId: tgt.id }) },
       { label: 'Swap instrument', icon: 'wave', submenu: types.filter(([, d]) => !d.plugin).map(([type, d]) => ({ label: d.name, disabled: type === ins.type, onClick: () => editTarget(tgt, `Instrument: ${d.name}`, (t) => { t.instrument = type === 'drums' ? { type, preset: '808', params: { kit: '808' } } : { type, preset: null, params: {} }; }) })) },
       '-',
       { label: 'Save as user preset…', icon: 'save', onClick: () => saveUserPreset(tgt) },
+      { label: 'Browse presets…', icon: 'search', onClick: (e) => openPresetBrowser(app, { kind: 'instrument', anchor: headerHost, trackId: tgt.id }) },
+      { label: 'Save FX chain…', icon: 'layers', disabled: !tgt.fx.length, onClick: () => saveFxChain(app, tgt.id) },
+      { label: 'Save track as template…', icon: 'save', onClick: () => saveTrackTemplate(app, tgt.id) },
       { label: 'Delete user preset', icon: 'trash', disabled: !user.length, submenu: user.length ? user.map(([id, u]) => ({ label: u.name, onClick: async () => {
         if (!(await confirmDialog('Delete user preset', `Delete “${u.name}”? This cannot be undone.`))) return;
-        const all = loadUserPresets(); delete all[id]; saveUserPresets(all); render(true);
+        presetStore().remove('instrument', id); render(true);
       } })) : undefined },
       { label: 'Copy settings as JSON', icon: 'copy', onClick: async () => {
         const json = JSON.stringify({ type: ins.type, params: resolveInstrumentParams(store.get().tracks.find((x) => x.id === tgt.id)?.instrument || ins) }, null, 1);
@@ -541,11 +526,9 @@ export function createDevicePanel(app) {
     const base = ins.type === 'drums' ? DRUM_KITS[ins.preset]?.name : PRESETS[ins.preset]?.name;
     const name = await promptText('Save user preset', `${base || t.name} (mine)`);
     if (!name) return;
-    const all = loadUserPresets();
-    const id = 'u' + Date.now().toString(36);
-    // store preset reference + overrides so the preset stays faithful, and a type for filtering
-    all[id] = { name, type: ins.type, preset: ins.preset || null, params: deepClone(ins.params || {}), created: new Date().toISOString() };
-    if (!saveUserPresets(all)) { app.toast?.('Could not save preset (browser storage unavailable)', { level: 'error' }); return; }
+    // store preset reference + overrides so the preset stays faithful, and a type for filtering (src/core/preset-store.js)
+    const id = presetStore().save('instrument', { name, type: ins.type, preset: ins.preset || null, params: deepClone(ins.params || {}) });
+    if (!id) { app.toast?.('Could not save preset (browser storage unavailable)', { level: 'error' }); return; }
     lastUserPreset.set(t.id, id);
     app.toast?.(`Saved user preset “${name}”`, { level: 'success' });
     render(true);
@@ -557,7 +540,7 @@ export function createDevicePanel(app) {
     const out = {};
     const rnd = Math.random;
     for (const d of defs) {
-      if (RANDOM_SKIP.has(d.key) || (d.advanced && !RANDOM_RANGES[d.key])) continue;
+      if (RANDOM_SKIP.has(d.key) || (d.advanced && !RANDOM_RANGES[d.key]) || isLocked(insDevKey(tgt.id), d.key)) continue;
       if (d.key === 'glide' && !cur.mono) continue;
       if (/^lfo\dDepth$/.test(d.key) && (cur[d.key.replace('Depth', 'Target')] || 'none') === 'none') continue;
       if (d.type === 'number') {
@@ -1218,14 +1201,9 @@ export function createDevicePanel(app) {
     if (index === 0 || patched) left.disabled = true;
     if (index === tgt.fx.length - 1 || patched) right.disabled = true;
     if (patched) { left.title = right.title = 'Order is set by the Plugboard cables'; }
-    const presets = effectPresets(fx.type);
-    const presetBtn = presets ? h('button.dv-fx-preset', { type: 'button', title: 'Effect presets' }, 'Presets ▾') : null;
-    presetBtn?.addEventListener('click', (e) => contextMenu(e, [
-      { header: `${name} presets` },
-      ...Object.entries(presets).map(([n, params]) => ({ label: n, onClick: () => editTarget(tgt, `${name}: ${n}`, (o) => { const f = o.fx.find((x) => x.id === fx.id); if (f) f.params = { ...params }; }) })),
-      '-',
-      { label: 'Reset to defaults', icon: 'undo', onClick: () => editTarget(tgt, `${name}: reset`, (o) => { const f = o.fx.find((x) => x.id === fx.id); if (f) f.params = EFFECT_DEFS[f.type]?.plugin ? { name: f.params?.name, code: f.params?.code, url: f.params?.url } : {}; }) },
-    ]));
+    // presets ‹ › · A/B · snapshots / randomize / save (src/ui/device-presets.js)
+    const fxp = def && !def.plugin ? fxPresetControls(app, { ownerId: tgt.id, fx, name }) : null;
+    const presetBtn = fxp?.el || null;
     const gr = ['compressor', 'limiter', 'gate'].includes(fx.type) ? h('div.dv-gr', { title: 'Gain reduction' }, h('div.dv-gr-fill'), h('span.dv-gr-val')) : null;
     const remove = iconButton('x', () => editTarget(tgt, `Remove ${name}`, (o) => { o.fx = o.fx.filter((x) => x.id !== fx.id); }), 'Remove this effect', 'dv-remove');
     const shell = cardShell({ key: fx.id, fxId: fx.id, title: name, color: null, cls: `dv-fx${fx.enabled ? '' : '.bypassed'}`, help: def?.description || name, headExtras: [gr, h('div.spacer'), presetBtn, left, right, remove] });
@@ -1302,14 +1280,15 @@ export function createDevicePanel(app) {
         if (f) pb.update(resolveEffectParams ? resolveEffectParams(f) : f.params || {});
         if (f && plugUpd) plugUpd(f);
         if (f) customUi?.update?.(f);
+        fxp?.update();
       },
     };
   }
 
   function addEffectCard(tgt) {
     const b = h('button.dv-add-fx', { type: 'button', title: 'Add an insert effect (EQ, compressor, reverb, delay, distortion…)' }, icon('plus', 18), h('span', 'Add effect'));
-    b.addEventListener('click', (e) => showEffectMenu(e, (type, params) => addEffect(tgt, type, params)));
-    b.addEventListener('dragover', (e) => { const t = [...(e.dataTransfer?.types || [])]; if (t.includes('application/x-daw3-fx') || t.includes('application/x-daw3-effect')) { e.preventDefault(); b.classList.add('drop'); } });
+    b.addEventListener('click', (e) => showEffectMenu(e, (type, params) => addEffect(tgt, type, params), { app, ownerId: tgt.id }));
+    b.addEventListener('dragover', (e) => { const t = [...(e.dataTransfer?.types || [])]; if (t.includes('application/x-daw3-fx') || t.includes('application/x-daw3-effect') || hasRef(e.dataTransfer)) { e.preventDefault(); b.classList.add('drop'); } });
     b.addEventListener('dragleave', () => b.classList.remove('drop'));
     b.addEventListener('drop', (e) => {
       b.classList.remove('drop');
@@ -1318,6 +1297,7 @@ export function createDevicePanel(app) {
       const type = e.dataTransfer.getData('application/x-daw3-effect');
       if (id) moveEffect(tgt, id, tgt.fx.length);
       else if (type && EFFECT_DEFS[type]) addEffect(tgt, type);
+      else if (hasRef(e.dataTransfer)) dropRef(app, decodeRef(e.dataTransfer), tgt.kind === 'track' ? { trackId: tgt.id, ownerId: tgt.id } : { ownerId: tgt.id });
     });
     const quick = h('div.dv-quick');
     for (const t of ['eq8', 'compressor', 'reverb', 'delay', 'saturator']) {

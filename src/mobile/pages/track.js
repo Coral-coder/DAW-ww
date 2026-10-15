@@ -3,6 +3,8 @@ import { h, icon } from '../../ui/dom.js';
 import { INSTRUMENT_DEFS } from '../../audio/defs.js';
 import { resolveInstrumentDef } from '../../audio/presets.js';
 import { EFFECT_DEFS, EFFECT_CATEGORIES } from '../../audio/effect-defs.js';
+import { presetSheet, fxPresetSheet } from '../preset-sheets.js';
+import { effectPresetEntries } from '../../audio/effect-presets.js';
 import { patternsForTrack, createEffect, DRUM_PADS } from '../../core/model.js';
 import { openPadSheet } from '../pad-sheet.js';
 import { editedPads } from '../pad-logic.js';
@@ -90,7 +92,7 @@ export function createTrackPage(app, nav) {
     const addFx = bigButton('Add effect', () => actionSheet('Add effect', EFFECT_CATEGORIES.map((c) => {
       const list = Object.entries(EFFECT_DEFS).filter(([, d]) => d.category === c && !d.plugin);
       return list.length ? { label: c, submenu: list.map(([type, d]) => ({ label: d.name, onClick: () => { const fx = createEffect(type, {}); open.add(fx.id); actions.updateTrack(t.id, (tt) => { tt.fx.push(fx); }, `Add ${d.name}`); } })) } : null;
-    }).filter(Boolean)), { ic: 'plus', cls: 'ghost' });
+    }).filter(Boolean).concat(['-', { label: 'From preset or FX chain…', icon: 'search', onClick: () => presetSheet(app, { kind: 'effect-add', trackId: t.id, onAdded: (fx) => { if (fx) { open.add(fx.id); render(); } } }) }])), { ic: 'plus', cls: 'ghost' });
     body.appendChild(h('div.pk-card', h('div.pk-label', (t.fx || []).length > 1 ? 'Effects (drag ≡ to reorder)' : 'Effects'), fxWrap, addFx));
 
     // automation lanes of this track
@@ -140,6 +142,7 @@ export function createTrackPage(app, nav) {
     const headBtn = h('button.pk-fx-head', { type: 'button' }, h('span.pk-fx-name', def?.name || f.type), h('span.pk-fx-cat', def?.category || ''), icon(isOpen ? 'chevronDown' : 'chevronRight', 18));
     headBtn.addEventListener('click', () => { haptic(5); if (open.has(f.id)) open.delete(f.id); else open.add(f.id); render(); });
     onLongPress(headBtn, () => actionSheet(def?.name || f.type, [
+      { label: 'Presets…', icon: 'search', disabled: !effectPresetEntries(f.type).length, onClick: () => fxPresetSheet(app, t.id, f.id) },
       { label: 'Move up', disabled: i === 0, onClick: () => actions.updateTrack(t.id, (tt) => { const k = tt.fx.findIndex((x) => x.id === f.id); if (k > 0) [tt.fx[k - 1], tt.fx[k]] = [tt.fx[k], tt.fx[k - 1]]; }, 'Reorder effects') },
       { label: 'Move down', disabled: i === t.fx.length - 1, onClick: () => actions.updateTrack(t.id, (tt) => { const k = tt.fx.findIndex((x) => x.id === f.id); if (k >= 0 && k < tt.fx.length - 1) [tt.fx[k + 1], tt.fx[k]] = [tt.fx[k], tt.fx[k + 1]]; }, 'Reorder effects') },
       { label: 'Remove effect', icon: 'trash', onClick: () => actions.updateTrack(t.id, (tt) => { tt.fx = tt.fx.filter((x) => x.id !== f.id); }, `Remove ${def?.name || f.type}`) },
@@ -150,6 +153,7 @@ export function createTrackPage(app, nav) {
       const defs = def.params.filter((d) => TILE_TYPES.has(d.type));
       const main = defs.filter((d) => !d.advanced);
       card.appendChild(tileGrid((showAll ? defs : main).map((d) => fxTarget(app, t.id, f.id, d))));
+      if (effectPresetEntries(f.type).length) card.appendChild(bigButton('Presets', () => fxPresetSheet(app, t.id, f.id), { ic: 'search', cls: 'ghost' }));
     }
     return card;
   }
