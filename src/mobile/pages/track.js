@@ -2,7 +2,8 @@
 import { h, icon } from '../../ui/dom.js';
 import { INSTRUMENT_DEFS } from '../../audio/defs.js';
 import { resolveInstrumentDef } from '../../audio/presets.js';
-import { EFFECT_DEFS, EFFECT_CATEGORIES } from '../../audio/effect-defs.js';
+import { EFFECT_DEFS, EFFECT_CATEGORIES, resolveEffectParams } from '../../audio/effect-defs.js';
+import { mountAnalyzer, SCOPE_VIEWS } from '../../ui/scopes/index.js';
 import { patternsForTrack, createEffect, DRUM_PADS } from '../../core/model.js';
 import { openPadSheet } from '../pad-sheet.js';
 import { editedPads } from '../pad-logic.js';
@@ -146,6 +147,15 @@ export function createTrackPage(app, nav) {
     ]));
     const grip = h('span.pk-grip', { 'aria-label': 'Drag to reorder', 'data-noswipe': '' }, '≡');
     const card = h(`div.pk-fx${f.enabled === false ? '.off' : ''}`, h('div.pk-fx-top', grip, headBtn, onBtn));
+    if (isOpen && def?.category === 'Analysis' && SCOPE_VIEWS[f.type]) {
+      // analyzer display (same drawing code as the desktop card, compact); stops itself when the card is rebuilt
+      const v = mountAnalyzer(f.type, {
+        compact: true,
+        getProbe: () => engine.getFxProbe?.(f.id) ?? null,
+        getParams: () => resolveEffectParams(track()?.fx?.find((x) => x.id === f.id) || f),
+      });
+      card.appendChild(h(`div.pk-an${f.type === 'spectrogram' || f.type === 'tuner' ? '.an-tall' : ''}`, { 'data-noswipe': '' }, v.el));
+    }
     if (isOpen && def) {
       const defs = def.params.filter((d) => TILE_TYPES.has(d.type));
       const main = defs.filter((d) => !d.advanced);

@@ -15,6 +15,7 @@ import {
 } from '../../core/mixer-model.js';
 import { createMixerTools, SOLO_LABELS } from '../mixer-tools.js';
 import { createLoudnessPanel } from '../panels/loudness.js';
+import { createScopesPanel } from '../panels/scopes.js';
 
 // ---------------------------------------------------------------- helpers
 const VOL_MAX = 1.5;
@@ -79,7 +80,7 @@ const BUS_TEMPLATES = [
 
 const LS_KEY = 'daw3-mixer';
 function loadPrefs() {
-  const d = { narrow: false, showBuses: true, showInput: true, loudness: false, exclusiveSolo: false };
+  const d = { narrow: false, showBuses: true, showInput: true, loudness: false, scopes: false, exclusiveSolo: false };
   try { return { ...d, ...JSON.parse(localStorage.getItem(LS_KEY) || '{}') }; } catch { return d; }
 }
 
@@ -118,19 +119,24 @@ export function createMixerView(app) {
   inputToggle.addEventListener('click', () => { prefs.showInput = !prefs.showInput; savePrefs(); render(true); });
   const loudBtn = h('button.toggle', { type: 'button', title: 'Loudness meter: LUFS momentary / short-term / integrated, LRA, true peak, correlation, vector scope, spectrum' }, icon('gauge', 13), ' Loudness');
   loudBtn.addEventListener('click', () => { prefs.loudness = !prefs.loudness; savePrefs(); syncLoudness(); });
+  const scopesBtn = h('button.toggle', { type: 'button', title: 'Scopes: oscilloscope, vectorscope, spectrum, spectrogram and tuner on the master or any track — no effect needed' }, icon('wave', 13), ' Scopes');
+  scopesBtn.addEventListener('click', () => { prefs.scopes = !prefs.scopes; savePrefs(); syncLoudness(); });
   const toolbar = h('div.view-toolbar.mx-toolbar',
     h('span.mx-title', icon('mixer', 15), 'Mixer'),
     h('div.sep'), addTrackBtn, addBusBtn, h('div.sep'), assistBtn, structBtn, snapBtn, h('div.sep'),
     h('label.mx-solo-wrap', { title: soloSel.title }, h('span', 'Solo'), soloSel), h('div.sep'), busToggle, inputToggle, narrowToggle,
-    h('div.spacer'), loudBtn, resetPeaksBtn);
+    h('div.spacer'), scopesBtn, loudBtn, resetPeaksBtn);
 
   const scroller = h('div.mx-scroll');
   const masterHost = h('div.mx-master-host');
   const loudness = createLoudnessPanel(app, { onClose: () => { prefs.loudness = false; savePrefs(); syncLoudness(); } });
-  const body = h('div.mx-body', scroller, loudness.el, masterHost);
+  const scopes = createScopesPanel(app, { onClose: () => { prefs.scopes = false; savePrefs(); syncLoudness(); } });
+  const body = h('div.mx-body', scroller, scopes.el, loudness.el, masterHost);
   function syncLoudness() {
     loudBtn.classList.toggle('on', !!prefs.loudness);
     if (prefs.loudness && visible) loudness.show(); else loudness.hide();
+    scopesBtn.classList.toggle('on', !!prefs.scopes);
+    if (prefs.scopes && visible) scopes.show(); else scopes.hide();
   }
   const el = h('div.mixer-view', toolbar, body);
   el.addEventListener('pointerdown', (e) => { groupBypass = e.ctrlKey || e.metaKey; }, true);
@@ -1050,7 +1056,7 @@ export function createMixerView(app) {
   return {
     el,
     show() { visible = true; render(dirty); startLoop(); syncLoudness(); },
-    hide() { visible = false; stopLoop(); loudness.hide(); },
+    hide() { visible = false; stopLoop(); loudness.hide(); scopes.hide(); },
     assist, // exposed for automation/tests
   };
 }
