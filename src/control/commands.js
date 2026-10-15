@@ -4,6 +4,7 @@
 import { CommandRegistry, ShortcutMap } from './shortcuts.js';
 import { VIEWS } from '../ui/app.js';
 import { viewCommandEntries } from './view-commands.js';
+import { toggleSetiScope, loadSetiPrefs, saveSetiPrefs } from '../ui/visualizers/seti/launch.js';
 
 const STORE_KEY = 'daw3-shortcuts';
 export const isMacPlatform = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
@@ -62,6 +63,8 @@ export function buildCommands(app) {
     { id: 'panel.browser', label: 'Toggle browser panel', category: 'Views', keys: ['b'], run: () => ui.set({ browserOpen: !ui.get('browserOpen') }) },
     { id: 'panel.assistant', label: 'Toggle assistant panel', category: 'Views', keys: ['a'], run: () => ui.set({ assistantOpen: !ui.get('assistantOpen') }) },
     { id: 'panel.device', label: 'Toggle device panel', category: 'Views', keys: ['d'], run: () => ui.set({ deviceOpen: !ui.get('deviceOpen') }) },
+    { id: 'view.seti', label: 'SETI Scope (fullscreen music visualizer)', category: 'Views', keys: ['shift+v'], run: () => toggleSetiScope(app) },
+    { id: 'view.setiSaver', label: 'SETI Scope screensaver on / off', category: 'Views', keys: [], run: () => { const p = saveSetiPrefs({ screensaver: !loadSetiPrefs().screensaver }); app.toast?.(p.screensaver ? `SETI Scope screensaver on: opens after ${p.idleMinutes} idle minutes while playing` : 'SETI Scope screensaver off'); } },
     { id: 'view.theme', label: 'Toggle light / dark theme', category: 'Views', keys: [], run: () => ui.set({ theme: ui.get('theme') === 'dark' ? 'light' : 'dark' }) },
     // play
     { id: 'piano.toggle', label: 'Computer keyboard piano on / off', category: 'Play', keys: ['`'], run: () => { app.keyboardPiano.enabled = !app.keyboardPiano.enabled; app.toast(`Computer keyboard piano ${app.keyboardPiano.enabled ? 'ON — play with Z…M / Q…P, octave with - and =' : 'OFF'}`); } },

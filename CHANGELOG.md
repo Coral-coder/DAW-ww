@@ -54,6 +54,11 @@ the desktop apps share one version.
   Shifter / Harmonizer (scale-aware voices, formant preservation, latency-compensated), Vocoder (built-in carrier or
   sidechain track), Formant Shifter; Frequency Shifter, Ring Modulator, Resonator, Envelope Filter, Distortion+,
   Mid/Side tool and Haas Widener (correlation meter) — 10–16 presets each.
+- **SETI Scope**: a fullscreen visualizer styled after the classic radio-telescope screensaver — a rotating 3D
+  power × frequency × time plot (WebGL, canvas fallback) with panels of real analysis of the song (strongest spectral
+  spike + note, pitch drift, a Gaussian fitted to the loudness, beat / BPM, rhythmic triplets, detected key). Opens
+  from the main / View menu, the command palette (Shift+V), the transport, the mixer's master strip and Pocket's
+  menu; master or any track / bus as the source; CRT and Retro 640×480 modes; optional idle screensaver.
 
 ### Fixed
 - **Faust plugins load without the internet**: the Faust compiler now ships with the app (web, Pocket and desktop)

@@ -7,6 +7,7 @@ import { AUTO_MODES } from './automation-recorder.js';
 import { SCALES, keyRootName } from '../theory/index.js';
 import { GENRES } from '../gen/genres.js';
 import { priorityOverflow } from './overflow.js';
+import { openSetiScope } from './visualizers/seti/launch.js';
 const prio = (e, n) => { e.dataset.prio = String(n); return e; };
 import { overriddenLanes } from '../core/automation.js';
 
@@ -96,6 +97,8 @@ export function createHeader(app) {
   undoBtn.addEventListener('click', () => actions.undo());
   redoBtn.addEventListener('click', () => actions.redo());
 
+  const setiBtn = h('button.icon-btn', { title: 'SETI Scope — fullscreen visualizer of the playing song (Shift+V)' }, icon('dish'));
+  setiBtn.addEventListener('click', () => openSetiScope(app));
   const masterMeter = meter({ height: 30 });
   masterMeter.style.height = '30px';
   const masterVol = knob({ def: { key: 'mv', label: 'Master', min: 0, max: 1.5, default: 0.9, step: 0.01 }, value: p0.master.volume, size: 26, showValue: false, label: false, onChange: (v, { final }) => { if (final && store.get().master.volume === v) return; store.transact('Master volume', (p) => { p.master.volume = v; }, { coalesce: !final }); } });
@@ -124,6 +127,7 @@ export function createHeader(app) {
     h('div.hgroup', genBtn),
     h('div.spacer'),
     h('div.hgroup', { dataset: { prio: 6 } }, masterVol, masterMeter),
+    h('div.hgroup', setiBtn),
     h('div.hgroup.ctl-slot'), // hardware control: MIDI learn + command palette (src/control/index.js)
     h('div.hgroup', browserBtn, deviceBtn, assistBtn),
   );

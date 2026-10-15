@@ -7,6 +7,7 @@ import { beatsPerBar } from '../core/model.js';
 import { PAGES, SUBPAGES, parseRoute, routeHash, tabOf, neighbour, swipeDecision, isSwipeBlocked } from './router.js';
 import { switchLayout } from './mode.js';
 import { versionLabel } from '../version.js';
+import { openSetiScope } from '../ui/visualizers/seti/launch.js';
 import { actionSheet, haptic, closeTopSheet, onLongPress } from './touch.js';
 import { showOnboarding } from './onboarding.js';
 import { openParamPopup, valueTarget } from './controls.js';
@@ -119,6 +120,7 @@ export async function createPocketApp(rootEl) {
       { label: 'Version history…', icon: 'history', onClick: () => openHistorySheet(app) },
       { label: 'Tempo & meter changes…', icon: 'metronome', onClick: () => openTempoSheet(app) },
       { label: 'MIDI devices…', icon: 'keyboard', onClick: () => openMidiSheet(app) },
+      { label: 'SETI Scope (visualizer)', icon: 'dish', onClick: () => openSetiScope(app) },
       { label: 'Song timeline', icon: 'scenes', onClick: () => go({ page: 'arrange' }) },
       { label: 'Strudel code', icon: 'code', onClick: () => go({ page: 'code' }) },
       { label: 'Desktop layout', icon: 'grid', onClick: () => switchLayout('desktop') },

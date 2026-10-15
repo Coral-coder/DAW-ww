@@ -18,6 +18,7 @@ import { createLoudnessPanel } from '../panels/loudness.js';
 import { createScopesPanel } from '../panels/scopes.js';
 import { modeFor, meterPrefs, onMeterPrefs, meterMenuItems, modeMeter, drawModeMeter, modeTitle } from '../meter-modes.js';
 import { meterBlock, loudnessOf, releaseLightExcept } from '../../audio/analysis-hub.js';
+import { openSetiScope } from '../visualizers/seti/launch.js';
 
 // ---------------------------------------------------------------- helpers
 const VOL_MAX = 1.5;
@@ -720,7 +721,9 @@ export function createMixerView(app) {
       h('div.mx-loud-cell', { title: 'Momentary peak level (dBFS)' }, h('span', 'Peak'), pkEl),
       h('div.mx-loud-cell', { title: 'Left/right balance of the output' }, h('span', 'Bal'), balEl));
     const fad = faderSection({ value: p.master.volume, big: true, title: 'Master volume', auto: { owner: 'master' }, onChange: (v, { final }) => { if (final && same(store.get().master.volume, v)) return; editMaster('Master volume', (m) => { m.volume = v; }, !final); } });
-    const el = h('div.mx-strip.mx-master', head, inserts, h('div.mx-analysis', spec, loud), fad.area, h('div.mx-foot', fad.readout, fad.peakEl), fad.mline);
+    const seti = h('button.btn.small.mx-seti', { type: 'button', title: 'SETI Scope: fullscreen visualizer of the master (Shift+V)', style: { width: '100%', justifyContent: 'center', marginTop: '3px' } }, icon('dish', 12), h('span', 'SETI Scope'));
+    seti.addEventListener('click', (e) => { e.stopPropagation(); openSetiScope(app, { source: 'master' }); });
+    const el = h('div.mx-strip.mx-master', head, inserts, h('div.mx-analysis', spec, loud, seti), fad.area, h('div.mx-foot', fad.readout, fad.peakEl), fad.mline);
     return { kind: 'master', id: 'master', el, setVolume: fad.setVolume, meterState: fad.meterState, reset: fad.reset, spec, rmsEl, pkEl, balEl, rms: -90 };
   }
 

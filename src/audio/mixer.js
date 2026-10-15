@@ -1210,6 +1210,36 @@ export class MixGraph {
     return this.analysis;
   }
 
+  /**
+   * A dedicated AnalyserNode (no smoothing) tapping a strip's post-fader output — 'master' = the master output,
+   * else a track or bus id — for visualizers. Created on first use and re-wired when the strip was rebuilt.
+   */
+  stripAnalyser(id = 'master', { fftSize = 4096, smoothing = 0 } = {}) {
+    let src = this.out;
+    if (id !== 'master') {
+      const s = this.tracks.get(id)?.strip || this.buses.get(id);
+      src = s ? (s.meterDelay || s.output) : null;
+    }
+    if (!src) return null;
+    this.taps ||= new Map();
+    const old = this.taps.get(id);
+    if (old && old.src === src && old.node.fftSize === fftSize) return old.node;
+    if (old) this.releaseStripAnalyser(id);
+    const node = this.ctx.createAnalyser();
+    node.fftSize = fftSize;
+    node.smoothingTimeConstant = smoothing;
+    src.connect(node);
+    this.taps.set(id, { src, node });
+    return node;
+  }
+
+  releaseStripAnalyser(id) {
+    const t = this.taps?.get(id);
+    if (!t) return;
+    try { t.src.disconnect(t.node); } catch { /* strip already disposed */ }
+    this.taps.delete(id);
+  }
+
   /** Gain reduction (dB, <= 0) of a compressor/limiter effect anywhere in the graph. */
   getReduction(fxId) {
     for (const s of this._strips()) {
@@ -1228,6 +1258,7 @@ export class MixGraph {
 
   dispose() {
     try { this.analysis?.dispose(); } catch { /* */ }
+    for (const id of [...(this.taps?.keys() || [])]) this.releaseStripAnalyser(id);
     for (const e of this.tracks.values()) { this._disposeSources(e); e.strip.dispose(); }
     for (const s of this.buses.values()) s.dispose();
     this.master.dispose();

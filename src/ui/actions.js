@@ -1022,6 +1022,7 @@ export function createActions(app) {
         { label: 'Command palette', icon: 'search', shortcut: app.control.shortcutLabel('palette.open'), onClick: () => app.control.openPalette() },
       ] : []),
       { label: `Computer keyboard piano (\`)`, icon: 'keyboard', onClick: () => { app.keyboardPiano.enabled = !app.keyboardPiano.enabled; toast(`Keyboard piano ${app.keyboardPiano.enabled ? 'ON' : 'OFF'}`); } },
+      { label: 'SETI Scope (fullscreen visualizer)', icon: 'dish', shortcut: 'Shift+V', onClick: () => import('./visualizers/seti/launch.js').then((m) => m.openSetiScope(app)) },
       { label: 'Pocket layout (phone / touch)', icon: 'music', onClick: () => import('../mobile/mode.js').then((m) => m.switchLayout('pocket')) },
       { label: `Theme: ${ui.get('theme') === 'dark' ? 'switch to light' : 'switch to dark'}`, icon: 'sun', onClick: () => ui.set({ theme: ui.get('theme') === 'dark' ? 'light' : 'dark' }) },
       { label: 'Help & shortcuts', icon: 'help', shortcut: '?', onClick: () => showHelp() },
