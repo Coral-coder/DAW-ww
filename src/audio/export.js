@@ -13,7 +13,8 @@ import { encodeWav } from '../io/wav.js';
 import { addWavMetadata, cleanIsrc } from '../io/wav-meta.js';
 import { muxM4a } from '../io/mp4.js';
 import { muxOggOpus } from '../io/ogg.js';
-import { measureLoudness, normalizeLoudness } from './dsp/loudness.js';
+import { measureLoudness, normalizeLoudness, LOUDNESS_PRESETS } from './dsp/loudness.js';
+import { analyzeRender, analysisRows, analysisJson } from './dsp/loudness-stats.js';
 import { tempoMapFor } from '../time/tempo-map.js';
 import {
   EXPORT_FORMATS, DITHER_OPTIONS, resolveRange, detectTail, fadeOutTail, stemTargets, stemProject, formatFileName, uniqueNames, reportRows, reportText, encodeRate,
@@ -223,7 +224,15 @@ export async function runExport({ project, render, opts, onProgress = () => {}, 
         encoded = { ...measureLoudness(dch, d.sampleRate), codec: `${fmt.label} ${file.kbps} kbps ${o.bitrateMode === 'vbr' ? 'VBR' : 'CBR'} @ ${sr} Hz`, frames: dch[0].length, sampleRate: d.sampleRate };
       } catch (e) { encodedError = e.message || String(e); }
     }
-    report.mix = { name: `${base}.${file.ext}`, measure: m, before: norm.before, gainDb: norm.gainDb, limitedDb: norm.limitedDb, encoded, rows: reportRows(m, { ...norm, encoded, encodedError }) };
+    // analysis of the delivered mix: PLR / PSR / DR, clips, DC, loudness over time, spectrum (dsp/loudness-stats.js)
+    onProgress((step - 0.05) / steps, 'Analysing…');
+    let analysis = null;
+    try { analysis = analyzeRender(norm.channels, sr); } catch (e) { console.warn('[export] analysis', e); }
+    const preset = o.normalize === 'lufs' ? LOUDNESS_PRESETS.find((x) => x.id === o.preset) || null : null;
+    const extraRows = analysis ? analysisRows(analysis, preset) : [];
+    report.mix = { name: `${base}.${file.ext}`, measure: m, before: norm.before, gainDb: norm.gainDb, limitedDb: norm.limitedDb, encoded, analysis, rows: [...reportRows(m, { ...norm, encoded, encodedError }), ...extraRows] };
+    report.analysisLines = extraRows.map(([k, v]) => `${k.padEnd(18)} ${v}`);
+    if (analysis) report.json = analysisJson(analysis, { file: report.mix.name, format: fmt.label, sampleRate: sr, gainDb: Math.round((norm.gainDb || 0) * 100) / 100, target: preset ? { id: preset.id, lufs: preset.lufs, ceiling: preset.ceiling } : null });
   }
 
   // 2) stems (same start, same length as the mixdown; normalisation gain carried over so stems sum to the mix)
@@ -243,6 +252,7 @@ export async function runExport({ project, render, opts, onProgress = () => {}, 
   onProgress(1, 'Done');
   const lines = [`Range: ${rng.label} (beats ${rng.startBeat}–${rng.endBeat}, ${rng.mode} mode)`, `Format: ${fmt.label} @ ${sr} Hz`,
     ...report.stems.map((s) => `Stem ${s.name}: ${Number.isFinite(s.measure.integrated) ? s.measure.integrated.toFixed(1) : '−∞'} LUFS, TP ${Number.isFinite(s.measure.truePeakDb) ? s.measure.truePeakDb.toFixed(1) : '−∞'} dBTP`)];
-  report.text = report.mix ? reportText(report.mix.name, report.mix.measure, { gainDb: report.mix.gainDb, limitedDb: report.mix.limitedDb, encoded: report.mix.encoded, lines }) : lines.join('\n');
+  report.text = report.mix ? reportText(report.mix.name, report.mix.measure, { gainDb: report.mix.gainDb, limitedDb: report.mix.limitedDb, encoded: report.mix.encoded, lines: [...(report.analysisLines || []), ...lines] }) : lines.join('\n');
+  if (report.json) report.json.stems = report.stems.map((s) => ({ name: s.name, integratedLufs: Number.isFinite(s.measure.integrated) ? +s.measure.integrated.toFixed(1) : null, truePeakDbtp: Number.isFinite(s.measure.truePeakDb) ? +s.measure.truePeakDb.toFixed(1) : null }));
   return { files, report };
 }

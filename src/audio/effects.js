@@ -303,6 +303,22 @@ function makeSpaceImpulse(ctx, decay, size, damping, character) {
   return buf;
 }
 
+/** Post-EQ analyser for the EQ cards, created on first read (never in offline renders): {analyser, sampleRate}. */
+const eqProbes = new WeakMap();
+function eqProbe(ctx, out) {
+  if (isOffline(ctx) || !ctx.createAnalyser) return null;
+  let pr = eqProbes.get(out);
+  if (!pr) {
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 4096;
+    analyser.smoothingTimeConstant = 0.8;
+    out.connect(analyser);
+    pr = { analyser, sampleRate: ctx.sampleRate };
+    eqProbes.set(out, pr);
+  }
+  return pr;
+}
+
 // ------------------------------------------------------------------------------ shell
 function createShell(ctx) {
   const input = ctx.createGain();
@@ -336,6 +352,7 @@ const BUILDERS = {
     const out = ctx.createGain();
     sh.fxIn.connect(low); low.connect(mid); mid.connect(high); high.connect(out); out.connect(sh.wet);
     return {
+      get probe() { return eqProbe(ctx, out); }, // live spectrum for the EQ card (src/ui/fx-ui/eq.js)
       apply(p, im) {
         setP(low.frequency, p.lowFreq, ctx, im); setP(low.gain, p.low, ctx, im);
         setP(mid.frequency, p.midFreq, ctx, im); setP(mid.gain, p.mid, ctx, im); setP(mid.Q, p.midQ, ctx, im);
@@ -362,6 +379,7 @@ const BUILDERS = {
       prev.connect(out);
     };
     return {
+      get probe() { return eqProbe(ctx, out); }, // live spectrum for the EQ card (src/ui/fx-ui/eq.js)
       apply(p, im) {
         const on = [];
         bands.forEach((b, i) => {

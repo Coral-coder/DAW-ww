@@ -4,5 +4,6 @@ import rhythm from './rhythm.js';
 import dynamics from './dynamics.js';
 import space from './space.js';
 import character from './character.js';
+import eq from './eq.js';
 
-export const FX_UI = { ...analysis, ...rhythm, ...dynamics, ...space, ...character };
+export const FX_UI = { ...analysis, ...rhythm, ...dynamics, ...space, ...character, ...eq };

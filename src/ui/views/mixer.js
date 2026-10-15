@@ -15,6 +15,8 @@ import {
 } from '../../core/mixer-model.js';
 import { createMixerTools, SOLO_LABELS } from '../mixer-tools.js';
 import { createLoudnessPanel } from '../panels/loudness.js';
+import { modeFor, meterPrefs, onMeterPrefs, meterMenuItems, modeMeter, drawModeMeter, modeTitle } from '../meter-modes.js';
+import { meterBlock, loudnessOf, releaseLightExcept } from '../../audio/analysis-hub.js';
 
 // ---------------------------------------------------------------- helpers
 const VOL_MAX = 1.5;
@@ -118,11 +120,12 @@ export function createMixerView(app) {
   inputToggle.addEventListener('click', () => { prefs.showInput = !prefs.showInput; savePrefs(); render(true); });
   const loudBtn = h('button.toggle', { type: 'button', title: 'Loudness meter: LUFS momentary / short-term / integrated, LRA, true peak, correlation, vector scope, spectrum' }, icon('gauge', 13), ' Loudness');
   loudBtn.addEventListener('click', () => { prefs.loudness = !prefs.loudness; savePrefs(); syncLoudness(); });
+  const metersBtn = button('Meters ▾', (e) => contextMenu(menuPos(e), meterMenuItems(null)), { cls: 'small', title: 'Meter mode of every strip (digital peak, RMS, VU, PPM, K-system), VU / PPM reference levels, LUFS readouts on the strips. Right-click a meter to set one channel.' });
   const toolbar = h('div.view-toolbar.mx-toolbar',
     h('span.mx-title', icon('mixer', 15), 'Mixer'),
     h('div.sep'), addTrackBtn, addBusBtn, h('div.sep'), assistBtn, structBtn, snapBtn, h('div.sep'),
     h('label.mx-solo-wrap', { title: soloSel.title }, h('span', 'Solo'), soloSel), h('div.sep'), busToggle, inputToggle, narrowToggle,
-    h('div.spacer'), loudBtn, resetPeaksBtn);
+    h('div.spacer'), metersBtn, loudBtn, resetPeaksBtn);
 
   const scroller = h('div.mx-scroll');
   const masterHost = h('div.mx-master-host');
@@ -179,6 +182,7 @@ export function createMixerView(app) {
     const scrollLeft = scroller.scrollLeft;
     const oldStrips = strips;
     strips = new Map();
+    releaseLightExcept(engine, new Set([...p.tracks.map((t) => t.id), ...p.buses.map((b) => b.id)])); // strip LUFS of removed channels
     clear(scroller);
     clear(masterHost);
     el.classList.toggle('narrow', prefs.narrow);
@@ -408,7 +412,7 @@ export function createMixerView(app) {
   }
 
   /** Vertical fader with dB scale, stereo meter, clip LED and peak readout. */
-  function faderSection({ value, onChange, color, big = false, title, auto = null }) {
+  function faderSection({ value, onChange, color, big = false, title, auto = null, noMeter = false }) {
     const scale = h('div.mx-scale');
     for (const db of SCALE_DB) {
       const pos = volToPos(dbToGain(db));
@@ -460,7 +464,15 @@ export function createMixerView(app) {
     const meterCanvas = h('canvas.mx-meter', { title: 'Level meter (peak). Hold line shows recent peak.' });
     const clipLed = h('button.mx-clip', { type: 'button', title: 'Clip indicator — lights when the signal reaches 0 dBFS. Click to reset.' });
     const peakEl = h('div.mx-peak', { title: 'Highest peak since reset (dBFS) — click to reset' }, '−∞');
-    const meterState = { l: 0, r: 0, hold: [0, 0], holdT: [0, 0], peakMax: 0, clip: false, clipLed, peakEl, canvas: meterCanvas, fit: null };
+    const meterId = noMeter ? null : auto?.owner || null;
+    const modeEl = h('span.mx-mode', { title: 'Meter reading in the meter mode\'s units — right-click the meter to change the mode' });
+    const lufsEl = h('span.mx-lufs', { title: 'Short-term loudness of this channel (BS.1770, 3 s), LUFS' });
+    const mline = h('div.mx-mline', modeEl, lufsEl);
+    const meterState = { l: 0, r: 0, hold: [0, 0], holdT: [0, 0], peakMax: 0, clip: false, clipLed, peakEl, canvas: meterCanvas, fit: null, modeEl, lufsEl, mline, meterId };
+    if (meterId) {
+      meterCanvas.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); contextMenu(e, meterMenuItems(meterId)); });
+      meterCanvas.title = modeTitle(modeFor(meterId));
+    }
     const reset = () => { meterState.clip = false; meterState.peakMax = 0; meterState.hold = [0, 0]; clipLed.classList.remove('on'); peakEl.textContent = '−∞'; peakEl.classList.remove('hot'); };
     clipLed.addEventListener('click', reset);
     peakEl.addEventListener('click', reset);
@@ -469,7 +481,7 @@ export function createMixerView(app) {
     if (auto) { markAuto(fad, auto.owner, 'volume'); fad.autoSet = (nv) => { if (fad.classList.contains('active')) return; v = nv; setPos(); setReadout(); }; }
     const area = h(`div.mx-fader-area${big ? '.big' : ''}`, scale, fad, h('div.mx-meter-wrap', clipLed, meterCanvas));
     return {
-      area, readout, peakEl, meterState, reset,
+      area, readout, peakEl, meterState, reset, mline,
       setVolume: (nv) => { if (fad.classList.contains('active')) return; v = nv; setPos(); setReadout(); },
     };
   }
@@ -569,7 +581,7 @@ export function createMixerView(app) {
       head, inputSec, inserts, sendsSec, pan.el,
       h('div.mx-btns', mute, solo, arm, frz),
       fad.area, vcaEl,
-      h('div.mx-foot', fad.readout, fad.peakEl));
+      h('div.mx-foot', fad.readout, fad.peakEl), fad.mline);
     return { kind: 'track', id: t.id, el, pan: pan.knob, panVal: pan.panVal, mute, solo, arm, sends, trim: trimK, width: widthK, phase: phaseB, vcaEl, setVolume: fad.setVolume, meterState: fad.meterState, reset: fad.reset };
   }
 
@@ -654,7 +666,7 @@ export function createMixerView(app) {
 
     // spacer keeps faders aligned with track strips that have sends
     const el = h('div.mx-strip.mx-bus', { dataset: { id: b.id } },
-      head, inserts, returnBuses(p).length ? h('div.mx-sends.mx-sends-spacer') : null, pan.el, h('div.mx-btns', mute), fad.area, h('div.mx-foot', fad.readout, fad.peakEl));
+      head, inserts, returnBuses(p).length ? h('div.mx-sends.mx-sends-spacer') : null, pan.el, h('div.mx-btns', mute), fad.area, h('div.mx-foot', fad.readout, fad.peakEl), fad.mline);
     return { kind: 'bus', id: b.id, el, pan: pan.knob, panVal: pan.panVal, mute, setVolume: fad.setVolume, meterState: fad.meterState, reset: fad.reset };
   }
 
@@ -702,7 +714,7 @@ export function createMixerView(app) {
       h('div.mx-loud-cell', { title: 'Momentary peak level (dBFS)' }, h('span', 'Peak'), pkEl),
       h('div.mx-loud-cell', { title: 'Left/right balance of the output' }, h('span', 'Bal'), balEl));
     const fad = faderSection({ value: p.master.volume, big: true, title: 'Master volume', auto: { owner: 'master' }, onChange: (v, { final }) => { if (final && same(store.get().master.volume, v)) return; editMaster('Master volume', (m) => { m.volume = v; }, !final); } });
-    const el = h('div.mx-strip.mx-master', head, inserts, h('div.mx-analysis', spec, loud), fad.area, h('div.mx-foot', fad.readout, fad.peakEl));
+    const el = h('div.mx-strip.mx-master', head, inserts, h('div.mx-analysis', spec, loud), fad.area, h('div.mx-foot', fad.readout, fad.peakEl), fad.mline);
     return { kind: 'master', id: 'master', el, setVolume: fad.setVolume, meterState: fad.meterState, reset: fad.reset, spec, rmsEl, pkEl, balEl, rms: -90 };
   }
 
@@ -995,7 +1007,14 @@ export function createMixerView(app) {
     if (!meterColors) readColors();
     const now = performance.now();
     const live = !!engine.ctx;
+    const lufsOn = meterPrefs().stripLufs && live;
+    const lufsTick = lufsOn && frame % 10 === 0;
     for (const s of strips.values()) {
+      if (s.meterState.meterId && drawMode(s, live, now)) {
+        if (lufsTick) paintLufs(s);
+        continue;
+      }
+      if (lufsTick) paintLufs(s);
       const lv = live ? readMeter(s.id) : null;
       // skip redrawing idle meters once they have decayed to zero
       const st = s.meterState;
@@ -1013,6 +1032,46 @@ export function createMixerView(app) {
     if (m && (frame % 4 === 0 || needFit)) drawSpectrum(m);
     needFit = false;
   }
+
+  /** Non-peak meter modes: ballistics over the strip's latest samples (dsp/ballistics.js). False = use the peak path. */
+  function drawMode(s, live, now) {
+    const st = s.meterState;
+    const mode = modeFor(st.meterId);
+    if (mode === 'peak') { if (st.mm) { st.mm = null; st.modeEl.textContent = ''; st.fit = null; } return false; }
+    const blk = live ? meterBlock(engine, st.meterId) : null;
+    if (!blk && !st.mm) return false;
+    const mm = modeMeter(st, mode, blk?.sampleRate || engine.ctx?.sampleRate || 48000);
+    const dt = mm.t ? Math.min(2, (now - mm.t) / 1000) : 1 / 30;
+    mm.t = now;
+    if (blk) mm.ball.feed(blk.l, blk.r, dt); else mm.ball.idle(dt);
+    if (!st.fit || needFit) st.fit = fitCanvas(st.canvas);
+    const rd = mm.ball.read();
+    const db = drawModeMeter(st.fit, mm, rd, now, meterColors);
+    const pk = Math.max(rd.samplePeak[0], rd.samplePeak[1]);
+    if (pk > st.peakMax) { st.peakMax = pk; st.peakEl.textContent = fmtDb(pk); st.peakEl.classList.toggle('hot', pk >= 1); }
+    if (pk >= 0.999 && !st.clip) { st.clip = true; st.clipLed.classList.add('on'); }
+    if (frame % 6 === 0) st.modeEl.textContent = `${mm.scale.mode.short} ${db <= mm.scale.lo ? '−∞' : mm.scale.label(db)}`;
+    return true;
+  }
+
+  function paintLufs(s) {
+    const st = s.meterState;
+    if (!st.meterId) return;
+    const an = loudnessOf(engine, st.meterId, { light: st.meterId !== 'master' });
+    const v = an?.read().shortTerm;
+    st.lufsEl.textContent = `S ${Number.isFinite(v) && v > -70 ? v.toFixed(1) : '−∞'}`;
+  }
+
+  onMeterPrefs((mp) => {
+    for (const s of strips.values()) {
+      const st = s.meterState;
+      if (!st.meterId) continue;
+      st.canvas.title = modeTitle(modeFor(st.meterId));
+      if (!mp.stripLufs) st.lufsEl.textContent = '';
+    }
+    if (!mp.stripLufs) releaseLightExcept(engine);
+    needFit = true;
+  });
 
   function startLoop() { if (!raf) { meterColors = null; needFit = true; raf = requestAnimationFrame(tick); } }
   function stopLoop() { if (raf) cancelAnimationFrame(raf); raf = 0; }
@@ -1050,7 +1109,7 @@ export function createMixerView(app) {
   return {
     el,
     show() { visible = true; render(dirty); startLoop(); syncLoudness(); },
-    hide() { visible = false; stopLoop(); loudness.hide(); },
+    hide() { visible = false; stopLoop(); loudness.hide(); releaseLightExcept(engine); },
     assist, // exposed for automation/tests
   };
 }
