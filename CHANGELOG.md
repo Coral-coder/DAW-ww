@@ -17,6 +17,11 @@ the desktop apps share one version.
   slope, averaging, peak hold, max, compare trace from another track), Spectrogram (log / linear / mel, colour-blind
   safe maps, 3D waterfall) and Tuner (needle + strobe, A4 415–466 Hz) — each with presets and a pop-out window.
   A Scopes panel in the Mixer shows them for the master or any track without an insert; Pocket shows them compact.
+- **Presets**: 10–17 tagged factory presets for every effect, about 110 new instrument sounds (synth, FM, organ,
+  Strudel), and a preset browser with search, categories / tags, favorites, recently used and audition on select.
+  User presets, FX chains and track templates can be saved, dragged onto tracks and shared as .daw3preset / .daw3bank
+  files. Every device has A/B compare, eight snapshots with morphing, and randomize (subtle, wild or within preset
+  tags; right-click a knob to lock it). Pocket gets the same search and favorites for sounds and effect presets.
 
 ### Fixed
 - **Faust plugins load without the internet**: the Faust compiler now ships with the app (web, Pocket and desktop)
