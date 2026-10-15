@@ -43,6 +43,11 @@ the desktop apps share one version.
   depth), Transient Shaper, De-esser, Expander / Gate (hysteresis, hold, look-ahead, filtered or external key),
   Dynamic EQ, Linear-Phase EQ and Match EQ (capture a reference track, file or clip) — AudioWorklet / FIR DSP that
   renders offline too, latency compensated, with transfer-curve, gain-reduction and response-curve cards and presets.
+- **Space, voice & character effects** (AudioWorklet DSP, rendered identically offline): Algorithmic Reverb (room /
+  hall / plate / chamber / spring, freeze), Shimmer Reverb, Tape, Multitap (tap editor) and Granular Delay; Pitch
+  Shifter / Harmonizer (scale-aware voices, formant preservation, latency-compensated), Vocoder (built-in carrier or
+  sidechain track), Formant Shifter; Frequency Shifter, Ring Modulator, Resonator, Envelope Filter, Distortion+,
+  Mid/Side tool and Haas Widener (correlation meter) — 10–16 presets each.
 
 ### Fixed
 - **Faust plugins load without the internet**: the Faust compiler now ships with the app (web, Pocket and desktop)

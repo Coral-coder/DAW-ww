@@ -11,6 +11,7 @@ const MODULES = [
   ['/src/audio/stream/stream-processor.js', 'daw3-stream'],
   ['/src/audio/fx/dynamics-worklet.js', 'daw3-multiband'],
   ['/src/audio/fx/rhythm-worklet.js', 'daw3-rhythm'],
+  ['/src/audio/fx/worklets/fx-processors.js', 'daw3-fx-reverb'],
 ];
 
 const srv = await serveRepo();

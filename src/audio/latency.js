@@ -17,6 +17,7 @@
 //                        so the result is sample-identical to a latency-free graph)
 //
 // All values are seconds, rounded to whole frames at `sampleRate` so DelayNodes never interpolate.
+import { familyLatencyFrames } from './fx/latency.js';
 
 /**
  * Latencies measured in Chromium 141 (offline render, impulse in -> peak out, 44.1 / 48 / 96 kHz) and derived from
@@ -53,8 +54,7 @@ export function effectLatencyFrames(def, sampleRate = 44100) {
     case 'saturator': return OVERSAMPLE_FRAMES['2x'];
     // glue compressor + limiter (two pre-delays) + 4x-oversampled clipper (measured: one frame less)
     case 'mastering': return 2 * comp + OVERSAMPLE_FRAMES['4x'] - 1;
-    default: return dynamicsLatencyFrames(def, sampleRate) ?? 0; // multiband / expander look-ahead, linear-phase FIR
-
+    default: return dynamicsLatencyFrames(def, sampleRate) ?? familyLatencyFrames(def, sampleRate, OVERSAMPLE_FRAMES) ?? 0; // effect families (src/audio/fx): look-ahead, linear-phase FIR, pitch, oversampling
   }
 }
 
