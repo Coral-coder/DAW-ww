@@ -35,6 +35,7 @@ import { EFFECT_DEFS } from './effect-defs.js';
 import { resolveInstrument } from './instruments.js';
 import { sanitizePatch, patchStructureKey, topoOrder, resolveKeyLinks, PATCH_IN, PATCH_OUT } from '../core/patch.js';
 import { computePdc, faderOffsets, alignInserts } from './latency.js';
+import { ClipFxRack, hasClipFx, gateSchedule } from './clip-fx.js';
 import { needsShapedEnvelope, envelopePoints } from '../record/clips.js';
 import { frozenMode, bypassesInserts, bypassesFader, frozenLaneFilter } from '../core/freeze.js';
 import { spanOf } from '../time/tempo-map.js';
@@ -371,7 +372,8 @@ export class ChannelStrip {
   }
 
   /** Latency (s) of the insert section, input -> post (aligned: the slowest branch / key; see alignment()). */
-  get insertLatency() { return this.alignment().latency; }
+  // (+ the clip-effect rack's padding: every clip / dry path is delayed to its slowest chain — see clip-fx.js)
+  get insertLatency() { if (this.clipFx) this.clipFx.refreshLatency(); return this.alignment().latency + (this.clipFx?.latency || 0); }
 
   /** Put the alignment delays on the cables (MixGraph.updatePdc). -> the plan. */
   applyAlignment(enabled = true) {
@@ -591,8 +593,8 @@ export class ChannelStrip {
     }
   }
 
-  setTempo(bpm) { for (const e of this.effects) e.fx.setTempo(bpm); }
-  syncLfos(time) { for (const e of this.effects) e.fx.sync(time); }
+  setTempo(bpm) { for (const e of this.effects) e.fx.setTempo(bpm); this.clipFx?.setTempo(bpm); }
+  syncLfos(time) { for (const e of this.effects) e.fx.sync(time); this.clipFx?.syncLfos(time); }
   getReduction(fxId) { const e = this.effects.find((x) => x.id === fxId); return e?.fx.getReduction ? e.fx.getReduction() : 0; }
   getFxProbe(fxId) { return this.effects.find((x) => x.id === fxId)?.fx.probe ?? null; }
 
@@ -622,6 +624,7 @@ export class ChannelStrip {
   dispose() {
     for (const e of this.effects) e.fx.dispose();
     this.effects = [];
+    if (this.clipFx) { this.clipFx.dispose(); this.clipFx = null; }
     for (const l of this.sendLinks.values()) l.dispose();
     this.outLink?.dispose();
     if (this.width) { for (const n of [this.width.split, this.width.merge, ...Object.values(this.width.g)]) { try { n.disconnect(); } catch { /* */ } } }
@@ -727,6 +730,7 @@ export class MixGraph {
       e.strip.setSends(track.sends || {}, this.buses, im, taps);
       if (fz) { if (e.instrument || e.code) this._disposeSources(e); } else this._syncSource(e, track);
       this._syncPadOutputs(e, track);
+      this._syncClipFx(e, track, project, fz);
     }
     for (const [id, e] of this.tracks) {
       if (!trackIds.has(id)) { this._disposeSources(e); e.strip.dispose(); this.tracks.delete(id); }
@@ -734,6 +738,17 @@ export class MixGraph {
     this._syncKeys(project);
     this._syncCue(project);
   }
+
+  /** Clip effects (clip-fx.js): a rack of per-clip chains on tracks that have clips with clip fx. */
+  _syncClipFx(e, track, project, frozen) {
+    const clips = frozen ? [] : project.clips.filter((c) => c.trackId === track.id && hasClipFx(c));
+    if (!clips.length) { if (e.strip.clipFx) { e.strip.clipFx.dispose(); e.strip.clipFx = null; } return; }
+    if (!e.strip.clipFx) e.strip.clipFx = new ClipFxRack(e.strip, { onError: this.onError });
+    e.strip.clipFx.sync(clips);
+  }
+
+  /** Where an audio clip's sources play into: its clip-effect chain, else the track input. */
+  _clipDest(e, clip) { return (clip && e.strip.clipFx?.inputFor(clip.id)) || e.strip.input; }
 
   /** Drum multi-out: pads listed in track.padOutputs play straight into their bus (a separate mixer channel). */
   _syncPadOutputs(e, track) {
@@ -1051,6 +1066,12 @@ export class MixGraph {
       e.instrument?.trigger(time, ev.pitch, ev.vel, durSec, ev.x ? noteExtra(ev, durSec) : undefined);
     } else if (ev.type === 'code') {
       e.code?.trigger(time, ev.value, Math.max(0.005, ev.durSec ?? ev.dur * spb), ev);
+    } else if (ev.type === 'clipfx') {
+      const rack = e.strip.clipFx;
+      if (!rack) return;
+      const s0 = map && !map.isConstant ? map.secAt(ev.beat) : 0;
+      const timeOf = (b) => (map && !map.isConstant ? map.secAt(b) - s0 : (b - ev.beat) * spb);
+      rack.scheduleWindow(gateSchedule(ev.spans || [], ev.beat, ev.beat + ev.dur, [...rack.chains.keys()], timeOf), time);
     } else if (ev.type === 'audio') {
       if (needsWarpPlayer(ev.clip)) { this._warpPlayer().play(e, ev, time, spb, map); return; }
       if (map && !map.isConstant) { this._playAudioClip(e, unwarpedInSeconds(ev, map), time, 1); return; } // tempo map: in seconds
@@ -1122,7 +1143,7 @@ export class MixGraph {
     const g = this.ctx.createGain();
     this._clipEnvelope(g, clip, ev, time, dur, spb);
     src.connect(g);
-    g.connect(e.strip.input);
+    g.connect(this._clipDest(e, clip));
     src.start(time, offSec, dur + 0.001);
     const rec = { src, g };
     this.sources.add(rec);
@@ -1137,7 +1158,7 @@ export class MixGraph {
     if (dur <= 0.002) return;
     const g = this.ctx.createGain();
     this._clipEnvelope(g, clip, ev, time, dur, spb);
-    g.connect(e.strip.input);
+    g.connect(this._clipDest(e, clip));
     let voice;
     try { voice = this.o.playStream(stream, g, time, offSec, dur + 0.001); } catch (err) { this.onError(err); try { g.disconnect(); } catch { /* */ } return; }
     const rec = { src: voice, g };
@@ -1151,6 +1172,7 @@ export class MixGraph {
     for (const e of this.tracks.values()) {
       try { e.instrument?.allNotesOff(t); } catch (err) { this.onError(err); }
       try { e.code?.allNotesOff(t); } catch (err) { this.onError(err); }
+      e.strip.clipFx?.reset(t);
     }
     this._warp?.clear(); // stopped voices must not be retimed (a later stop() would revive them)
     for (const rec of this.sources) {
