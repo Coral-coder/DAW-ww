@@ -46,7 +46,7 @@ const POLY_PAD = F('va-poly', { Detune: 0.22, Sub: 0.15, Cutoff: 1500, Resonance
 const WARM_PAD = F('warm-pad', { Cutoff: 1800, 'PWM depth': 0.3, Attack: 0.9, Release: 1.8, 'Chorus width': 0.7 });
 const KS = (bright = 0.6, damp = 0.25) => F('pluck', { Brightness: bright, Damping: damp, 'Pick position': 0.22 });
 const BELL = F('modal-bell', { Decay: 2.8, Hardness: 0.45, Inharmonicity: 1 });
-const ORGAN = (perc = 0.3) => F('organ', { "16'": 0.5, "8'": 1, "5 1/3'": 0.5, "4'": 0.45, "2 2/3'": 0.15, "2'": 0.25, Percussion: perc, Click: 0.35, Chorus: 0.55 });
+const ORGAN = (perc = 0.3) => F('organ', { '16′': 0.5, '8′': 1, '5 1/3′': 0.5, '4′': 0.45, '2 2/3′': 0.15, '2′': 0.25, Percussion: perc, Click: 0.35, Chorus: 0.55 });
 const FLUTE = F('flute', { Breath: 0.75, 'Breath noise': 0.07, Vibrato: 0.3, Embouchure: 0.5 });
 const CLARINET = F('clarinet', { 'Reed stiffness': 0.5, 'Bell opening': 0.5, Breath: 0.8, Vibrato: 0.12 });
 

@@ -13,6 +13,12 @@ the desktop apps share one version.
   reference to the prebakes its code uses. Code calling undefined functions offers the saved prebake that defines
   them. Split import maps what the helpers produce (filter envelopes, delay sends, filters, gain, orbit mute / solo).
 
+### Fixed
+- **Faust plugins load without the internet**: the Faust compiler now ships with the app (web, Pocket and desktop)
+  instead of being downloaded from cdn.jsdelivr.net, so every catalog Faust instrument and effect loads offline, on
+  networks that block the CDN, and in exports. Load failures name the actual cause; the organ's drawbar settings
+  from generated songs now apply.
+
 ## [1.0.0] — 2026-10-14
 
 The first release: one codebase for the web app, the Pocket phone layout and the desktop apps for macOS,

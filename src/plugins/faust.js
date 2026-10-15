@@ -1,12 +1,16 @@
-// Faust host: compiles Faust DSP source in the browser with @grame/faustwasm (loaded lazily from
-// jsDelivr) and runs it as AudioWorklet nodes — polyphonic instruments (freq/gain/gate voices) and
-// stereo effects. Works in AudioContext and OfflineAudioContext. Browser-only.
+// Faust host: compiles Faust DSP source in the browser with @grame/faustwasm and runs it as AudioWorklet nodes —
+// polyphonic instruments (freq/gain/gate voices) and stereo effects. Works in AudioContext and OfflineAudioContext.
+// The compiler ships with the app (vendor/faustwasm, scripts/vendor-faustwasm.sh) so the built-in Faust plugins
+// load offline and in the desktop app; jsDelivr is only a fallback for builds without the bundled copy.
+// Browser-only.
 import { hashString } from './github.js';
 import { fetchText } from './fetch-cache.js';
 import { setStatus, pluginKey, friendlyError, userError } from './status.js';
 
 export const FAUSTWASM_VERSION = '0.19.0';
 export const FAUSTWASM_BASE = `https://cdn.jsdelivr.net/npm/@grame/faustwasm@${FAUSTWASM_VERSION}`;
+/** The bundled copy (same layout as the npm package), resolved against this module so it works at any base path. */
+export const FAUSTWASM_LOCAL = new URL('../../vendor/faustwasm/', import.meta.url).href;
 const ARGS = '-ftz 2';
 const VOICE_KEYS = new Set(['freq', 'gain', 'gate', 'key', 'vel', 'velocity']);
 
@@ -14,15 +18,64 @@ let compilerPromise = null;
 let queue = Promise.resolve(); // libfaust compiles one program at a time
 const factories = new Map(); // `${mode}:${hash}` -> Promise<Factory>
 
-/** Lazy-load the Faust compiler (≈6 MB, cached by the browser). -> { F, compiler, version } */
-export function loadFaustCompiler() {
+/** Where the compiler is looked for, in order: [{ id: 'bundled'|'cdn', base (ends with '/') }]. */
+export function faustwasmSources({ local = FAUSTWASM_LOCAL, cdn = FAUSTWASM_BASE + '/' } = {}) {
+  return [{ id: 'bundled', base: local }, { id: 'cdn', base: cdn }];
+}
+
+const errText = (e) => String(e?.message || e || 'unknown error').replace(/^(Type|Reference)?Error:\s*/, '').split('\n')[0];
+
+/** One user-facing message for "no source of the compiler worked" (failures: [{ id, base, error }]). */
+export function compilerLoadError(failures, env = {}) {
+  if (env.noWasm) return 'Faust plugins need WebAssembly, which is turned off in this browser (Lockdown Mode, or a browser / company policy). Allow WebAssembly for this site to use them.';
+  const parts = failures.map((f) => f.id === 'bundled'
+    ? `the copy bundled with the app (${f.base.replace(/^.*?(vendor\/faustwasm\/)$/, '$1')}) did not load: ${f.error}`
+    : `the download from cdn.jsdelivr.net failed: ${f.error}`);
+  const hint = failures.some((f) => f.id === 'cdn') ? ' Check your internet connection (or whether cdn.jsdelivr.net is blocked), then use Retry.' : '';
+  return `Could not load the Faust compiler — ${parts.join('; ')}.${hint}`;
+}
+
+async function loadFrom(base) {
+  try {
+    const F = await import(/* webpackIgnore: true */ `${base}dist/esm/index.js`);
+    const js = `${base}libfaust-wasm/libfaust-wasm.js`;
+    // Node (unit tests): faustwasm reads files with fs there, which wants a path, not a file: URL
+    const mod = await F.instantiateFaustModuleFromFile(typeof window === 'undefined' && js.startsWith('file:') ? decodeURIComponent(new URL(js).pathname) : js);
+    const lib = new F.LibFaust(mod);
+    return { F, compiler: new F.FaustCompiler(lib), version: lib.version() };
+  } catch (e) {
+    // faustwasm fetches its files without looking at the HTTP status, so a missing file surfaces as an obscure
+    // error ("FaustModule is not a function", a WebAssembly CompileError): name the file instead
+    for (const f of ['dist/esm/index.js', 'libfaust-wasm/libfaust-wasm.js', 'libfaust-wasm/libfaust-wasm.wasm', 'libfaust-wasm/libfaust-wasm.data']) {
+      let res;
+      try { res = await fetch(base + f, { cache: 'force-cache' }); } catch (err) { throw new Error(`network error (${errText(err)})`); }
+      try { res.body?.cancel(); } catch { /* */ }
+      if (!res.ok) throw new Error(`HTTP ${res.status} for ${f.split('/').pop()}`);
+    }
+    throw e;
+  }
+}
+
+async function loadFirst(sources) {
+  if (typeof WebAssembly !== 'object') throw userError(compilerLoadError([], { noWasm: true }));
+  const failures = [];
+  for (const s of sources) {
+    try { return { ...(await loadFrom(s.base)), source: s.id }; } catch (e) {
+      failures.push({ ...s, error: errText(e) });
+      console.warn(`[faust] compiler from ${s.base} failed:`, e);
+    }
+  }
+  throw userError(compilerLoadError(failures));
+}
+
+/**
+ * Lazy-load the Faust compiler (≈6 MB, bundled; cached). -> { F, compiler, version, source:'bundled'|'cdn' }
+ * `sources` overrides where to look (not cached; tests).
+ */
+export function loadFaustCompiler({ sources } = {}) {
+  if (sources) return loadFirst(sources);
   if (!compilerPromise) {
-    compilerPromise = (async () => {
-      const F = await import(/* webpackIgnore: true */ `${FAUSTWASM_BASE}/dist/esm/index.js`);
-      const mod = await F.instantiateFaustModuleFromFile(`${FAUSTWASM_BASE}/libfaust-wasm/libfaust-wasm.js`);
-      const lib = new F.LibFaust(mod);
-      return { F, compiler: new F.FaustCompiler(lib), version: lib.version() };
-    })();
+    compilerPromise = loadFirst(faustwasmSources());
     compilerPromise.catch(() => { compilerPromise = null; });
   }
   return compilerPromise;
@@ -135,13 +188,18 @@ async function resolveCode(params) {
   throw userError('No Faust source code.');
 }
 
+/** Label key for loose matching: lower case, letters / digits / '/' only ("16'" and "16-" are the same control). */
+export const normFaustLabel = (s) => String(s).toLowerCase().replace(/[^\p{L}\p{N}/]+/gu, '');
+
 function applyValues(node, factory, values, time) {
   if (!node || !values) return;
   const known = new Set(factory.params.map((p) => p.address));
   // values may be keyed by full address ('/Zita_Reverb/Mix') or by control label ('Mix', as generated songs do)
   const byLabel = new Map(factory.params.map((p) => [p.label, p.address]));
+  // Faust rewrites some label characters (an apostrophe becomes '-'): match on letters and digits as a last resort
+  const byNorm = new Map(factory.params.map((p) => [normFaustLabel(p.label), p.address]));
   for (const [key, v] of Object.entries(values)) {
-    const addr = known.has(key) ? key : byLabel.get(key);
+    const addr = known.has(key) ? key : byLabel.get(key) ?? byNorm.get(normFaustLabel(key));
     if (!addr || !Number.isFinite(Number(v))) continue;
     try { node.setParamValue(addr, Number(v), time); } catch { try { node.setParamValue(addr, Number(v)); } catch { /* */ } }
   }
@@ -183,9 +241,16 @@ async function roundTrip(ctx, node) {
 // AudioWorklet modules can fail to load without ever settling (no audio thread, blocked worklets): give up after a
 // while so `ready` resolves false and the host's fallback (fallbackPreset / fallback effect) takes over.
 const NODE_TIMEOUT_MS = 15000;
+function requireWorklet(ctx) {
+  if (!ctx?.audioWorklet) {
+    throw userError(typeof isSecureContext !== 'undefined' && !isSecureContext
+      ? 'Faust plugins need AudioWorklet, which browsers only enable on secure pages — open the app over https:// or http://localhost.'
+      : 'Faust plugins need AudioWorklet, which this browser does not support.');
+  }
+}
 function withTimeout(p, ms) {
   let timer;
-  return Promise.race([p, new Promise((_, reject) => { timer = setTimeout(() => reject(userError('The Faust audio node did not start (AudioWorklet unavailable?).')), ms); })])
+  return Promise.race([p, new Promise((_, reject) => { timer = setTimeout(() => reject(userError(`The Faust audio node did not start within ${ms / 1000} s (the AudioWorklet did not load — is the audio engine suspended?). Use Retry, or reload the app.`)), ms); })])
     .finally(() => clearTimeout(timer));
 }
 
@@ -243,6 +308,7 @@ export class FaustEngine {
       const factory = await getFaustFactory(code, 'poly', { onStage: stage });
       if (sig !== this._sig) return false;
       setStatus(key, { state: 'loading', progress: null, message: 'Starting the audio node…', info: { params: factory.params, name: factory.meta?.name || this.p.name } });
+      requireWorklet(this.ctx);
       const voices = Math.max(1, Math.min(32, Math.round(this.p.voices || 8)));
       const node = await withTimeout(factory.generator.createNode(this.ctx, voices), NODE_TIMEOUT_MS);
       if (!node) throw userError('Faust could not create the audio node.');
@@ -364,6 +430,7 @@ export class FaustEffect {
       if (sig !== this._sig) return false;
       setStatus(key, { state: 'loading', progress: null, message: 'Starting the audio node…', info: { params: factory.params, name: factory.meta?.name || this.p.name } });
       if (!factory.inputs) throw userError('This Faust program has no audio inputs — load it as an instrument instead.');
+      requireWorklet(this.ctx);
       const node = await withTimeout(factory.generator.createNode(this.ctx), NODE_TIMEOUT_MS);
       if (!node) throw userError('Faust could not create the audio node.');
       if (sig !== this._sig) { try { node.disconnect(); node.destroy?.(); } catch { /* */ } return false; }

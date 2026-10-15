@@ -45,14 +45,16 @@ export function pluginKey(def) {
 export function friendlyError(err, { url, kind } = {}) {
   const msg = String(err?.message || err || 'Unknown error');
   if (err?.friendly) return msg;
+  // before the generic network test: "Failed to fetch dynamically imported module" also says "Failed to fetch"
+  if (/Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(msg)) {
+    const mod = /https?:\/\/\S+/.exec(msg)?.[0] || url;
+    return `Could not load the JavaScript module${mod ? ` “${shortUrl(mod)}”` : ''} (network, CORS or a syntax error in the plugin).`;
+  }
   if (/Failed to fetch|NetworkError|Load failed|network/i.test(msg)) {
     return `Could not download ${url ? `“${shortUrl(url)}”` : 'the plugin'} — you may be offline, or the server blocks cross-origin requests (CORS). GitHub links are fetched through cdn.jsdelivr.net.`;
   }
   if (/HTTP 404/.test(msg)) return `Not found (404): ${url ? shortUrl(url) : 'the file'} — check the link, branch and file name.`;
   if (/HTTP 403|HTTP 429/.test(msg)) return `The CDN refused the request (${msg.match(/HTTP \d+/)[0]}). Try again in a minute.`;
-  if (/Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(msg)) {
-    return `Could not load the JavaScript module ${url ? `“${shortUrl(url)}”` : ''} (network, CORS or a syntax error in the plugin).`;
-  }
   if (kind === 'faust' && !/^Faust/.test(msg)) return `Faust compile error: ${msg}`;
   return msg;
 }

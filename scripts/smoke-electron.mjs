@@ -2,7 +2,8 @@
 // Smoke test of a packaged daW³ desktop app (CI runs it on macOS, Windows and Linux after packaging).
 // Launches the built app with --remote-debugging-port, connects over CDP (playwright-core) and fails unless the
 // page really booted: window.daw3.store exists, the UI rendered (no blank window), no page errors, a generated
-// song has more than 5 tracks, and the native audio bridge answered. Saves a screenshot.
+// song has more than 5 tracks, the native audio bridge answered, and a catalog Faust effect loads from the compiler
+// bundled in the package (live and offline, no network needed). Saves a screenshot.
 //
 //   node scripts/smoke-electron.mjs [--app <path to the executable>] [--out <dir>] [--port 9333] [--timeout 120]
 //
@@ -97,6 +98,11 @@ try {
     if (Date.now() - t0 > timeoutMs) throw new Error('no app://daw3 page appeared');
     await sleep(300);
   }
+  // Playwright parks new AudioWorklet threads waiting for a debugger and never resumes them (see
+  // tools/browser-check/browser.mjs enableWorklets): auto-attach worklet targets and detach at once to release them
+  const cdp = await page.context().newCDPSession(page);
+  cdp.on('Target.attachedToTarget', (e) => { cdp.send('Target.detachFromTarget', { sessionId: e.sessionId }).catch(() => {}); });
+  await cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true, filter: [{ type: 'worklet' }] });
   page.on('pageerror', (e) => result.errors.push(String(e?.stack || e?.message || e)));
   page.on('console', (m) => { if (m.type() === 'error') result.consoleErrors.push(m.text()); });
   // reload so every error from the boot itself is observed (the page may have booted before we attached)
@@ -145,6 +151,36 @@ try {
   });
   if (typeof result.checks.nativeAudio === 'string' && result.checks.nativeAudio.startsWith('error')) throw new Error(`native audio: ${result.checks.nativeAudio}`);
   await page.keyboard.press('Escape');
+
+  // 5. a catalog Faust effect compiles with the bundled compiler and runs live and in an offline render
+  result.checks.faust = await page.evaluate(async () => {
+    const f = await import('./src/plugins/faust.js');
+    const { getCatalogEntry, pluginParams } = await import('./src/plugins/catalog.js');
+    const params = pluginParams(getCatalogEntry('faust-zita-reverb'));
+    const out = {};
+    try { out.source = (await f.loadFaustCompiler()).source; } catch (e) { return { error: String(e?.message || e) }; }
+    const engine = window.daw3.engine;
+    await engine.init();
+    const live = new f.FaustEffect(engine.ctx, engine.ctx.createGain(), engine.ctx.createGain());
+    live.setParams(params);
+    out.live = await live.ready;
+    out.liveError = live.error;
+    live.dispose();
+    const oc = new OfflineAudioContext(2, 24000, 48000);
+    const src = oc.createOscillator(); const fin = oc.createGain(); src.connect(fin); src.start();
+    const off = new f.FaustEffect(oc, fin, oc.destination);
+    off.setParams(params);
+    out.offline = await off.ready;
+    out.offlineError = off.error;
+    if (out.offline) {
+      const d = (await oc.startRendering()).getChannelData(0);
+      let s = 0; for (let i = 0; i < d.length; i++) s += d[i] * d[i];
+      out.rms = Math.round(Math.sqrt(s / d.length) * 1e4) / 1e4;
+    }
+    return out;
+  });
+  const fz = result.checks.faust;
+  if (fz.error || fz.source !== 'bundled' || !fz.live || !fz.offline || !(fz.rms > 0.001)) throw new Error(`Faust effect: ${JSON.stringify(fz)}`);
 
   // what the screenshot shows, in words (for the CI log)
   result.checks.visible = await page.evaluate(() => ({
