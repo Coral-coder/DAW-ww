@@ -135,6 +135,8 @@ export function knob({ def, value, onChange, size = 38, label, color, showValue 
   svg.addEventListener('dblclick', () => set(def.default ?? def.min ?? 0, true));
   render();
   el.setValue = (nv) => { v = nv ?? def.default; render(); };
+  el.getValue = () => v;
+  el.def = def; // (modulation rings map values with the knob's own curve)
   return el;
 }
 

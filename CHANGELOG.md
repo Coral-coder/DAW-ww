@@ -6,6 +6,13 @@ the desktop apps share one version.
 ## [Unreleased]
 
 ### Added
+- **Wavetable Synth**: 2 morphing, band-limited (mipmapped) wavetable oscillators in an AudioWorklet with 8 warp modes,
+  16-voice unison, sub + noise, LP/BP/HP/notch/comb filter, 3 envelopes, 4 LFOs and a mod matrix; 56 generated
+  factory tables, WAV / Serum import and resynthesis of samples (stored compactly in the project), a 2D / 3D table
+  editor with frame drawing and harmonic sliders, and 63 presets.
+- **Modulation** for every track: 8 automatable, MIDI-learnable macros, LFO / MSEG, envelope, step, random and
+  envelope-follower modulators, a mod matrix and drag-to-modulate onto any knob (rings show range and live value);
+  works on instruments, effects and mixer params, live and in exports.
 - **Prebake** (as in strudel.cc Settings → prebake): Strudel helper libraries evaluated before your code — add one by
   URL (cached for offline use), paste or upload it; enable, reorder, reload; see the functions it defines and any
   failing statement (line, message). It runs once per change in every code path (Code tab, Song, split import,

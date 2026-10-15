@@ -12,6 +12,7 @@ import { actionSheet, onLongPress, haptic, bigButton, promptSheet } from '../tou
 import { dragReorder, reorder } from '../reorder.js';
 import { openAutomationSheet, pickAutomationTarget } from '../auto-lane.js';
 import { laneLabel } from '../../ui/automation-targets.js';
+import { macroTargets, usesMacros } from '../macros.js';
 
 const TILE_TYPES = new Set(['number', 'enum', 'bool']);
 const MAIN_COUNT = 8;
@@ -38,7 +39,8 @@ export function createTrackPage(app, nav) {
     const p = store.get();
     return [t.id, t.type, t.instrument?.type, t.instrument?.preset, t.instrument?.params?.kit, (t.fx || []).map((f) => `${f.id}:${f.type}:${f.enabled !== false}`).join(','), p.buses.map((b) => b.id).join(','),
       patternsForTrack(p, t.id).map((x) => x.id).join(','), t.activePatternId, showAll, [...open].join(','), t.arm,
-      JSON.stringify(t.instrument?.params?.pads || {}), (t.automation || []).map((l) => `${l.id}:${l.target}:${l.points?.length}:${l.enabled}:${!!l.overridden}`).join(',')].join('|');
+      JSON.stringify(t.instrument?.params?.pads || {}), (t.automation || []).map((l) => `${l.id}:${l.target}:${l.points?.length}:${l.enabled}:${!!l.overridden}`).join(','),
+      usesMacros(t) ? (t.mod.macros || []).map((m) => m.name).join(',') : ''].join('|');
   }
 
   function render() {
@@ -63,6 +65,8 @@ export function createTrackPage(app, nav) {
       const shown = showAll ? defs : main.slice(0, MAIN_COUNT);
       const more = bigButton(showAll ? 'Fewer controls' : `All controls (${defs.length})`, () => { showAll = !showAll; render(); }, { ic: 'sliders', cls: 'ghost' });
       body.appendChild(h('div.pk-card', h('div.pk-label', 'Sound controls — drag sideways or tap'), tileGrid(shown.map((d) => instTarget(app, t.id, d))), defs.length > MAIN_COUNT ? more : null));
+      // macro knobs (mapped on the desktop layout's device panel)
+      if (usesMacros(t)) body.appendChild(h('div.pk-card', h('div.pk-label', 'Macros'), tileGrid(macroTargets(app, t.id))));
       if (isDrums(t)) {
         const edited = editedPads(t);
         const pads = h('div.pk-padgrid', ...DRUM_PADS.slice(0, 12).map((pad) => {
