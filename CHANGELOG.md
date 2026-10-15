@@ -6,6 +6,12 @@ the desktop apps share one version.
 ## [Unreleased]
 
 ### Added
+- **Native plugin manager** (desktop, Plugins › Native): search, sort by vendor / format, favorites, hide, a
+  blocklist (never scanned or loaded), per-plugin scan log, and every plugin that failed as a greyed card with the
+  reason (crashed, timed out, quarantined by macOS with the fix, Intel-only, the loader's own error) and Retry.
+  New and updated plugins are picked up by a quick cached rescan at start-up and when the dialog opens.
+- **Intel-only VST3 / CLAP plugins on Apple silicon** run in a second, Rosetta-translated plugin host; Intel-only
+  Audio Units and app-extension (AUv3) Audio Units load out of process instead of failing.
 - **Prebake** (as in strudel.cc Settings → prebake): Strudel helper libraries evaluated before your code — add one by
   URL (cached for offline use), paste or upload it; enable, reorder, reload; see the functions it defines and any
   failing statement (line, message). It runs once per change in every code path (Code tab, Song, split import,

@@ -52,8 +52,27 @@ function cleanDesc(p) {
     key: `${p.format}:${p.uid}`, format: p.format, uid: s(p.uid, 512), name: s(p.name) || p.uid, vendor: s(p.vendor), version: s(p.version, 64),
     category: s(p.category), path: s(p.path, 2048), instrument: !!p.instrument, midiInput: !!p.midiInput,
     numInputs: Number.isInteger(p.numInputs) ? p.numInputs : 2, numOutputs: Number.isInteger(p.numOutputs) ? p.numOutputs : 2,
+    // '' = the app's own plugin host; 'x86_64' / 'arm64' = a second host run as that CPU type (Intel-only plugins
+    // on Apple silicon run under Rosetta)
+    arch: ARCHS.includes(p.arch) ? p.arch : '',
+    quarantined: !!p.quarantined,
   };
 }
+
+const ARCHS = ['', 'x86_64', 'arm64'];
+
+/** A failed bundle as stored in db.failed (scanner result + what the server found out about the bundle). */
+function failedEntry(format, path, r = {}) {
+  const s = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
+  return {
+    format, path, error: s(r.error, 4000) || 'scan failed', crashed: !!r.crashed, timedOut: !!r.timedOut, quarantined: !!r.quarantined,
+    intelOnly: !!r.intelOnly, rosettaMissing: !!r.rosettaMissing, arch: ARCHS.includes(r.arch) ? r.arch : '',
+    archs: Array.isArray(r.archs) ? r.archs.filter((a) => typeof a === 'string').slice(0, 8) : [],
+  };
+}
+
+/** Scan log of one bundle (kept short: it is stored for every bundle). */
+const logText = (r, extra = []) => [...extra, ...(Array.isArray(r?.log) ? r.log : r?.log ? [r.log] : [])].map(String).join('\n').slice(-2000);
 
 /** Parse the plugin host's `--describe` output (one JSON line; anything else is noise). */
 export function parseDescribeOutput(stdout) {
@@ -73,16 +92,20 @@ export function parseDescribeOutput(stdout) {
  * Scan plugin folders. Each bundle is described by a separate scanner process (`describe`), so a
  * crashing plugin only fails itself; unchanged bundles (same mtime) are reused from `db`.
  * io: { listBundles(format, folders) -> Promise<string[]>, mtime(path) -> Promise<number>,
- *       describe(format, path) -> Promise<{ok, plugins, error, crashed?, timedOut?}> }
+ *       describe(format, path) -> Promise<{ok, plugins, error, crashed?, timedOut?, arch?, archs?, quarantined?, log?}> }
+ * force: true (rescan everything) or (format, path) => boolean (rescan just those: "Retry").
+ * skip(format, path): bundles never scanned (blocklist). exclude(desc): plugins dropped from the result (blocked AUs).
+ * db.bundles[`${format}|${path}`] = { mtime, ok, arch, quarantined, log, at } — the per-bundle scan log.
  */
-export async function scanPlugins({ db = emptyDb(), folders, io, force = false, formats = FORMATS, concurrency = 4, onProgress, now = Date.now() }) {
+export async function scanPlugins({ db = emptyDb(), folders, io, force = false, formats = FORMATS, concurrency = 4, onProgress, now = Date.now(), skip, exclude }) {
   const jobs = [];
   for (const format of formats) {
     const dirs = folders?.[format] || [];
     if (!dirs.length) continue;
     const bundles = await io.listBundles(format, dirs);
-    for (const path of bundles) jobs.push({ format, path });
+    for (const path of bundles) if (!skip?.(format, path)) jobs.push({ format, path });
   }
+  const forced = (format, path) => (typeof force === 'function' ? !!force(format, path) : !!force);
   const next = { version: DB_VERSION, scannedAt: now, plugins: [], bundles: {}, failed: [] };
   const prevByBundle = new Map();
   for (const p of db.plugins) {
@@ -97,17 +120,21 @@ export async function scanPlugins({ db = emptyDb(), folders, io, force = false, 
     try { mtime = format === 'au' ? now : await io.mtime(path); } catch { mtime = 0; }
     const prev = db.bundles?.[bk];
     const prevFail = (db.failed || []).find((f) => f.path === path && f.format === format);
-    if (!force && format !== 'au' && prev && prev.mtime === mtime && mtime) {
+    // reuse an unchanged bundle (a failure only while it is still listed: blocking drops it, unblocking rescans)
+    if (!forced(format, path) && format !== 'au' && prev && prev.mtime === mtime && mtime && (prev.ok || prevFail)) {
       if (prev.ok) next.plugins.push(...(prevByBundle.get(bk) || []));
       else if (prevFail) next.failed.push(prevFail);
       next.bundles[bk] = prev;
     } else {
       let r;
+      const t0 = Date.now();
       try { r = await io.describe(format, path); } catch (e) { r = { ok: false, error: e?.message || String(e) }; }
       const ok = !!r?.ok;
-      if (ok) next.plugins.push(...(r.plugins || []).filter(isPluginDesc).map((p) => cleanDesc({ ...p, path: p.path || path })));
-      else next.failed.push({ format, path, error: r?.error || 'scan failed', crashed: !!r?.crashed, timedOut: !!r?.timedOut });
-      next.bundles[bk] = { mtime, ok };
+      const extra = { arch: ARCHS.includes(r?.arch) ? r.arch : '', quarantined: !!r?.quarantined };
+      if (ok) next.plugins.push(...(r.plugins || []).filter(isPluginDesc).map((p) => cleanDesc({ ...p, path: p.path || path, ...extra })));
+      else next.failed.push(failedEntry(format, path, r));
+      const found = ok ? `found ${(r.plugins || []).length} plugin(s)` : `failed: ${r?.error || 'scan failed'}`;
+      next.bundles[bk] = { mtime, ok, ...extra, at: now, log: logText(r, [`${new Date(now).toISOString()} ${format} ${path}`]) + `\n${found} (${Date.now() - t0} ms)` };
     }
     done++;
     onProgress?.({ done, total: jobs.length, format, path });
@@ -117,11 +144,16 @@ export async function scanPlugins({ db = emptyDb(), folders, io, force = false, 
     while (queue.length) await runOne(queue.shift());
   });
   await Promise.all(workers);
-  // stable order + de-duplicate keys (the same plugin installed twice: keep the first folder's)
+  // stable order + de-duplicate keys (the same plugin installed twice: prefer a copy the app's own host runs and
+  // that is not quarantined, then the first folder's)
   const seen = new Set();
+  const folderRank = (p) => { const i = (folders?.[p.format] || []).findIndex((d) => p.path.startsWith(d)); return i < 0 ? 99 : i; };
   next.plugins = next.plugins
-    .sort((a, b) => a.name.localeCompare(b.name) || a.format.localeCompare(b.format))
+    .filter((p) => !exclude?.(p))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.format.localeCompare(b.format) || (a.arch ? 1 : 0) - (b.arch ? 1 : 0)
+      || (a.quarantined ? 1 : 0) - (b.quarantined ? 1 : 0) || folderRank(a) - folderRank(b) || a.path.localeCompare(b.path))
     .filter((p) => (seen.has(p.key) ? false : (seen.add(p.key), true)));
+  next.failed.sort((a, b) => a.path.localeCompare(b.path));
   return next;
 }
 

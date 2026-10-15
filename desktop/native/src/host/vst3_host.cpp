@@ -61,6 +61,33 @@ using namespace Steinberg::Vst;
 using v3::Query;
 
 // ------------------------------------------------------------------------------------- module
+#ifdef __APPLE__
+std::string cfStr(CFStringRef s) {
+  if (!s) return std::string();
+  const CFIndex n = CFStringGetMaximumSizeForEncoding(CFStringGetLength(s), kCFStringEncodingUTF8) + 1;
+  std::vector<char> buf((size_t)n, '\0');
+  if (!CFStringGetCString(s, buf.data(), n, kCFStringEncodingUTF8)) return std::string();
+  return std::string(buf.data());
+}
+
+/** CFBundle load error -> its description plus the loader's own message (NSDebugDescription carries the dlopen
+ *  text, e.g. "mach-o file, but is an incompatible architecture (have 'x86_64', need 'arm64')"). */
+std::string cfErrorText(CFErrorRef e) {
+  std::string text;
+  if (CFStringRef d = CFErrorCopyDescription(e)) { text = cfStr(d); CFRelease(d); }
+  if (CFDictionaryRef info = CFErrorCopyUserInfo(e)) {
+    const void* dbg = CFDictionaryGetValue(info, CFSTR("NSDebugDescription"));
+    if (dbg && CFGetTypeID((CFTypeRef)dbg) == CFStringGetTypeID()) {
+      const std::string d = cfStr((CFStringRef)dbg);
+      if (!d.empty() && text.find(d) == std::string::npos) text += text.empty() ? d : " (" + d + ")";
+    }
+    CFRelease(info);
+  }
+  if (text.empty()) text = "error " + std::to_string((long)CFErrorGetCode(e));
+  return text;
+}
+#endif
+
 struct Vst3Module {
   void* handle = nullptr;
   IPluginFactory* factory = nullptr;
@@ -84,7 +111,7 @@ const Vst3Module* loadModule(const std::string& path, std::string& err) {
   if (!m.bundle) { err = "Not a bundle: " + path; return nullptr; }
   CFErrorRef cfErr = nullptr;
   if (!CFBundleLoadExecutableAndReturnError(m.bundle, &cfErr)) {
-    err = "Could not load the VST3 binary (wrong architecture?)";
+    err = loadError("VST3", path, "", cfErr ? cfErrorText(cfErr) : std::string());
     if (cfErr) CFRelease(cfErr);
     CFRelease(m.bundle);
     return nullptr;
@@ -96,8 +123,9 @@ const Vst3Module* loadModule(const std::string& path, std::string& err) {
 #else
   const std::string bin = bundleBinary(path, ".vst3");
   if (bin.empty()) { err = "No binary for this platform inside " + path; return nullptr; }
-  m.handle = dlOpen(bin, err);
-  if (!m.handle) return nullptr;
+  std::string dlErr;
+  m.handle = dlOpen(bin, dlErr);
+  if (!m.handle) { err = loadError("VST3", path, bin, dlErr); return nullptr; }
 #ifdef _WIN32
   using ModuleEntry = bool (*)();  // Windows: InitDll() / ExitDll()
   auto entry = (ModuleEntry)dlSym(m.handle, "InitDll");

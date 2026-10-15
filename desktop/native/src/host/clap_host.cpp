@@ -29,8 +29,9 @@ const ClapModule* loadModule(const std::string& path, std::string& err) {
   if (it != gModules.end()) return &it->second;
   const std::string bin = bundleBinary(path, ".clap");
   if (bin.empty()) { err = "No binary inside " + path; return nullptr; }
-  void* h = dlOpen(bin, err);
-  if (!h) return nullptr;
+  std::string dlErr;
+  void* h = dlOpen(bin, dlErr);
+  if (!h) { err = loadError("CLAP", path, bin, dlErr); return nullptr; }
   auto* entry = (const clap_plugin_entry_t*)dlSym(h, "clap_entry");
   if (!entry) { err = "Not a CLAP plugin (no clap_entry)"; dlClose(h); return nullptr; }
   if (!clap_version_is_compatible(entry->clap_version)) { err = "Incompatible CLAP version"; dlClose(h); return nullptr; }

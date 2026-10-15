@@ -109,3 +109,20 @@ pre.plg-error { font-family: var(--mono); }
 .plg-wam-modal .modal-body { display: flex; justify-content: center; }
 .plg-wam-gui { min-height: 120px; max-width: 100%; overflow: auto; }
 .plg-wam-loading { color: var(--text-2); display: flex; align-items: center; gap: 6px; padding: 30px; }
+
+/* Plugins › Native: plugin manager */
+.plg-kind-native { --plg-kind: var(--accent); }
+.nplg-section { grid-column: 1 / -1; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); padding: 6px 2px 0; }
+.nplg-star { margin-left: 4px; background: none; border: 0; color: var(--text-3); font-size: 15px; line-height: 1; cursor: pointer; padding: 0 2px; }
+.nplg-star[aria-pressed="true"] { color: var(--warn); }
+.nplg-star:hover { color: var(--text); }
+.nplg-manage .btn { opacity: .8; }
+.nplg-hidden { opacity: .65; }
+.nplg-failed { opacity: .78; border-top-color: var(--text-3); filter: grayscale(.6); }
+.nplg-failed:hover { opacity: 1; filter: none; }
+.nplg-badge-fail { background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); }
+.nplg-reason-quarantined .nplg-badge-fail, .nplg-reason-intel-only .nplg-badge-fail, .nplg-reason-timeout .nplg-badge-fail { background: color-mix(in srgb, var(--warn) 22%, transparent); color: var(--warn); }
+.nplg-error { font-family: var(--mono); font-size: 11px; word-break: break-word; max-height: 6.5em; overflow: auto; }
+.nplg-hint { font-size: 12px; color: var(--text-2); word-break: break-word; }
+.nplg-log { margin: 4px 0 0; max-height: 160px; overflow: auto; font-size: 10.5px; font-family: var(--mono); white-space: pre-wrap; word-break: break-word; background: var(--bg-3); border-radius: 4px; padding: 6px; color: var(--text-2); }
+.nplg-folders { font-size: 11px; color: var(--text-3); }

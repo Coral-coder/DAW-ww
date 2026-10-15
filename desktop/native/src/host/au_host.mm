@@ -6,7 +6,9 @@
 #import <CoreAudioKit/CoreAudioKit.h>
 
 #include <algorithm>
+#include <chrono>
 #include <mutex>
+#include <thread>
 
 #include "plugin.h"
 
@@ -486,6 +488,50 @@ class AuInstance : public PluginInstance {
   std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 };
 
+/** AudioComponentInstantiate with a timeout: the completion handler runs on a queue of AudioToolbox's own, and
+ *  the calling (main) thread's run loop is pumped meanwhile so XPC / extension start-up that needs it can proceed.
+ *  An instance that arrives after the timeout is disposed of. */
+AudioUnit instantiateAsync(AudioComponent comp, AudioComponentInstantiationOptions options, std::string& why, double timeoutSec = 20.0) {
+  struct Result {
+    std::mutex m;
+    bool done = false, abandoned = false;
+    AudioUnit unit = nullptr;
+    OSStatus status = noErr;
+  };
+  auto res = std::make_shared<Result>();
+  AudioComponentInstantiate(comp, options, ^(AudioComponentInstance inst, OSStatus st) {
+    std::lock_guard<std::mutex> g(res->m);
+    if (res->abandoned) {
+      if (inst) AudioComponentInstanceDispose(inst);
+      return;
+    }
+    res->unit = inst;
+    res->status = st;
+    res->done = true;
+  });
+  const CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + timeoutSec;
+  for (;;) {
+    {
+      std::lock_guard<std::mutex> g(res->m);
+      if (res->done) break;
+      if (CFAbsoluteTimeGetCurrent() > deadline) {
+        res->abandoned = true;
+        why = "it did not finish loading within " + std::to_string((int)timeoutSec) +
+              " s (app-extension Audio Units run in their app's process: open the app once, then retry)";
+        return nullptr;
+      }
+    }
+    // a run loop without sources returns at once: sleep a little instead of spinning
+    if (CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, true) == kCFRunLoopRunFinished) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  if (res->status != noErr || !res->unit) {
+    why = "OSStatus " + std::to_string((int)res->status);
+    if (res->unit) AudioComponentInstanceDispose(res->unit);
+    return nullptr;
+  }
+  return res->unit;
+}
+
 class AuFormat : public PluginFormat {
  public:
   std::string name() const override { return "au"; }
@@ -529,9 +575,32 @@ class AuFormat : public PluginFormat {
     if (!parseUid(d.uid, want)) { err = "Bad Audio Unit id " + d.uid; return nullptr; }
     AudioComponent comp = AudioComponentFindNext(nullptr, &want);
     if (!comp) { err = "Audio Unit not installed: " + d.uid; return nullptr; }
+    AudioComponentDescription cd = want;
+    AudioComponentGetDescription(comp, &cd);
+    const bool v3 = (cd.componentFlags & kAudioComponentFlag_IsV3AudioUnit) != 0;
     AudioUnit unit = nullptr;
-    OSStatus st = AudioComponentInstanceNew(comp, &unit);
-    if (st != noErr || !unit) { err = "Could not open the Audio Unit (" + std::to_string((int)st) + ")"; return nullptr; }
+    std::string why;
+    if (v3) {
+      // app-extension (AUv3) units: instantiate asynchronously (the blocking AudioComponentInstanceNew can deadlock
+      // while the extension's process starts), out of process unless the extension allows otherwise
+      unit = instantiateAsync(comp, 0, why);
+    } else {
+      OSStatus st = AudioComponentInstanceNew(comp, &unit);
+      if (st != noErr || !unit) {
+        unit = nullptr;
+        why = "in process: OSStatus " + std::to_string((int)st);
+        // an Intel-only AUv2 in the Apple-silicon host (or the other way round): macOS 11+ can run it in its own
+        // (Rosetta-translated) helper process
+        std::string why2;
+        unit = instantiateAsync(comp, kAudioComponentInstantiation_LoadOutOfProcess, why2);
+        if (!unit) why += "; out of process: " + why2;
+      }
+    }
+    if (!unit) {
+      err = "Could not open the Audio Unit " + d.name + " (" + why + ")";
+      if (!v3) err += ". If it is an Intel-only Audio Unit, make sure Rosetta 2 is installed (softwareupdate --install-rosetta) or ask the vendor for an Apple-silicon build";
+      return nullptr;
+    }
     PluginDesc pd = d;
     pd.instrument = want.componentType == kAudioUnitType_MusicDevice;
     pd.midiInput = want.componentType != kAudioUnitType_Effect;

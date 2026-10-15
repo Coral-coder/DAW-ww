@@ -60,6 +60,12 @@ jobs:
         run: |
           if [ "${{ matrix.platform }}" = windows ]; then export CXX=x86_64-w64-mingw32-clang++ CC=x86_64-w64-mingw32-clang; fi
           sh desktop/native/build.sh --test
+      # The test plugins of this platform's native build, kept for the packaged-app smoke test (the Windows arm64
+      # package below rebuilds desktop/native/build for arm64, which the x64 app could not load).
+      - name: Keep the test plugins for the smoke test
+        run: |
+          mkdir -p "$RUNNER_TEMP/testplugins"
+          cp -R desktop/native/build/daW3TestGain.vst3 desktop/native/build/daW3TestGain.clap "$RUNNER_TEMP/testplugins/"
       # JS tests; with the native build present they also drive the real addon + plugin host end to end.
       - run: npm test
 
@@ -106,16 +112,19 @@ jobs:
 
       # ---------------------------------------------------------------- smoke test of the packaged app
       - run: npm install --no-save --no-audit --no-fund playwright-core@1.55.1
-      - name: Smoke test (launch the packaged app, CDP, boot + generate a song + native layer)
+      # --test-plugins: the test VST3 / CLAP are installed in the user plug-in folders, scanned, loaded and run on
+      # audio in the packaged app; macOS also checks a quarantined copy (fix shown) and an Intel-only copy (Rosetta host)
+      - name: Smoke test (launch the packaged app, CDP, boot + generate a song + native layer + plugin hosting)
         run: |
+          TP="$RUNNER_TEMP/testplugins"
           case "${{ matrix.platform }}" in
-            linux) xvfb-run -a --server-args="-screen 0 1600x1000x24" node scripts/smoke-electron.mjs --label linux-x64 ;;
-            windows) node scripts/smoke-electron.mjs --app dist/win-unpacked/daW3.exe --label windows-x64 ;;
+            linux) xvfb-run -a --server-args="-screen 0 1600x1000x24" node scripts/smoke-electron.mjs --label linux-x64 --test-plugins "$TP" ;;
+            windows) node scripts/smoke-electron.mjs --app dist/win-unpacked/daW3.exe --label windows-x64 --test-plugins "$TP" ;;
             mac)
-              node scripts/smoke-electron.mjs --app dist/mac-arm64/daW3.app/Contents/MacOS/daW3 --label mac-arm64
+              node scripts/smoke-electron.mjs --app dist/mac-arm64/daW3.app/Contents/MacOS/daW3 --label mac-arm64 --test-plugins "$TP"
               # the Intel build too, when Rosetta is there to run it
               if arch -x86_64 /usr/bin/true 2>/dev/null; then
-                node scripts/smoke-electron.mjs --app dist/mac/daW3.app/Contents/MacOS/daW3 --label mac-x64 --port 9334
+                node scripts/smoke-electron.mjs --app dist/mac/daW3.app/Contents/MacOS/daW3 --label mac-x64 --port 9334 --test-plugins "$TP"
               else echo "Rosetta not available: Intel app not launched (it was code-sign verified above)"; fi ;;
           esac
       - uses: actions/upload-artifact@v4

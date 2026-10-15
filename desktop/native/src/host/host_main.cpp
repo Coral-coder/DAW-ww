@@ -53,6 +53,17 @@ PluginFormat* format(const std::string& n) {
   return it == gFormats.end() ? nullptr : it->second.get();
 }
 
+/** The CPU architecture this host process runs as (a universal binary under Rosetta reports x86_64). */
+const char* hostArch() {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  return "arm64";
+#elif defined(__x86_64__) || defined(_M_X64)
+  return "x86_64";
+#else
+  return "other";
+#endif
+}
+
 int describeMain(const std::string& fmt, const std::string& path) {
   initFormats();
   Json r = Json::object();
@@ -63,7 +74,7 @@ int describeMain(const std::string& fmt, const std::string& path) {
   bool ok = f->describe(path, list, err);
   Json arr = Json::array();
   for (auto& d : list) arr.push(d.toJson());
-  r.set("ok", ok).set("path", path).set("format", fmt).set("plugins", arr);
+  r.set("ok", ok).set("path", path).set("format", fmt).set("plugins", arr).set("hostArch", hostArch());
   if (!ok) r.set("error", err);
   emit(r);
   return ok ? 0 : 1;
@@ -320,7 +331,7 @@ int serveMain(const std::string& shmPath, const std::string& reqPath, const std:
       guiQuit();
     });
   });
-  emit(Json::object().set("event", "ready").set("pid", (double)getpid()));
+  emit(Json::object().set("event", "ready").set("pid", (double)getpid()).set("arch", hostArch()));
   guiRunMainLoop();
   s.quit.store(true);
   audio.join();
