@@ -554,6 +554,7 @@ export class AudioEngine extends Emitter {
   getMasterAnalysis() { return this.graph ? this.graph.masterAnalysis() : null; }
   /** Gain reduction (dB) of a compressor / limiter effect by its effect id. */
   getReduction(fxId) { return this.graph ? this.graph.getReduction(fxId) : 0; }
+  getFxProbe(fxId) { return this.graph ? this.graph.getFxProbe(fxId) : null; }
   /** Last code-evaluation status of a code track: {ok, error, cps} | null. */
   getCodeStatus(trackId) { return this._codeStatus.get(trackId) || null; }
 

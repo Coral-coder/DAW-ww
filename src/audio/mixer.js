@@ -594,6 +594,7 @@ export class ChannelStrip {
   setTempo(bpm) { for (const e of this.effects) e.fx.setTempo(bpm); }
   syncLfos(time) { for (const e of this.effects) e.fx.sync(time); }
   getReduction(fxId) { const e = this.effects.find((x) => x.id === fxId); return e?.fx.getReduction ? e.fx.getReduction() : 0; }
+  getFxProbe(fxId) { return this.effects.find((x) => x.id === fxId)?.fx.probe ?? null; }
 
   /** Peak level per channel since the last call (with decay for smooth meters). */
   getMeter() {
@@ -1193,6 +1194,14 @@ export class MixGraph {
       if (s.effects.some((e) => e.id === fxId)) return s.getReduction(fxId);
     }
     return 0;
+  }
+
+  /** The live probe object of an effect anywhere in the graph (see createEffect), else null. */
+  getFxProbe(fxId) {
+    for (const s of this._strips()) {
+      if (s.effects.some((e) => e.id === fxId)) return s.getFxProbe(fxId);
+    }
+    return null;
   }
 
   dispose() {

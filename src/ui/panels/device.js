@@ -12,8 +12,12 @@ import { EFFECT_DEFS, EFFECT_CATEGORIES, INSTRUMENT_DEFS, PRESETS, DRUM_KITS, re
 import { isPatchActive, patchFxOrder } from '../../core/patch.js';
 import { DRUM_MACHINES } from '../../audio/library/drum-machines.js';
 import { pluginInstrumentEditor, pluginEffectEditor, openPluginDialog } from '../plugin-device.js';
+import { FX_UI } from '../fx-ui/index.js';
 
 // ============================================================================ effect presets
+/** Presets of an effect type: the curated table below, else the def's own `presets` (src/audio/fx/defs). */
+export function effectPresets(type) { return EFFECT_PRESETS[type] || EFFECT_DEFS?.[type]?.presets || null; }
+
 /** Small curated starting points per effect type (merged over the defaults). */
 export const EFFECT_PRESETS = {
   reverb: {
@@ -77,13 +81,13 @@ export function showEffectMenu(pos, onPick) {
     });
   }
   items.push({ label: 'Plugin effect (Faust / WAM)…', icon: 'plug', onClick: () => openPluginDialog({ tab: 'catalog', type: 'effect', onPickEffect: onPick }) });
-  const withPresets = types.filter((t) => EFFECT_PRESETS[t]);
+  const withPresets = types.filter((t) => effectPresets(t));
   if (withPresets.length) {
     items.push('-', {
       label: 'From preset', icon: 'sparkles',
       submenu: withPresets.map((t) => ({
         label: `${EFFECT_DEFS[t].name} `,
-        submenu: Object.entries(EFFECT_PRESETS[t]).map(([n, params]) => ({ label: n, onClick: () => onPick(t, { ...params }) })),
+        submenu: Object.entries(effectPresets(t)).map(([n, params]) => ({ label: n, onClick: () => onPick(t, { ...params }) })),
       })),
     });
   }
@@ -1214,7 +1218,7 @@ export function createDevicePanel(app) {
     if (index === 0 || patched) left.disabled = true;
     if (index === tgt.fx.length - 1 || patched) right.disabled = true;
     if (patched) { left.title = right.title = 'Order is set by the Plugboard cables'; }
-    const presets = EFFECT_PRESETS[fx.type];
+    const presets = effectPresets(fx.type);
     const presetBtn = presets ? h('button.dv-fx-preset', { type: 'button', title: 'Effect presets' }, 'Presets ▾') : null;
     presetBtn?.addEventListener('click', (e) => contextMenu(e, [
       { header: `${name} presets` },
@@ -1285,6 +1289,11 @@ export function createDevicePanel(app) {
       if (f) { f.params = f.params || {}; f.params[k] = v; }
     }, { coalesce: true }), { owner: tgt.id, prefix: `fx:${fx.id}:` });
     shell.body.appendChild(h('div.dv-params', pb.el));
+    const customUi = FX_UI[fx.type]?.(shell.body, {
+      fx, tgt, engine, app,
+      probe: () => engine.getFxProbe?.(fx.id) ?? null,
+      edit: (label, fn, o) => editTarget(tgt, label, (ow) => { const f = ow.fx.find((x) => x.id === fx.id); if (f) { f.params = f.params || {}; fn(f.params); } }, o),
+    }) || null;
     const plugUpd = def.plugin ? pluginEffectEditor(app, shell.body, fx, { owner: tgt.id, edit: (lbl, fn, o) => editTarget(tgt, lbl, (ow) => { const f = ow.fx.find((x) => x.id === fx.id); if (f) { f.params = f.params || {}; fn(f.params); } }, o) }) : null;
     return {
       el: shell.el,
@@ -1292,6 +1301,7 @@ export function createDevicePanel(app) {
         const f = c.tgt.fx.find((x) => x.id === fx.id);
         if (f) pb.update(resolveEffectParams ? resolveEffectParams(f) : f.params || {});
         if (f && plugUpd) plugUpd(f);
+        if (f) customUi?.update?.(f);
       },
     };
   }

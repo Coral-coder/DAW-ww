@@ -7,6 +7,8 @@
 // type 'track' holds a track id (string, '' = none) — the UI renders a track picker; it is
 // never automatable (automation only targets 'number' params).
 
+import { FX_DEF_FAMILIES } from './fx/defs/index.js';
+
 /** Tempo-synced note divisions -> length in beats (quarter notes). */
 export const DIVISIONS = {
   '4/1': 16, '2/1': 8, '1/1': 4, '1/2D': 3, '1/2': 2, '1/2T': 4 / 3,
@@ -100,7 +102,7 @@ function eq8Params() {
   return out;
 }
 
-export const EFFECT_CATEGORIES = ['EQ & Filter', 'Dynamics', 'Distortion', 'Delay & Reverb', 'Modulation', 'Stereo', 'Utility', 'Plugins'];
+export const EFFECT_CATEGORIES = ['EQ & Filter', 'Dynamics', 'Distortion', 'Delay & Reverb', 'Modulation', 'Rhythm', 'Pitch & Voice', 'Stereo', 'Utility', 'Analysis', 'Plugins'];
 
 export const EFFECT_DEFS = {
   // ---------------------------------------------------------------- EQ & Filter
@@ -398,6 +400,8 @@ export const EFFECT_DEFS = {
     params: [num('mix', 'Mix', 0, 1, 1, { step: 0.01, section: 'Plugin' })],
   },
 };
+
+for (const family of FX_DEF_FAMILIES) Object.assign(EFFECT_DEFS, family({ num, enm, bool, lfoParams, DIVISION_OPTIONS }));
 
 export const EFFECT_TYPES = Object.keys(EFFECT_DEFS);
 

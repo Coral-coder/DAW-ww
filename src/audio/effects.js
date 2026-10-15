@@ -13,6 +13,7 @@ import { EFFECT_DEFS, resolveEffectParams, divisionToBeats } from './effect-defs
 import { clamp, dbToGain, createRng } from '../core/util.js';
 import { pluginEffectBuilder, PLUGIN_EFFECT_TYPES } from './plugin-fx.js';
 import { effectLatencyFrames, lookaheadTime, COMPRESSOR_LOOKAHEAD } from './latency.js';
+import { FX_BUILDER_FAMILIES } from './fx/builders/index.js';
 
 const TC = 0.015; // smoothing time-constant for parameter changes
 
@@ -1218,6 +1219,10 @@ function syncLfo(lfo, p, env, time, offset = 0) {
   lfo.start(t, beat / cycle + offset);
 }
 
+// Effect families from src/audio/fx/builders get the shared helpers (no import cycle back into this module).
+const FX_HELPERS = { isOffline, setP, stereoGain, cachedBuffer, shapeBuffer, lfoRate, makeCurve, driveFn, makeImpulse, makeSpaceImpulse, createMidSide, syncLfo, clamp, dbToGain, createRng, divisionToBeats };
+for (const family of FX_BUILDER_FAMILIES) Object.assign(BUILDERS, family(FX_HELPERS));
+
 // ------------------------------------------------------------------------------ factory
 /**
  * @param {BaseAudioContext} ctx
@@ -1305,6 +1310,8 @@ export function createEffect(ctx, effectDef, opts = {}) {
     setTempo(bpm) { try { impl.setTempo?.(bpm); fallbackFx?.setTempo(bpm); } catch (e) { console.warn('[fx] setTempo', e); } },
     sync(time) { try { impl.sync?.(time); fallbackFx?.sync(time); } catch (e) { console.warn('[fx] sync', e); } },
     getReduction: impl.getReduction ? () => impl.getReduction() : undefined,
+    /** Live data a builder exposes for its custom UI (analyzers, step position…), else null. */
+    get probe() { return impl.probe ?? null; },
     /** Sidechain key input (ducker only): connect the key signal here. */
     keyInput: impl.keyInput || null,
     /** Plugin effects (faust/wam): load promise (true/false), error message and live plugin. */
