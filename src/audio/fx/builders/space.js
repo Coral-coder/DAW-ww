@@ -234,6 +234,7 @@ export default function spaceBuilders(H) {
           w.set('time', t, im);
           const dens = cur.densitySync ? bpm / 60 / divisionToBeats(cur.grainDivision) : cur.density;
           w.set('density', clamp(dens, 0.2, 200), im, true);
+          w.set('regular', cur.densitySync ? 1 : 0, im, true);
           if (fbDelay) setP(fbDelay.delayTime, t, ctx, im);
         },
         ready: w.ready,

@@ -39,7 +39,7 @@ export class GrainCloud {
     this.p = { time: 0.25, size: 0.08, density: 20, pitch: 0, pitchRand: 0, spread: 0.3, pan: 0.6, reverse: 0, feedback: 0.3, freeze: false, window: 'hann', tone: 12000 };
   }
   /** p: { time (s), size (s), density (grains/s), pitch (st), pitchRand (st), spread (0..1), pan (0..1), reverse (0..1),
-   *       feedback (0..0.95), freeze (0/1), window (index), tone (Hz) } */
+   *       feedback (0..0.95), freeze (0/1), window (index), tone (Hz), regular (0/1: no timing jitter) } */
   set(p) {
     const q = this.p;
     q.time = clamp(p.time ?? q.time, 0.001, (this.N / this.sr) * 0.45);
@@ -54,6 +54,7 @@ export class GrainCloud {
     q.freeze = (p.freeze ?? 0) >= 0.5;
     q.window = GRAIN_WINDOWS[clamp(Math.round(p.window ?? 0), 0, GRAIN_WINDOWS.length - 1)];
     q.tone = clamp(p.tone ?? q.tone, 200, 20000);
+    q.regular = (p.regular ?? 0) >= 0.5; // evenly spaced grains (tempo-synced grain rate)
   }
   _spawn() {
     const { p, rng, sr } = this;
@@ -97,7 +98,7 @@ export class GrainCloud {
       }
       if (--this.next <= 0) {
         this._spawn();
-        this.next = Math.max(1, Math.round(period * (0.75 + 0.5 * this.rng())));
+        this.next = Math.max(1, Math.round(p.regular ? period : period * (0.75 + 0.5 * this.rng())));
       }
       let yl = 0, yr = 0;
       for (let i = 0; i < MAX_GRAINS; i++) {
